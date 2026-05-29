@@ -14,10 +14,13 @@ type EventCollector struct {
 	client *Client
 }
 
+// NewEventCollector creates a Kubernetes Event collector.
 func NewEventCollector(client *Client) *EventCollector {
 	return &EventCollector{client: client}
 }
 
+// 负责查这个 Pod 相关的 Events：
+// ListPodEvents lists Kubernetes Events related to the given pod.
 func (c *EventCollector) ListPodEvents(ctx context.Context, pod *corev1.Pod) ([]corev1.Event, error) {
 	if c.client == nil || c.client.Clientset == nil {
 		return nil, errors.New("kubernetes client is not initialized")

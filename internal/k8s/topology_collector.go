@@ -16,10 +16,15 @@ type TopologyCollector struct {
 	client *Client
 }
 
+// NewTopologyCollector creates a collector for pod ownership and service
+// topology.
 func NewTopologyCollector(client *Client) *TopologyCollector {
 	return &TopologyCollector{client: client}
 }
 
+// 负责查 Pod 所属拓扑关系
+// Collect gathers owner, sibling pod, service, endpoint, and node topology for
+// a pod.
 func (c *TopologyCollector) Collect(ctx context.Context, pod *corev1.Pod) (*diagnostic.TopologyInfo, error) {
 	if c.client == nil || c.client.Clientset == nil {
 		return nil, errors.New("kubernetes client is not initialized")
@@ -43,6 +48,7 @@ func (c *TopologyCollector) Collect(ctx context.Context, pod *corev1.Pod) (*diag
 	return info, nil
 }
 
+// findReplicaSet follows the pod owner reference to its ReplicaSet.
 func (c *TopologyCollector) findReplicaSet(ctx context.Context, pod *corev1.Pod) *appsv1.ReplicaSet {
 	for _, owner := range pod.OwnerReferences {
 		if owner.Kind != "ReplicaSet" {
@@ -56,6 +62,7 @@ func (c *TopologyCollector) findReplicaSet(ctx context.Context, pod *corev1.Pod)
 	return nil
 }
 
+// findDeployment follows the ReplicaSet owner reference to its Deployment.
 func (c *TopologyCollector) findDeployment(ctx context.Context, rs *appsv1.ReplicaSet) *appsv1.Deployment {
 	for _, owner := range rs.OwnerReferences {
 		if owner.Kind != "Deployment" {
@@ -69,6 +76,7 @@ func (c *TopologyCollector) findDeployment(ctx context.Context, rs *appsv1.Repli
 	return nil
 }
 
+// listDeploymentPods lists sibling pods owned by the same Deployment.
 func (c *TopologyCollector) listDeploymentPods(ctx context.Context, deploy *appsv1.Deployment, currentPodName string) []diagnostic.PodBrief {
 	selector := labels.Set(deploy.Spec.Selector.MatchLabels).String()
 	pods, err := c.client.Clientset.CoreV1().Pods(deploy.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
@@ -90,6 +98,7 @@ func (c *TopologyCollector) listDeploymentPods(ctx context.Context, deploy *apps
 	return result
 }
 
+// findSelectedServices finds Services whose selectors match the pod labels.
 func (c *TopologyCollector) findSelectedServices(ctx context.Context, pod *corev1.Pod) ([]diagnostic.ServiceBrief, []diagnostic.EndpointBrief) {
 	services, err := c.client.Clientset.CoreV1().Services(pod.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -113,6 +122,7 @@ func (c *TopologyCollector) findSelectedServices(ctx context.Context, pod *corev
 	return serviceBriefs, endpointBriefs
 }
 
+// countReadyEndpoints counts ready endpoint addresses for a Service.
 func (c *TopologyCollector) countReadyEndpoints(ctx context.Context, namespace, serviceName string) int {
 	endpoints, err := c.client.Clientset.CoreV1().Endpoints(namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err != nil {
@@ -125,6 +135,7 @@ func (c *TopologyCollector) countReadyEndpoints(ctx context.Context, namespace, 
 	return count
 }
 
+// selectorMatches reports whether all selector labels are present on the pod.
 func selectorMatches(selector, podLabels map[string]string) bool {
 	for key, value := range selector {
 		if podLabels[key] != value {
@@ -134,6 +145,7 @@ func selectorMatches(selector, podLabels map[string]string) bool {
 	return true
 }
 
+// podReady reports whether the pod Ready condition is true.
 func podReady(pod corev1.Pod) bool {
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady {
@@ -143,6 +155,7 @@ func podReady(pod corev1.Pod) bool {
 	return false
 }
 
+// totalRestarts sums restart counts across all containers in a pod.
 func totalRestarts(pod corev1.Pod) int32 {
 	var total int32
 	for _, status := range pod.Status.ContainerStatuses {

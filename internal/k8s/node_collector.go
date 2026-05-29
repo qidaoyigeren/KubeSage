@@ -14,10 +14,13 @@ type NodeCollector struct {
 	client *Client
 }
 
+// NewNodeCollector creates a Kubernetes Node collector.
 func NewNodeCollector(client *Client) *NodeCollector {
 	return &NodeCollector{client: client}
 }
 
+// 负责查 Node 基础资源快照：
+// ListNodeSnapshots lists node allocatable resources and readiness state.
 func (c *NodeCollector) ListNodeSnapshots(ctx context.Context) ([]diagnostic.NodeSnapshot, error) {
 	if c.client == nil || c.client.Clientset == nil {
 		return nil, errors.New("kubernetes client is not initialized")
@@ -40,6 +43,7 @@ func (c *NodeCollector) ListNodeSnapshots(ctx context.Context) ([]diagnostic.Nod
 	return result, nil
 }
 
+// isNodeReady reports whether the NodeReady condition is true.
 func isNodeReady(node corev1.Node) bool {
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == corev1.NodeReady {

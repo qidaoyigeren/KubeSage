@@ -52,6 +52,8 @@ type DiagnosisService struct {
 	engine           *diagnostic.DiagnosisEngine
 }
 
+// NewDiagnosisService wires repositories, collectors, analyzers, and optional
+// enrichment dependencies into the diagnosis service.
 func NewDiagnosisService(opts DiagnosisServiceOptions) *DiagnosisService {
 	return &DiagnosisService{
 		cfg:              opts.Config,
@@ -65,17 +67,19 @@ func NewDiagnosisService(opts DiagnosisServiceOptions) *DiagnosisService {
 		runbookRetriever: opts.RunbookRetriever,
 		engine: diagnostic.NewDiagnosisEngine(
 			diagnosticanalyzer.NewCrashLoopBackOffAnalyzer(),
-			diagnosticanalyzer.NewOOMKilledAnalyzer(),
+			diagnosticanalyzer.NewOOMKilledAnalyzer(opts.PrometheusClient),
 			diagnosticanalyzer.NewPendingAnalyzer(),
 			diagnosticanalyzer.NewProbeFailedAnalyzer(),
 		),
 	}
 }
 
+// StartPodDiagnosis creates a task and runs the pod diagnosis asynchronously.
 func (s *DiagnosisService) StartPodDiagnosis(ctx context.Context, req PodDiagnosisRequest) (*model.DiagnosisTask, error) {
 	if !req.IncludeEvents && !req.IncludeLogs && !req.IncludeMetrics {
 		req.IncludeEvents = true
 		req.IncludeLogs = true
+		req.IncludeMetrics = true
 	}
 	task := &model.DiagnosisTask{
 		Namespace: req.Namespace,
@@ -90,18 +94,22 @@ func (s *DiagnosisService) StartPodDiagnosis(ctx context.Context, req PodDiagnos
 	return task, nil
 }
 
+// GetTask loads a diagnosis task by ID.
 func (s *DiagnosisService) GetTask(ctx context.Context, id uint) (*model.DiagnosisTask, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.taskRepo.GetByID(ctx, id)
 }
 
+// ListTasks returns a paginated task list.
 func (s *DiagnosisService) ListTasks(ctx context.Context, page, pageSize int) ([]model.DiagnosisTask, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.taskRepo.List(ctx, page, pageSize)
 }
 
+// runDiagnosis collects snapshots, runs analyzers, persists evidence, and marks
+// the task final status.
 func (s *DiagnosisService) runDiagnosis(taskID uint, req PodDiagnosisRequest) {
 	// The worker is read-only against Kubernetes: it collects snapshots, runs rules,
 	// and stores evidence/report rows. It never deletes or patches cluster objects.
@@ -119,9 +127,8 @@ func (s *DiagnosisService) runDiagnosis(taskID uint, req PodDiagnosisRequest) {
 	}
 
 	finish := func(status string, report *diagnostic.Report, failure error) {
-		now := time.Now()
 		task.Status = status
-		task.FinishedAt = &now
+		task.FinishedAt = new(time.Now())
 		if report != nil {
 			task.FaultType = report.FaultType
 			task.RootCauseSummary = report.RootCauseSummary
@@ -178,6 +185,7 @@ func (s *DiagnosisService) runDiagnosis(taskID uint, req PodDiagnosisRequest) {
 	finish(model.TaskStatusSuccess, report, nil)
 }
 
+// toModelEvidences converts in-memory evidence records into database models.
 func toModelEvidences(taskID uint, records []diagnostic.EvidenceRecord) []model.Evidence {
 	result := make([]model.Evidence, 0, len(records))
 	for _, record := range records {
@@ -199,6 +207,7 @@ func toModelEvidences(taskID uint, records []diagnostic.EvidenceRecord) []model.
 	return result
 }
 
+// toModelReport converts an analyzer report into the persisted report model.
 func toModelReport(taskID uint, report *diagnostic.Report, evidences []model.Evidence) *model.DiagnosisReport {
 	actionsBytes, _ := json.Marshal(report.SuggestedActions)
 	now := time.Now()
@@ -219,6 +228,7 @@ func toModelReport(taskID uint, report *diagnostic.Report, evidences []model.Evi
 	}
 }
 
+// clamp keeps confidence scores inside the [0, 1] range.
 func clamp(v float64) float64 {
 	if v < 0 {
 		return 0
@@ -229,6 +239,7 @@ func clamp(v float64) float64 {
 	return v
 }
 
+// normalizeRisk maps unknown risk values to a safe medium default.
 func normalizeRisk(risk string) string {
 	risk = strings.ToLower(strings.TrimSpace(risk))
 	switch risk {
@@ -239,6 +250,7 @@ func normalizeRisk(risk string) string {
 	}
 }
 
+// TriggerFromAlert starts a pod diagnosis from an Alertmanager alert mapping.
 func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, namespace, podName, alertName string) (*model.DiagnosisTask, error) {
 	if namespace == "" || podName == "" {
 		return nil, fmt.Errorf("namespace and pod_name are required in alert %s", alertName)
@@ -248,6 +260,6 @@ func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, namespace, podN
 		PodName:        podName,
 		IncludeLogs:    true,
 		IncludeEvents:  true,
-		IncludeMetrics: false,
+		IncludeMetrics: true,
 	})
 }

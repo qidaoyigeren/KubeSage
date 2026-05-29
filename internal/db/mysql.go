@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// NewMySQL opens a GORM MySQL connection using the configured DSN options.
 func NewMySQL(cfg config.MySQLConfig) (*gorm.DB, error) {
 	parseTime := "False"
 	if cfg.ParseTime {

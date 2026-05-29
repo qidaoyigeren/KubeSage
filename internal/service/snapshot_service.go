@@ -20,6 +20,7 @@ type SnapshotService struct {
 	topology *k8s.TopologyCollector
 }
 
+// NewSnapshotService creates the Kubernetes snapshot collector service.
 func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger) *SnapshotService {
 	return &SnapshotService{
 		cfg:      cfg,
@@ -32,15 +33,18 @@ func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger)
 	}
 }
 
+// Collect gathers pod, event, log, topology, and node context for analyzers.
 func (s *SnapshotService) Collect(ctx context.Context, req PodDiagnosisRequest) (*diagnostic.DiagnosticContext, error) {
 	pod, err := s.pods.GetPod(ctx, req.Namespace, req.PodName)
 	if err != nil {
 		return nil, err
 	}
 	result := &diagnostic.DiagnosticContext{
-		Namespace: req.Namespace,
-		PodName:   req.PodName,
-		Pod:       pod,
+		RequestContext: ctx,
+		Namespace:      req.Namespace,
+		PodName:        req.PodName,
+		Pod:            pod,
+		MetricsEnabled: req.IncludeMetrics,
 	}
 
 	if req.IncludeEvents {

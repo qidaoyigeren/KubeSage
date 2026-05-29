@@ -14,6 +14,7 @@ type RouterOptions struct {
 	Logger           *zap.Logger
 }
 
+// NewRouter wires all HTTP routes and their handlers into a Gin engine.
 func NewRouter(opts RouterOptions) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()

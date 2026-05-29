@@ -24,10 +24,13 @@ type Alert struct {
 	Annotations map[string]string `json:"annotations"`
 }
 
+// NewWebhookHandler creates the Alertmanager webhook HTTP handler.
 func NewWebhookHandler(service *service.DiagnosisService, log *zap.Logger) *WebhookHandler {
 	return &WebhookHandler{service: service, log: log}
 }
 
+// Handle receives Alertmanager webhook payloads and starts diagnosis tasks for
+// alerts that can be mapped to a namespace and pod.
 func (h *WebhookHandler) Handle(c *gin.Context) {
 	var payload WebhookPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -49,6 +52,7 @@ func (h *WebhookHandler) Handle(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": gin.H{"tasks": tasks}})
 }
 
+// firstNonEmpty returns the first non-empty string from a list of candidates.
 func firstNonEmpty(items ...string) string {
 	for _, item := range items {
 		if item != "" {

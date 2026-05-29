@@ -12,12 +12,15 @@ import (
 
 type CrashLoopBackOffAnalyzer struct{}
 
+// NewCrashLoopBackOffAnalyzer creates the analyzer for CrashLoopBackOff cases.
 func NewCrashLoopBackOffAnalyzer() *CrashLoopBackOffAnalyzer {
 	return &CrashLoopBackOffAnalyzer{}
 }
 
+// Name returns the analyzer identifier used in reports.
 func (a *CrashLoopBackOffAnalyzer) Name() string { return "crashloopbackoff" }
 
+// Match decides whether pod status indicates repeated container restarts.
 func (a *CrashLoopBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	if ctx.Pod == nil {
 		return false
@@ -33,6 +36,7 @@ func (a *CrashLoopBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool
 	return false
 }
 
+// Analyze collects status, event, and log evidence for CrashLoopBackOff.
 func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
 	actions := []string{"查看 previous logs 中的启动错误栈和最近发布变更。", "确认启动命令、配置文件、环境变量、依赖服务地址和端口是否正确。"}
@@ -118,6 +122,7 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 	}, nil
 }
 
+// eventEvidence converts one Kubernetes Event into a diagnostic evidence row.
 func eventEvidence(event corev1.Event, severity string) diagnostic.EvidenceRecord {
 	return diagnostic.EvidenceRecord{
 		SourceType: "k8s_event",
@@ -129,6 +134,7 @@ func eventEvidence(event corev1.Event, severity string) diagnostic.EvidenceRecor
 	}
 }
 
+// containsAny reports whether text contains any keyword, case-insensitively.
 func containsAny(text string, keywords []string) bool {
 	lower := strings.ToLower(text)
 	for _, keyword := range keywords {
@@ -139,6 +145,7 @@ func containsAny(text string, keywords []string) bool {
 	return false
 }
 
+// trimLog chooses previous logs when available and caps stored log text size.
 func trimLog(containerName, previous, current string) string {
 	text := previous
 	if text == "" {

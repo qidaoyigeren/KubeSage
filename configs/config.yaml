@@ -23,7 +23,7 @@ diagnosis:
   task_timeout_seconds: 60
 
 prometheus:
-  address: ""
+  base_url: ""
   timeout_seconds: 10
 
 loki:

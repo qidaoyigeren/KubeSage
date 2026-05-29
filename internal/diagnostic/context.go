@@ -1,20 +1,27 @@
 package diagnostic
 
 import (
+	"context"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 )
 
 type DiagnosticContext struct {
-	Namespace     string
-	PodName       string
-	Pod           *corev1.Pod
-	Events        []corev1.Event
-	Logs          []ContainerLogs
-	Topology      *TopologyInfo
-	NodeSnapshots []NodeSnapshot
-	RunbookHits   []RunbookHit
+	// RequestContext carries the diagnosis worker timeout into optional downstream
+	// calls such as Prometheus queries.
+	RequestContext context.Context
+	Namespace      string
+	PodName        string
+	Pod            *corev1.Pod
+	Events         []corev1.Event
+	Logs           []ContainerLogs
+	Topology       *TopologyInfo
+	NodeSnapshots  []NodeSnapshot
+	RunbookHits    []RunbookHit
+	// MetricsEnabled is controlled by the API request. Analyzers should use it
+	// to decide whether optional metric enrichment should run.
+	MetricsEnabled bool
 }
 
 type ContainerLogs struct {

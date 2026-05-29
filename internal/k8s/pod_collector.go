@@ -12,10 +12,13 @@ type PodCollector struct {
 	client *Client
 }
 
+// NewPodCollector creates a Kubernetes Pod collector.
 func NewPodCollector(client *Client) *PodCollector {
 	return &PodCollector{client: client}
 }
 
+// 负责查 Pod 本体：
+// GetPod loads one pod by namespace and name.
 func (c *PodCollector) GetPod(ctx context.Context, namespace, podName string) (*corev1.Pod, error) {
 	if c.client == nil || c.client.Clientset == nil {
 		return nil, errors.New("kubernetes client is not initialized")

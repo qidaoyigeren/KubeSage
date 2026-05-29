@@ -18,6 +18,7 @@ type Section struct {
 	Content string
 }
 
+// LoadRunbooks reads markdown runbook files and builds searchable runbook data.
 func LoadRunbooks(dir string) ([]Runbook, error) {
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -44,6 +45,8 @@ func LoadRunbooks(dir string) ([]Runbook, error) {
 	return runbooks, nil
 }
 
+// splitMarkdownSections splits one markdown runbook into overview and heading
+// sections.
 func splitMarkdownSections(content string) []Section {
 	lines := strings.Split(content, "\n")
 	sections := []Section{}

@@ -12,10 +12,13 @@ type DiagnoseHandler struct {
 	service *service.DiagnosisService
 }
 
+// NewDiagnoseHandler creates the HTTP handler for pod diagnosis requests.
 func NewDiagnoseHandler(service *service.DiagnosisService) *DiagnoseHandler {
 	return &DiagnoseHandler{service: service}
 }
 
+// DiagnosePod validates the request body and starts an asynchronous pod
+// diagnosis task.
 func (h *DiagnoseHandler) DiagnosePod(c *gin.Context) {
 	var req service.PodDiagnosisRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

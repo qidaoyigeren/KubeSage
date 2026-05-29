@@ -12,12 +12,15 @@ import (
 
 type PendingAnalyzer struct{}
 
+// NewPendingAnalyzer creates the analyzer for pods stuck in Pending.
 func NewPendingAnalyzer() *PendingAnalyzer {
 	return &PendingAnalyzer{}
 }
 
+// Name returns the analyzer identifier used in reports.
 func (a *PendingAnalyzer) Name() string { return "pod_pending" }
 
+// Match decides whether pod status/events indicate scheduling failure.
 func (a *PendingAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	if ctx.Pod == nil {
 		return false
@@ -38,6 +41,7 @@ func (a *PendingAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	return false
 }
 
+// Analyze collects scheduling constraints, events, and node capacity evidence.
 func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
 	actions := []string{"根据 FailedScheduling message 调整 requests、nodeSelector、affinity、tolerations 或 PVC。"}

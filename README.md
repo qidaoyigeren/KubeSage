@@ -53,6 +53,26 @@ kubernetes:
 
 服务会使用本地 kubeconfig 读取 Kubernetes 集群。当前 RBAC 只需要只读权限：Pods、Pod logs、Events、Services、Endpoints、Nodes、ReplicaSets、Deployments。
 
+## Prometheus 配置
+
+OOMKilled 诊断在启用 `include_metrics` 时会调用 Prometheus HTTP API，按 `lastState.terminated.finishedAt` 作为故障时间，查询前后 5 分钟的 `container_memory_working_set_bytes`，并将查询结果写入 evidence。
+
+编辑 `configs/config.yaml`：
+
+```yaml
+prometheus:
+  base_url: "http://prometheus:9090"
+  timeout_seconds: 10
+```
+
+也可以通过环境变量覆盖：
+
+```bash
+export KUBESAGE_PROMETHEUS_BASE_URL=http://127.0.0.1:9090
+```
+
+如果 Prometheus 未配置、不可访问或查询不到数据，诊断任务不会失败；系统会保存一条 `source_type=prometheus`、`severity=warning` 的 evidence，说明指标查询被跳过或失败。
+
 ## 启动服务
 
 ```bash
@@ -76,7 +96,7 @@ curl -X POST http://127.0.0.1:8080/api/v1/diagnose/pod \
     "pod_name": "example-pod",
     "include_logs": true,
     "include_events": true,
-    "include_metrics": false
+    "include_metrics": true
   }'
 ```
 
@@ -162,7 +182,7 @@ internal/service        诊断任务编排
 internal/k8s            Kubernetes 采集器
 internal/diagnostic     诊断引擎与 analyzer
 internal/repository     GORM 数据访问
-internal/prometheus     Prometheus 查询预留实现
+internal/prometheus     Prometheus HTTP API 查询客户端
 internal/rag            Runbook 关键词检索 MVP
 internal/tool           未来 Agent tool 抽象
 runbooks                四类故障 runbook
@@ -172,7 +192,7 @@ scripts                 初始化脚本
 
 ## 扩展建议
 
-- Prometheus：在 `internal/prometheus/client.go` 中扩展 query_range 解析和指标证据入库。
+- Prometheus：已支持 `query_range` 指标查询，可继续扩展 CPU、重启次数、网络和磁盘指标证据。
 - Loki：将 `internal/tool/loki_tool.go` 替换为真实 Loki client，保留 Kubernetes Pod logs 作为 fallback。
 - Runbook RAG：将 `rag.Retriever` 接口接入 Qdrant 或 pgvector。
 - Alertmanager：扩展 label 映射，支持从 owner references 反查工作负载。

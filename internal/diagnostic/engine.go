@@ -9,10 +9,12 @@ type DiagnosisEngine struct {
 	analyzers []Analyzer
 }
 
+// NewDiagnosisEngine builds a rule engine with the given analyzers in order.
 func NewDiagnosisEngine(analyzers ...Analyzer) *DiagnosisEngine {
 	return &DiagnosisEngine{analyzers: analyzers}
 }
 
+// Diagnose runs all matching analyzers and returns an aggregated report.
 func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 	var results []*AnalyzeResult
 	for _, analyzer := range e.analyzers {
@@ -49,6 +51,8 @@ func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 	return aggregate(ctx, results), nil
 }
 
+// aggregate merges multiple analyzer results and keeps the highest-confidence
+// result as the main diagnosis summary.
 func aggregate(ctx *DiagnosticContext, results []*AnalyzeResult) *Report {
 	best := results[0]
 	for _, result := range results[1:] {
@@ -85,6 +89,7 @@ func aggregate(ctx *DiagnosticContext, results []*AnalyzeResult) *Report {
 	}
 }
 
+// uniqueStrings removes duplicate non-empty strings while preserving order.
 func uniqueStrings(items []string) []string {
 	seen := make(map[string]struct{})
 	result := make([]string, 0, len(items))

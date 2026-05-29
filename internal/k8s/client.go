@@ -20,6 +20,7 @@ type Client struct {
 	TailLines int64
 }
 
+// NewClient builds a Kubernetes clientset from kubeconfig or in-cluster config.
 func NewClient(cfg config.KubernetesConfig) (*Client, error) {
 	restConfig, err := buildRestConfig(cfg.Kubeconfig)
 	if err != nil {
@@ -40,6 +41,8 @@ func NewClient(cfg config.KubernetesConfig) (*Client, error) {
 	return &Client{Clientset: clientset, Timeout: timeout, TailLines: tailLines}, nil
 }
 
+// buildRestConfig resolves the Kubernetes REST config from the configured path,
+// falling back to in-cluster or default home kubeconfig behavior.
 func buildRestConfig(kubeconfig string) (*rest.Config, error) {
 	if kubeconfig == "" {
 		if cfg, err := rest.InClusterConfig(); err == nil {
@@ -51,6 +54,7 @@ func buildRestConfig(kubeconfig string) (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", kubeconfig)
 }
 
+// expandHome replaces a leading ~ with the current user's home directory.
 func expandHome(path string) string {
 	if path == "" {
 		return path

@@ -14,10 +14,14 @@ type LogCollector struct {
 	client *Client
 }
 
+// NewLogCollector creates a Kubernetes pod log collector.
 func NewLogCollector(client *Client) *LogCollector {
 	return &LogCollector{client: client}
 }
 
+// 负责查容器日志：默认最近200
+// CollectPodLogs collects current and previous logs for the requested
+// container, or for all pod containers when containerName is empty.
 func (c *LogCollector) CollectPodLogs(ctx context.Context, pod *corev1.Pod, containerName string) ([]diagnostic.ContainerLogs, error) {
 	if c.client == nil || c.client.Clientset == nil {
 		return nil, errors.New("kubernetes client is not initialized")
@@ -49,6 +53,7 @@ func (c *LogCollector) CollectPodLogs(ctx context.Context, pod *corev1.Pod, cont
 	return result, nil
 }
 
+// getLogs reads current or previous logs for one pod container.
 func (c *LogCollector) getLogs(ctx context.Context, namespace, podName, container string, previous bool) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.client.Timeout)
 	defer cancel()

@@ -10,12 +10,15 @@ import (
 
 type ProbeFailedAnalyzer struct{}
 
+// NewProbeFailedAnalyzer creates the analyzer for readiness/liveness failures.
 func NewProbeFailedAnalyzer() *ProbeFailedAnalyzer {
 	return &ProbeFailedAnalyzer{}
 }
 
+// Name returns the analyzer identifier used in reports.
 func (a *ProbeFailedAnalyzer) Name() string { return "probe_failed" }
 
+// Match decides whether pod events contain failed readiness/liveness probes.
 func (a *ProbeFailedAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	for _, event := range ctx.Events {
 		message := strings.ToLower(event.Message)
@@ -26,6 +29,7 @@ func (a *ProbeFailedAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	return false
 }
 
+// Analyze collects probe config, event, and health-related log evidence.
 func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
 	summary := "Pod Events 出现探针失败，可能是健康检查配置不合理或应用健康端点异常。"
@@ -71,6 +75,7 @@ func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagn
 	}, nil
 }
 
+// probeEvidence converts one probe config into diagnostic evidence.
 func probeEvidence(containerName, probeName string, probe interface{}) diagnostic.EvidenceRecord {
 	severity := "info"
 	content := fmt.Sprintf("container=%s %s=%v", containerName, probeName, probe)

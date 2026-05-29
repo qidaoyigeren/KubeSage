@@ -23,6 +23,7 @@ type DiagnosisReport struct {
 	Evidences        []Evidence `json:"evidences,omitempty" gorm:"-"`
 }
 
+// AfterFind mirrors CreatedAt into GeneratedAt after GORM loads a report.
 func (r *DiagnosisReport) AfterFind(tx *gorm.DB) error {
 	r.GeneratedAt = r.CreatedAt
 	return nil

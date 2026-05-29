@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Init creates the process logger from the configured log level and mode.
 func Init(cfg config.LogConfig) (*zap.Logger, error) {
 	level := zapcore.InfoLevel
 	if err := level.Set(cfg.Level); err != nil {

@@ -23,6 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// main initializes dependencies, starts the HTTP server, and handles shutdown.
 func main() {
 	cfg, err := config.Load("configs/config.yaml")
 	if err != nil {

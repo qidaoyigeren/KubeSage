@@ -46,6 +46,7 @@ type DiagnosisConfig struct {
 }
 
 type PrometheusConfig struct {
+	BaseURL        string `mapstructure:"base_url"`
 	Address        string `mapstructure:"address"`
 	TimeoutSeconds int    `mapstructure:"timeout_seconds"`
 }
@@ -64,6 +65,7 @@ type LogConfig struct {
 	Development bool   `mapstructure:"development"`
 }
 
+// Load reads configuration from a YAML file and environment variable overrides.
 func Load(path string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigFile(path)
@@ -83,6 +85,7 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// setDefaults defines safe defaults before Viper reads file/env values.
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
@@ -91,6 +94,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes.request_timeout_seconds", 15)
 	v.SetDefault("kubernetes.default_log_tail_lines", 200)
 	v.SetDefault("diagnosis.task_timeout_seconds", 60)
+	v.SetDefault("prometheus.timeout_seconds", 10)
 	v.SetDefault("runbook.dir", "./runbooks")
 	v.SetDefault("log.level", "info")
 }

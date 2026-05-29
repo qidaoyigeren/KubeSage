@@ -13,10 +13,12 @@ type TaskHandler struct {
 	service *service.DiagnosisService
 }
 
+// NewTaskHandler creates handlers for reading diagnosis task state.
 func NewTaskHandler(service *service.DiagnosisService) *TaskHandler {
 	return &TaskHandler{service: service}
 }
 
+// GetTask loads one diagnosis task and its report/evidence by task ID.
 func (h *TaskHandler) GetTask(c *gin.Context) {
 	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil || id64 == 0 {
@@ -31,6 +33,7 @@ func (h *TaskHandler) GetTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": task})
 }
 
+// ListTasks returns a paginated list of diagnosis tasks.
 func (h *TaskHandler) ListTasks(c *gin.Context) {
 	page := parsePositiveInt(c.DefaultQuery("page", "1"), 1)
 	pageSize := parsePositiveInt(c.DefaultQuery("page_size", "20"), 20)
@@ -51,6 +54,7 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 	}})
 }
 
+// parsePositiveInt parses a positive integer query parameter with a fallback.
 func parsePositiveInt(raw string, fallback int) int {
 	n, err := strconv.Atoi(raw)
 	if err != nil || n <= 0 {

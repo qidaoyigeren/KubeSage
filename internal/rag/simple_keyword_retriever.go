@@ -10,6 +10,7 @@ type SimpleKeywordRetriever struct {
 	runbooks []Runbook
 }
 
+// NewSimpleKeywordRetriever loads runbooks and prepares keyword retrieval.
 func NewSimpleKeywordRetriever(dir string) (*SimpleKeywordRetriever, error) {
 	runbooks, err := LoadRunbooks(dir)
 	if err != nil {
@@ -18,6 +19,7 @@ func NewSimpleKeywordRetriever(dir string) (*SimpleKeywordRetriever, error) {
 	return &SimpleKeywordRetriever{runbooks: runbooks}, nil
 }
 
+// Retrieve returns the highest-scoring runbook sections for a fault and query.
 func (r *SimpleKeywordRetriever) Retrieve(ctx context.Context, faultType, query string, limit int) ([]Hit, error) {
 	if limit <= 0 {
 		limit = 3
@@ -49,6 +51,7 @@ func (r *SimpleKeywordRetriever) Retrieve(ctx context.Context, faultType, query 
 	return hits, nil
 }
 
+// scoreSection gives a simple keyword score to one runbook section.
 func scoreSection(runbookFault string, section Section, faultType string, keywords []string) int {
 	score := 0
 	if normalize(runbookFault) == normalize(faultType) {
@@ -63,6 +66,7 @@ func scoreSection(runbookFault string, section Section, faultType string, keywor
 	return score
 }
 
+// tokenize extracts lowercase search tokens from free text.
 func tokenize(text string) []string {
 	parts := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return r == ' ' || r == ',' || r == '.' || r == '/' || r == '_' || r == '-' || r == ':' || r == '\n'
@@ -77,6 +81,7 @@ func tokenize(text string) []string {
 	return result
 }
 
+// normalize removes separators so related fault type names compare cleanly.
 func normalize(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, "_", "")
