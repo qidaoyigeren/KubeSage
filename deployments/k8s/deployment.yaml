@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubesage
+  namespace: kubesage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubesage
+  template:
+    metadata:
+      labels:
+        app: kubesage
+    spec:
+      serviceAccountName: kubesage
+      containers:
+        - name: kubesage
+          image: kubesage:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: KUBESAGE_MYSQL_HOST
+              value: "mysql"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubesage
+  namespace: kubesage
+spec:
+  selector:
+    app: kubesage
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

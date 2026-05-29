@@ -1,0 +1,178 @@
+# KubeSage
+
+KubeSage 是一个面向 Kubernetes 高频 Pod 故障的智能 RCA Agent MVP，当前聚焦：
+
+- CrashLoopBackOff
+- OOMKilled
+- Pod Pending
+- Readiness / Liveness Probe Failed
+
+MVP 只做诊断，不做自动修复。报告中的建议动作会标注风险等级和 `need_human_confirm`。
+
+## 技术栈
+
+- Go + Gin
+- client-go
+- MySQL + GORM
+- Viper
+- Zap
+- Docker Compose
+- 预留 Prometheus、Loki、Runbook RAG、Alertmanager Webhook 扩展点
+
+## MySQL
+
+默认配置连接本机或外部 MySQL，不会自动通过 Docker 启动 MySQL。
+
+请先自行创建数据库和账号，也可以直接执行 `scripts/init.sql` 中的 SQL。
+
+默认连接配置见 `configs/config.yaml`：
+
+```yaml
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  username: "kubesage"
+  password: "kubesage"
+  database: "kubesage"
+```
+
+如果临时想用 Docker 启动 MySQL，可以显式启用 compose profile：
+
+```bash
+docker compose -f deployments/docker-compose.yaml --profile mysql up -d
+```
+
+## 配置 kubeconfig
+
+编辑 `configs/config.yaml`：
+
+```yaml
+kubernetes:
+  kubeconfig: "~/.kube/config"
+```
+
+服务会使用本地 kubeconfig 读取 Kubernetes 集群。当前 RBAC 只需要只读权限：Pods、Pod logs、Events、Services、Endpoints、Nodes、ReplicaSets、Deployments。
+
+## 启动服务
+
+```bash
+go mod tidy
+go run ./cmd/server
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:8080/health
+```
+
+## Pod 诊断接口
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/diagnose/pod \
+  -H "Content-Type: application/json" \
+  -d '{
+    "namespace": "default",
+    "pod_name": "example-pod",
+    "include_logs": true,
+    "include_events": true,
+    "include_metrics": false
+  }'
+```
+
+返回任务 ID 后查询详情：
+
+```bash
+curl http://127.0.0.1:8080/api/v1/diagnose/tasks/1
+```
+
+分页查询任务：
+
+```bash
+curl "http://127.0.0.1:8080/api/v1/diagnose/tasks?page=1&page_size=20"
+```
+
+## Alertmanager Webhook
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/v1/alertmanager/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alerts": [
+      {
+        "status": "firing",
+        "labels": {
+          "alertname": "KubePodCrashLooping",
+          "namespace": "default",
+          "pod": "example-pod"
+        }
+      }
+    ]
+  }'
+```
+
+## 示例诊断报告 JSON
+
+```json
+{
+  "task_id": 1,
+  "namespace": "default",
+  "pod_name": "api-7c9c9d6b5d-abcde",
+  "fault_type": "CrashLoopBackOff",
+  "root_cause_summary": "容器退出码为 1，更倾向应用启动失败、配置错误或依赖不可用。",
+  "confidence_score": 0.82,
+  "evidences": [
+    {
+      "source_type": "k8s_pod_status",
+      "title": "Container restart evidence",
+      "content": "container=api restartCount=8 lastReason=Error exitCode=1",
+      "severity": "warning"
+    },
+    {
+      "source_type": "k8s_event",
+      "title": "BackOff",
+      "content": "Back-off restarting failed container api in pod api-7c9c9d6b5d-abcde",
+      "severity": "warning"
+    },
+    {
+      "source_type": "runbook",
+      "title": "crashloopbackoff / 推荐排查步骤",
+      "content": "查看 lastState.terminated.reason、exitCode、finishedAt，并查看 previous logs。",
+      "severity": "info"
+    }
+  ],
+  "impact_analysis": "该 Pod 可能无法稳定提供服务；如果 Deployment 其他副本不足，可能造成业务不可用。",
+  "suggested_actions": [
+    "查看 previous logs 中的启动错误栈和最近发布变更。",
+    "确认启动命令、配置文件、环境变量、依赖服务地址和端口是否正确。"
+  ],
+  "risk_level": "medium",
+  "need_human_confirm": true,
+  "generated_at": "2026-05-29T10:00:00+08:00"
+}
+```
+
+## 项目结构
+
+```text
+cmd/server              程序入口
+configs                 配置文件
+internal/api            Gin 路由、统一响应、HTTP handler
+internal/service        诊断任务编排
+internal/k8s            Kubernetes 采集器
+internal/diagnostic     诊断引擎与 analyzer
+internal/repository     GORM 数据访问
+internal/prometheus     Prometheus 查询预留实现
+internal/rag            Runbook 关键词检索 MVP
+internal/tool           未来 Agent tool 抽象
+runbooks                四类故障 runbook
+deployments             Docker Compose 和 Kubernetes 部署模板
+scripts                 初始化脚本
+```
+
+## 扩展建议
+
+- Prometheus：在 `internal/prometheus/client.go` 中扩展 query_range 解析和指标证据入库。
+- Loki：将 `internal/tool/loki_tool.go` 替换为真实 Loki client，保留 Kubernetes Pod logs 作为 fallback。
+- Runbook RAG：将 `rag.Retriever` 接口接入 Qdrant 或 pgvector。
+- Alertmanager：扩展 label 映射，支持从 owner references 反查工作负载。
