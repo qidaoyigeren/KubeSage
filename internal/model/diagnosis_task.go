@@ -14,6 +14,8 @@ type DiagnosisTask struct {
 	Namespace        string           `json:"namespace" gorm:"size:128;index;not null"`
 	PodName          string           `json:"pod_name" gorm:"size:255;index;not null"`
 	Status           string           `json:"status" gorm:"size:32;index;not null"`
+	AlertName        string           `json:"alert_name" gorm:"size:128;index"`
+	AlertSeverity    string           `json:"alert_severity" gorm:"size:64;index"`
 	FaultType        string           `json:"fault_type" gorm:"size:64;index"`
 	RootCauseSummary string           `json:"root_cause_summary" gorm:"type:text"`
 	ConfidenceScore  float64          `json:"confidence_score"`

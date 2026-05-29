@@ -8,6 +8,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
@@ -41,10 +42,11 @@ func (c *TopologyCollector) Collect(ctx context.Context, pod *corev1.Pod) (*diag
 		info.ReplicaSetName = rs.Name
 		if deploy := c.findDeployment(ctx, rs); deploy != nil {
 			info.DeploymentName = deploy.Name
-			info.OtherPods = c.listDeploymentPods(ctx, deploy, pod.Name)
+			info.OtherPods, info.Workload = c.collectDeploymentPods(ctx, deploy, pod.Name)
 		}
 	}
 	info.SelectedServices, info.EndpointSummaries = c.findSelectedServices(ctx, pod)
+	info.Node = c.getNodeHealth(ctx, pod.Spec.NodeName)
 	return info, nil
 }
 
@@ -76,26 +78,46 @@ func (c *TopologyCollector) findDeployment(ctx context.Context, rs *appsv1.Repli
 	return nil
 }
 
-// listDeploymentPods lists sibling pods owned by the same Deployment.
-func (c *TopologyCollector) listDeploymentPods(ctx context.Context, deploy *appsv1.Deployment, currentPodName string) []diagnostic.PodBrief {
-	selector := labels.Set(deploy.Spec.Selector.MatchLabels).String()
-	pods, err := c.client.Clientset.CoreV1().Pods(deploy.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+// collectDeploymentPods lists sibling pods and summarizes their health.
+func (c *TopologyCollector) collectDeploymentPods(ctx context.Context, deploy *appsv1.Deployment, currentPodName string) ([]diagnostic.PodBrief, *diagnostic.WorkloadInfo) {
+	selector, err := metav1.LabelSelectorAsSelector(deploy.Spec.Selector)
 	if err != nil {
-		return nil
+		return nil, nil
+	}
+	pods, err := c.client.Clientset.CoreV1().Pods(deploy.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
+	if err != nil {
+		return nil, nil
+	}
+	desired := int32(0)
+	if deploy.Spec.Replicas != nil {
+		desired = *deploy.Spec.Replicas
+	}
+	workload := &diagnostic.WorkloadInfo{
+		Kind:            "Deployment",
+		Name:            deploy.Name,
+		DesiredReplicas: desired,
+		TotalPods:       len(pods.Items),
 	}
 	result := make([]diagnostic.PodBrief, 0, len(pods.Items))
 	for _, item := range pods.Items {
+		brief := podBrief(item)
 		if item.Name == currentPodName {
 			continue
 		}
-		result = append(result, diagnostic.PodBrief{
-			Name:     item.Name,
-			Phase:    string(item.Status.Phase),
-			Ready:    podReady(item),
-			Restarts: totalRestarts(item),
-		})
+		result = append(result, brief)
+		workload.OtherPods++
+		workload.OtherRestartCount += brief.Restarts
+		if item.Status.Phase == corev1.PodRunning {
+			workload.OtherRunning++
+		}
+		if brief.Ready {
+			workload.OtherReady++
+		}
+		if brief.Abnormal {
+			workload.OtherAbnormal++
+		}
 	}
-	return result
+	return result, workload
 }
 
 // findSelectedServices finds Services whose selectors match the pod labels.
@@ -110,29 +132,63 @@ func (c *TopologyCollector) findSelectedServices(ctx context.Context, pod *corev
 		if len(service.Spec.Selector) == 0 || !selectorMatches(service.Spec.Selector, pod.Labels) {
 			continue
 		}
-		readyCount := c.countReadyEndpoints(ctx, pod.Namespace, service.Name)
+		endpointSummary := c.countAvailableEndpointSlices(ctx, pod.Namespace, service.Name)
 		serviceBriefs = append(serviceBriefs, diagnostic.ServiceBrief{
-			Name:      service.Name,
-			Type:      string(service.Spec.Type),
-			Selector:  service.Spec.Selector,
-			Endpoints: readyCount,
+			Name:               service.Name,
+			Type:               string(service.Spec.Type),
+			Selector:           service.Spec.Selector,
+			AvailableEndpoints: endpointSummary.AvailableEndpoints,
 		})
-		endpointBriefs = append(endpointBriefs, diagnostic.EndpointBrief{ServiceName: service.Name, ReadyCount: readyCount})
+		endpointBriefs = append(endpointBriefs, endpointSummary)
 	}
 	return serviceBriefs, endpointBriefs
 }
 
-// countReadyEndpoints counts ready endpoint addresses for a Service.
-func (c *TopologyCollector) countReadyEndpoints(ctx context.Context, namespace, serviceName string) int {
-	endpoints, err := c.client.Clientset.CoreV1().Endpoints(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+// countAvailableEndpointSlices counts available EndpointSlice endpoints for a
+// Service.
+func (c *TopologyCollector) countAvailableEndpointSlices(ctx context.Context, namespace, serviceName string) diagnostic.EndpointBrief {
+	summary := diagnostic.EndpointBrief{ServiceName: serviceName}
+	selector := labels.Set{discoveryv1.LabelServiceName: serviceName}.String()
+	slices, err := c.client.Clientset.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return 0
+		return summary
 	}
-	count := 0
-	for _, subset := range endpoints.Subsets {
-		count += len(subset.Addresses)
+	summary.EndpointSlices = len(slices.Items)
+	for _, slice := range slices.Items {
+		for _, endpoint := range slice.Endpoints {
+			if endpoint.Conditions.Ready != nil && !*endpoint.Conditions.Ready {
+				continue
+			}
+			summary.AvailableEndpoints += len(endpoint.Addresses)
+		}
 	}
-	return count
+	return summary
+}
+
+// getNodeHealth loads pressure and Ready conditions for the pod's node.
+func (c *TopologyCollector) getNodeHealth(ctx context.Context, nodeName string) *diagnostic.NodeHealth {
+	if nodeName == "" {
+		return nil
+	}
+	node, err := c.client.Clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	health := &diagnostic.NodeHealth{Name: node.Name}
+	for _, condition := range node.Status.Conditions {
+		isTrue := condition.Status == corev1.ConditionTrue
+		switch condition.Type {
+		case corev1.NodeReady:
+			health.Ready = isTrue
+		case corev1.NodeMemoryPressure:
+			health.MemoryPressure = isTrue
+		case corev1.NodeDiskPressure:
+			health.DiskPressure = isTrue
+		case corev1.NodePIDPressure:
+			health.PIDPressure = isTrue
+		}
+	}
+	return health
 }
 
 // selectorMatches reports whether all selector labels are present on the pod.
@@ -153,6 +209,19 @@ func podReady(pod corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// podBrief converts a Kubernetes Pod into the compact topology shape.
+func podBrief(pod corev1.Pod) diagnostic.PodBrief {
+	ready := podReady(pod)
+	phase := string(pod.Status.Phase)
+	return diagnostic.PodBrief{
+		Name:     pod.Name,
+		Phase:    phase,
+		Ready:    ready,
+		Abnormal: pod.Status.Phase != corev1.PodRunning || !ready,
+		Restarts: totalRestarts(pod),
+	}
 }
 
 // totalRestarts sums restart counts across all containers in a pod.

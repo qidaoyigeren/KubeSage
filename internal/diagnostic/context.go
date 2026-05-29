@@ -44,28 +44,52 @@ type TopologyInfo struct {
 	ReplicaSetName    string          `json:"replica_set_name,omitempty"`
 	DeploymentName    string          `json:"deployment_name,omitempty"`
 	NodeName          string          `json:"node_name,omitempty"`
+	Workload          *WorkloadInfo   `json:"workload,omitempty"`
 	OtherPods         []PodBrief      `json:"other_pods,omitempty"`
 	SelectedServices  []ServiceBrief  `json:"selected_services,omitempty"`
 	EndpointSummaries []EndpointBrief `json:"endpoint_summaries,omitempty"`
+	Node              *NodeHealth     `json:"node,omitempty"`
 }
 
 type PodBrief struct {
 	Name     string `json:"name"`
 	Phase    string `json:"phase"`
 	Ready    bool   `json:"ready"`
+	Abnormal bool   `json:"abnormal"`
 	Restarts int32  `json:"restarts"`
 }
 
+type WorkloadInfo struct {
+	Kind              string `json:"kind,omitempty"`
+	Name              string `json:"name,omitempty"`
+	DesiredReplicas   int32  `json:"desired_replicas"`
+	TotalPods         int    `json:"total_pods"`
+	OtherPods         int    `json:"other_pods"`
+	OtherRunning      int    `json:"other_running"`
+	OtherReady        int    `json:"other_ready"`
+	OtherAbnormal     int    `json:"other_abnormal"`
+	OtherRestartCount int32  `json:"other_restart_count"`
+}
+
 type ServiceBrief struct {
-	Name      string            `json:"name"`
-	Type      string            `json:"type"`
-	Selector  map[string]string `json:"selector"`
-	Endpoints int               `json:"endpoints"`
+	Name               string            `json:"name"`
+	Type               string            `json:"type"`
+	Selector           map[string]string `json:"selector"`
+	AvailableEndpoints int               `json:"available_endpoints"`
 }
 
 type EndpointBrief struct {
-	ServiceName string `json:"service_name"`
-	ReadyCount  int    `json:"ready_count"`
+	ServiceName        string `json:"service_name"`
+	AvailableEndpoints int    `json:"available_endpoints"`
+	EndpointSlices     int    `json:"endpoint_slices"`
+}
+
+type NodeHealth struct {
+	Name           string `json:"name"`
+	Ready          bool   `json:"ready"`
+	MemoryPressure bool   `json:"memory_pressure"`
+	DiskPressure   bool   `json:"disk_pressure"`
+	PIDPressure    bool   `json:"pid_pressure"`
 }
 
 type NodeSnapshot struct {

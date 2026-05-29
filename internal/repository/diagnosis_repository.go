@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"kubesage/internal/model"
 
@@ -48,6 +49,23 @@ func (r *DiagnosisRepository) GetByID(ctx context.Context, id uint) (*model.Diag
 	}
 	if task.Report != nil {
 		task.Report.Evidences = task.Evidences
+	}
+	return &task, nil
+}
+
+// FindRecentAlertTask finds an existing task for the same alert fingerprint
+// inside the deduplication window.
+func (r *DiagnosisRepository) FindRecentAlertTask(ctx context.Context, namespace, podName, alertName string, since time.Time) (*model.DiagnosisTask, error) {
+	var task model.DiagnosisTask
+	err := r.db.WithContext(ctx).
+		Where("namespace = ? AND pod_name = ? AND alert_name = ? AND created_at >= ?", namespace, podName, alertName, since).
+		Order("id desc").
+		First(&task).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
 	}
 	return &task, nil
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"kubesage/internal/config"
@@ -22,10 +23,28 @@ type PodDiagnosisRequest struct {
 	Namespace      string     `json:"namespace" binding:"required"`
 	PodName        string     `json:"pod_name" binding:"required"`
 	ContainerName  string     `json:"container_name"`
+	ExpectedFault  string     `json:"expected_fault_type"`
+	AlertName      string     `json:"alert_name"`
+	AlertSeverity  string     `json:"alert_severity"`
 	IncludeLogs    bool       `json:"include_logs"`
 	IncludeEvents  bool       `json:"include_events"`
 	IncludeMetrics bool       `json:"include_metrics"`
 	AlertTime      *time.Time `json:"alert_time"`
+}
+
+type AlertDiagnosisRequest struct {
+	Namespace     string
+	PodName       string
+	ContainerName string
+	AlertName     string
+	Severity      string
+	FaultType     string
+	AlertTime     *time.Time
+}
+
+type AlertDiagnosisResult struct {
+	Task    *model.DiagnosisTask
+	Deduped bool
 }
 
 type DiagnosisServiceOptions struct {
@@ -51,6 +70,7 @@ type DiagnosisService struct {
 	prometheusClient *prometheus.Client
 	runbookRetriever rag.Retriever
 	engine           *diagnostic.DiagnosisEngine
+	alertDedupMu     sync.Mutex
 }
 
 // NewDiagnosisService wires repositories, collectors, analyzers, and optional
@@ -83,9 +103,12 @@ func (s *DiagnosisService) StartPodDiagnosis(ctx context.Context, req PodDiagnos
 		req.IncludeMetrics = true
 	}
 	task := &model.DiagnosisTask{
-		Namespace: req.Namespace,
-		PodName:   req.PodName,
-		Status:    model.TaskStatusRunning,
+		Namespace:     req.Namespace,
+		PodName:       req.PodName,
+		Status:        model.TaskStatusRunning,
+		AlertName:     req.AlertName,
+		AlertSeverity: req.AlertSeverity,
+		FaultType:     req.ExpectedFault,
 	}
 	if err := s.taskRepo.Create(ctx, task); err != nil {
 		return nil, err
@@ -251,17 +274,37 @@ func normalizeRisk(risk string) string {
 	}
 }
 
-// TriggerFromAlert starts a pod diagnosis from an Alertmanager alert mapping.
-func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, namespace, podName, alertName string, alertTime *time.Time) (*model.DiagnosisTask, error) {
-	if namespace == "" || podName == "" {
-		return nil, fmt.Errorf("namespace and pod_name are required in alert %s", alertName)
+// TriggerFromAlert starts or reuses a pod diagnosis from an Alertmanager alert.
+func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, req AlertDiagnosisRequest) (*AlertDiagnosisResult, error) {
+	if req.Namespace == "" || req.PodName == "" {
+		return nil, fmt.Errorf("namespace and pod_name are required in alert %s", req.AlertName)
 	}
-	return s.StartPodDiagnosis(ctx, PodDiagnosisRequest{
-		Namespace:      namespace,
-		PodName:        podName,
+	if req.AlertName != "" {
+		s.alertDedupMu.Lock()
+		defer s.alertDedupMu.Unlock()
+		since := time.Now().Add(-5 * time.Minute)
+		existing, err := s.taskRepo.FindRecentAlertTask(ctx, req.Namespace, req.PodName, req.AlertName, since)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return &AlertDiagnosisResult{Task: existing, Deduped: true}, nil
+		}
+	}
+	task, err := s.StartPodDiagnosis(ctx, PodDiagnosisRequest{
+		Namespace:      req.Namespace,
+		PodName:        req.PodName,
+		ContainerName:  req.ContainerName,
+		ExpectedFault:  req.FaultType,
+		AlertName:      req.AlertName,
+		AlertSeverity:  req.Severity,
 		IncludeLogs:    true,
 		IncludeEvents:  true,
 		IncludeMetrics: true,
-		AlertTime:      alertTime,
+		AlertTime:      req.AlertTime,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return &AlertDiagnosisResult{Task: task}, nil
 }

@@ -51,7 +51,20 @@ kubernetes:
   kubeconfig: "~/.kube/config"
 ```
 
-服务会使用本地 kubeconfig 读取 Kubernetes 集群。当前 RBAC 只需要只读权限：Pods、Pod logs、Events、Services、Endpoints、Nodes、ReplicaSets、Deployments。
+服务会使用本地 kubeconfig 读取 Kubernetes 集群。当前 RBAC 只需要只读权限：Pods、Pod logs、Events、Services、Endpoints、EndpointSlices、Nodes、ReplicaSets、Deployments。
+
+## Kubernetes 拓扑分析
+
+诊断时会同时采集当前 Pod 的原生拓扑信息，并作为 `source_type=k8s_topology` 的 evidence 保存：
+
+- 通过 `ownerReferences` 找到所属 ReplicaSet
+- 通过 ReplicaSet 继续找到所属 Deployment
+- 汇总同 Deployment 下其他 Pod 的 running、ready、abnormal 和 restart count
+- 查询 selector 命中当前 Pod 的 Service
+- 查询这些 Service 的 EndpointSlice，并统计可用 endpoints 数量
+- 查询当前 Pod 所在 Node 的 Ready、MemoryPressure、DiskPressure、PIDPressure
+
+报告的 `impact_analysis` 会结合拓扑信息补充影响判断：多副本且其他副本正常时影响较低；Service endpoints 全部不可用时影响较高；Node 存在 Pressure 时提示可能是节点级问题。
 
 ## Prometheus 配置
 
@@ -135,21 +148,88 @@ curl "http://127.0.0.1:8080/api/v1/diagnose/tasks?page=1&page_size=20"
 
 ## Alertmanager Webhook
 
+KubeSage 暴露 Alertmanager 标准 webhook 接口：
+
+```text
+POST /api/v1/alertmanager/webhook
+```
+
+Alertmanager receiver 示例：
+
+```yaml
+receivers:
+  - name: kubesage
+    webhook_configs:
+      - url: http://kubesage.kubesage.svc.cluster.local:8080/api/v1/alertmanager/webhook
+        send_resolved: false
+```
+
+Webhook 会从每条 alert 的 `labels` 中读取：
+
+- `namespace`
+- `pod`
+- `container`
+- `alertname`
+- `severity`
+
+如果 `pod` label 不存在，会尝试从 `annotations.description` 中解析 Pod 名称。当前内置告警类型映射：
+
+| alertname | fault_type |
+| --- | --- |
+| `KubePodCrashLooping` | `CrashLoopBackOff` |
+| `KubePodOOMKilled` | `OOMKilled` |
+| `KubePodNotReady` | `ProbeFailed/Pending` |
+| `KubePodPending` | `Pending` |
+
+相同 `namespace + pod + alertname` 在 5 分钟内只会创建一个诊断任务，重复 webhook 会返回已有 `task_id`，并标记 `deduped=true`。
+
 ```bash
 curl -X POST http://127.0.0.1:8080/api/v1/alertmanager/webhook \
   -H "Content-Type: application/json" \
   -d '{
+    "receiver": "kubesage",
+    "status": "firing",
     "alerts": [
       {
         "status": "firing",
         "labels": {
           "alertname": "KubePodCrashLooping",
           "namespace": "default",
-          "pod": "example-pod"
-        }
+          "pod": "example-pod",
+          "container": "app",
+          "severity": "warning"
+        },
+        "annotations": {
+          "description": "Pod example-pod is crash looping"
+        },
+        "startsAt": "2026-05-29T10:00:00+08:00"
       }
     ]
   }'
+```
+
+返回示例：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "tasks": [
+      {
+        "task_id": 1,
+        "namespace": "default",
+        "pod_name": "example-pod",
+        "container_name": "app",
+        "alertname": "KubePodCrashLooping",
+        "severity": "warning",
+        "fault_type": "CrashLoopBackOff",
+        "deduped": false,
+        "skipped": false
+      }
+    ]
+  }
+}
 ```
 
 ## 示例诊断报告 JSON
