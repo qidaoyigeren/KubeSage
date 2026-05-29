@@ -42,7 +42,9 @@ type KubernetesConfig struct {
 }
 
 type DiagnosisConfig struct {
-	TaskTimeoutSeconds int `mapstructure:"task_timeout_seconds"`
+	TaskTimeoutSeconds     int `mapstructure:"task_timeout_seconds"`
+	LogWindowBeforeSeconds int `mapstructure:"log_window_before_seconds"`
+	LogWindowAfterSeconds  int `mapstructure:"log_window_after_seconds"`
 }
 
 type PrometheusConfig struct {
@@ -94,6 +96,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kubernetes.request_timeout_seconds", 15)
 	v.SetDefault("kubernetes.default_log_tail_lines", 200)
 	v.SetDefault("diagnosis.task_timeout_seconds", 60)
+	v.SetDefault("diagnosis.log_window_before_seconds", 120)
+	v.SetDefault("diagnosis.log_window_after_seconds", 60)
 	v.SetDefault("prometheus.timeout_seconds", 10)
 	v.SetDefault("runbook.dir", "./runbooks")
 	v.SetDefault("log.level", "info")

@@ -73,6 +73,26 @@ export KUBESAGE_PROMETHEUS_BASE_URL=http://127.0.0.1:9090
 
 如果 Prometheus 未配置、不可访问或查询不到数据，诊断任务不会失败；系统会保存一条 `source_type=prometheus`、`severity=warning` 的 evidence，说明指标查询被跳过或失败。
 
+## 精准日志窗口
+
+OOMKilled、CrashLoopBackOff 和 Probe Failed 诊断会优先根据故障时间抓取关键窗口内日志，而不是只取最近日志。故障时间来源优先级为：
+
+1. Pod `lastState.terminated.finishedAt`
+2. Pod Events 的 `lastTimestamp`
+3. API 或 Alertmanager 传入的 `alert_time` / `startsAt`
+
+窗口配置在 `configs/config.yaml`：
+
+```yaml
+diagnosis:
+  log_window_before_seconds: 120
+  log_window_after_seconds: 60
+```
+
+日志采集会用 Kubernetes Pod logs 的 `SinceTime` 查询窗口开始时间，并在本地过滤窗口结束之后的日志。`previous` logs 也会一起采集。若无法确定 `fault_time`，会退化为最近 200 行日志。
+
+命中关键字的日志会作为独立 evidence 保存，`source_type=k8s_key_log`，便于报告中单独查看关键日志片段。
+
 ## 启动服务
 
 ```bash
@@ -96,7 +116,8 @@ curl -X POST http://127.0.0.1:8080/api/v1/diagnose/pod \
     "pod_name": "example-pod",
     "include_logs": true,
     "include_events": true,
-    "include_metrics": true
+    "include_metrics": true,
+    "alert_time": "2026-05-29T10:00:00+08:00"
   }'
 ```
 

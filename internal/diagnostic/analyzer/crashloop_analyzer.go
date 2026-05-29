@@ -96,7 +96,7 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 
 	for _, logs := range ctx.Logs {
 		text := strings.ToLower(logs.Previous + "\n" + logs.Current)
-		if containsAny(text, []string{"config", "env", "missing", "refused", "timeout"}) {
+		if containsAny(text, crashLoopLogKeywords) {
 			evidences = append(evidences, diagnostic.EvidenceRecord{
 				SourceType: "k8s_log",
 				Title:      "Suspicious startup log keywords",
@@ -108,6 +108,8 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 			actions = append(actions, "日志出现 config/env/missing/refused/timeout 等关键词，请核对配置、环境变量和下游依赖。")
 		}
 	}
+
+	evidences = append(evidences, keyLogEvidences(ctx.Logs, "Key CrashLoopBackOff log fragments", crashLoopLogKeywords, "warning")...)
 
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),

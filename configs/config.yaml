@@ -21,6 +21,8 @@ kubernetes:
 
 diagnosis:
   task_timeout_seconds: 60
+  log_window_before_seconds: 120
+  log_window_after_seconds: 60
 
 prometheus:
   base_url: ""

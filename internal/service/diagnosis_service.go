@@ -19,12 +19,13 @@ import (
 )
 
 type PodDiagnosisRequest struct {
-	Namespace      string `json:"namespace" binding:"required"`
-	PodName        string `json:"pod_name" binding:"required"`
-	ContainerName  string `json:"container_name"`
-	IncludeLogs    bool   `json:"include_logs"`
-	IncludeEvents  bool   `json:"include_events"`
-	IncludeMetrics bool   `json:"include_metrics"`
+	Namespace      string     `json:"namespace" binding:"required"`
+	PodName        string     `json:"pod_name" binding:"required"`
+	ContainerName  string     `json:"container_name"`
+	IncludeLogs    bool       `json:"include_logs"`
+	IncludeEvents  bool       `json:"include_events"`
+	IncludeMetrics bool       `json:"include_metrics"`
+	AlertTime      *time.Time `json:"alert_time"`
 }
 
 type DiagnosisServiceOptions struct {
@@ -251,7 +252,7 @@ func normalizeRisk(risk string) string {
 }
 
 // TriggerFromAlert starts a pod diagnosis from an Alertmanager alert mapping.
-func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, namespace, podName, alertName string) (*model.DiagnosisTask, error) {
+func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, namespace, podName, alertName string, alertTime *time.Time) (*model.DiagnosisTask, error) {
 	if namespace == "" || podName == "" {
 		return nil, fmt.Errorf("namespace and pod_name are required in alert %s", alertName)
 	}
@@ -261,5 +262,6 @@ func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, namespace, podN
 		IncludeLogs:    true,
 		IncludeEvents:  true,
 		IncludeMetrics: true,
+		AlertTime:      alertTime,
 	})
 }

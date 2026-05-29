@@ -19,6 +19,11 @@ type DiagnosticContext struct {
 	Topology       *TopologyInfo
 	NodeSnapshots  []NodeSnapshot
 	RunbookHits    []RunbookHit
+	FaultTime      time.Time
+	LogWindowStart time.Time
+	LogWindowEnd   time.Time
+	LogsPrecise    bool
+	LogFallback    string
 	// MetricsEnabled is controlled by the API request. Analyzers should use it
 	// to decide whether optional metric enrichment should run.
 	MetricsEnabled bool
@@ -28,6 +33,11 @@ type ContainerLogs struct {
 	ContainerName string
 	Current       string
 	Previous      string
+	FaultTime     time.Time `json:"fault_time,omitempty"`
+	WindowStart   time.Time `json:"window_start,omitempty"`
+	WindowEnd     time.Time `json:"window_end,omitempty"`
+	Precise       bool      `json:"precise"`
+	Fallback      string    `json:"fallback,omitempty"`
 }
 
 type TopologyInfo struct {

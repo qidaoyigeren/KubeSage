@@ -2,6 +2,7 @@ package alertmanager
 
 import (
 	"net/http"
+	"time"
 
 	"kubesage/internal/service"
 
@@ -22,6 +23,7 @@ type Alert struct {
 	Status      string            `json:"status"`
 	Labels      map[string]string `json:"labels"`
 	Annotations map[string]string `json:"annotations"`
+	StartsAt    time.Time         `json:"startsAt"`
 }
 
 // NewWebhookHandler creates the Alertmanager webhook HTTP handler.
@@ -42,7 +44,11 @@ func (h *WebhookHandler) Handle(c *gin.Context) {
 		namespace := firstNonEmpty(alert.Labels["namespace"], alert.Labels["kubernetes_namespace"])
 		podName := firstNonEmpty(alert.Labels["pod"], alert.Labels["pod_name"], alert.Labels["kubernetes_pod_name"])
 		alertName := alert.Labels["alertname"]
-		task, err := h.service.TriggerFromAlert(c.Request.Context(), namespace, podName, alertName)
+		var alertTime *time.Time
+		if !alert.StartsAt.IsZero() {
+			alertTime = &alert.StartsAt
+		}
+		task, err := h.service.TriggerFromAlert(c.Request.Context(), namespace, podName, alertName, alertTime)
 		if err != nil {
 			h.log.Warn("skip alert diagnosis", zap.String("alertname", alertName), zap.Error(err))
 			continue

@@ -124,6 +124,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 			})
 		}
 	}
+	evidences = append(evidences, keyLogEvidences(ctx.Logs, "Key OOMKilled log fragments", oomKilledLogKeywords, "critical")...)
 
 	sustainedNearLimit := false
 	if ctx.MetricsEnabled {

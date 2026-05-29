@@ -50,7 +50,7 @@ func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagn
 		evidences = append(evidences, probeEvidence(c.Name, "startupProbe", c.StartupProbe))
 	}
 	for _, logs := range ctx.Logs {
-		if containsAny(logs.Current+"\n"+logs.Previous, []string{"health", "ready", "live", "probe", "timeout", "connection refused"}) {
+		if containsAny(logs.Current+"\n"+logs.Previous, probeFailedLogKeywords) {
 			evidences = append(evidences, diagnostic.EvidenceRecord{
 				SourceType: "k8s_log",
 				Title:      "Health check related logs",
@@ -61,6 +61,7 @@ func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagn
 			})
 		}
 	}
+	evidences = append(evidences, keyLogEvidences(ctx.Logs, "Key Probe Failed log fragments", probeFailedLogKeywords, "warning")...)
 
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
