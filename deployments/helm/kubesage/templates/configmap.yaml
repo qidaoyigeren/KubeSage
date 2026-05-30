@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kubesage.fullname" . }}
+data:
+  config.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      read_timeout_seconds: 15
+      write_timeout_seconds: 30
+      auth_token: ""
+    mysql:
+      host: {{ .Values.config.mysql.host | quote }}
+      port: {{ .Values.config.mysql.port }}
+      username: {{ .Values.config.mysql.username | quote }}
+      password: ""
+      database: {{ .Values.config.mysql.database | quote }}
+      charset: "utf8mb4"
+      parse_time: true
+      loc: "Local"
+    kubernetes:
+      kubeconfig: {{ .Values.config.kubernetes.kubeconfig | quote }}
+      request_timeout_seconds: 15
+      default_log_tail_lines: 200
+    diagnosis:
+      task_timeout_seconds: {{ .Values.config.diagnosis.taskTimeoutSeconds }}
+      log_window_before_seconds: 120
+      log_window_after_seconds: 60
+      pod_lock_ttl_seconds: {{ .Values.config.diagnosis.podLockTTLSeconds }}
+      retry_max_attempts: 2
+      retry_initial_backoff_ms: 100
+      retry_max_backoff_ms: 1000
+    prometheus:
+      base_url: {{ .Values.config.prometheus.baseURL | quote }}
+      timeout_seconds: 10
+      retry_max_attempts: 2
+      retry_initial_backoff_ms: 100
+      retry_max_backoff_ms: 1000
+    llm:
+      enabled: {{ .Values.config.llm.enabled }}
+      base_url: {{ .Values.config.llm.baseURL | quote }}
+      api_key: ""
+      model: {{ .Values.config.llm.model | quote }}
+      retry_max_attempts: 2
+      retry_initial_backoff_ms: 200
+      retry_max_backoff_ms: 2000
+    loki:
+      enabled: {{ .Values.config.loki.enabled }}
+      base_url: {{ .Values.config.loki.baseURL | quote }}
+      tenant_id: {{ .Values.config.loki.tenantID | quote }}
+      timeout_seconds: 10
+    redis:
+      enabled: {{ .Values.config.redis.enabled }}
+      address: {{ .Values.config.redis.address | quote }}
+      password: ""
+      db: {{ .Values.config.redis.db }}
+      key_prefix: "kubesage"
+    otel:
+      enabled: {{ .Values.config.otel.enabled }}
+      service_name: "kubesage"
+      exporter: {{ .Values.config.otel.exporter | quote }}
+      endpoint: {{ .Values.config.otel.endpoint | quote }}
+      insecure: {{ .Values.config.otel.insecure }}
+    migrations:
+      enabled: true
+      dir: "./migrations"
+    runbook:
+      dir: "./runbooks"
+    log:
+      level: "info"
+      development: false

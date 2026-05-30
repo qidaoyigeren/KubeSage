@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,11 +12,18 @@ import (
 	"kubesage/internal/config"
 	"kubesage/internal/diagnostic"
 	diagnosticanalyzer "kubesage/internal/diagnostic/analyzer"
+	"kubesage/internal/llm"
 	"kubesage/internal/model"
+	"kubesage/internal/observability"
 	"kubesage/internal/prometheus"
 	"kubesage/internal/rag"
 	"kubesage/internal/repository"
+	"kubesage/internal/resilience"
 
+	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -56,7 +64,9 @@ type DiagnosisServiceOptions struct {
 	SnapshotService  *SnapshotService
 	ReportService    *ReportService
 	PrometheusClient *prometheus.Client
+	LLMClient        llm.LLMClient
 	RunbookRetriever rag.Retriever
+	RedisClient      *redis.Client
 }
 
 type DiagnosisService struct {
@@ -68,9 +78,11 @@ type DiagnosisService struct {
 	snapshotService  *SnapshotService
 	reportService    *ReportService
 	prometheusClient *prometheus.Client
+	llmClient        llm.LLMClient
 	runbookRetriever rag.Retriever
 	engine           *diagnostic.DiagnosisEngine
 	alertDedupMu     sync.Mutex
+	podLocks         diagnosisLock
 }
 
 // NewDiagnosisService wires repositories, collectors, analyzers, and optional
@@ -85,7 +97,9 @@ func NewDiagnosisService(opts DiagnosisServiceOptions) *DiagnosisService {
 		snapshotService:  opts.SnapshotService,
 		reportService:    opts.ReportService,
 		prometheusClient: opts.PrometheusClient,
+		llmClient:        opts.LLMClient,
 		runbookRetriever: opts.RunbookRetriever,
+		podLocks:         newDiagnosisLock(opts.Config.Redis, opts.RedisClient),
 		engine: diagnostic.NewDiagnosisEngine(
 			diagnosticanalyzer.NewCrashLoopBackOffAnalyzer(),
 			diagnosticanalyzer.NewOOMKilledAnalyzer(opts.PrometheusClient),
@@ -97,10 +111,24 @@ func NewDiagnosisService(opts DiagnosisServiceOptions) *DiagnosisService {
 
 // StartPodDiagnosis creates a task and runs the pod diagnosis asynchronously.
 func (s *DiagnosisService) StartPodDiagnosis(ctx context.Context, req PodDiagnosisRequest) (*model.DiagnosisTask, error) {
+	if err := ValidatePodDiagnosisRequest(req); err != nil {
+		return nil, err
+	}
 	if !req.IncludeEvents && !req.IncludeLogs && !req.IncludeMetrics {
 		req.IncludeEvents = true
 		req.IncludeLogs = true
 		req.IncludeMetrics = true
+	}
+	lockKey := podLockKey(req.Namespace, req.PodName)
+	if s.podLocks == nil {
+		s.podLocks = newDiagnosisLock(config.RedisConfig{}, nil)
+	}
+	lockToken, ok, err := s.podLocks.TryAcquire(ctx, lockKey, s.podLockTTL())
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: namespace=%s pod=%s", ErrDiagnosisAlreadyRunning, req.Namespace, req.PodName)
 	}
 	task := &model.DiagnosisTask{
 		Namespace:     req.Namespace,
@@ -111,10 +139,11 @@ func (s *DiagnosisService) StartPodDiagnosis(ctx context.Context, req PodDiagnos
 		FaultType:     req.ExpectedFault,
 	}
 	if err := s.taskRepo.Create(ctx, task); err != nil {
+		_ = s.podLocks.Release(ctx, lockKey, lockToken)
 		return nil, err
 	}
 
-	go s.runDiagnosis(task.ID, req)
+	go s.runDiagnosis(context.WithoutCancel(ctx), task.ID, req, lockKey, lockToken)
 	return task, nil
 }
 
@@ -134,19 +163,33 @@ func (s *DiagnosisService) ListTasks(ctx context.Context, page, pageSize int) ([
 
 // runDiagnosis collects snapshots, runs analyzers, persists evidence, and marks
 // the task final status.
-func (s *DiagnosisService) runDiagnosis(taskID uint, req PodDiagnosisRequest) {
+func (s *DiagnosisService) runDiagnosis(parentCtx context.Context, taskID uint, req PodDiagnosisRequest, lockKey, lockToken string) {
 	// The worker is read-only against Kubernetes: it collects snapshots, runs rules,
 	// and stores evidence/report rows. It never deletes or patches cluster objects.
+	defer func() { _ = s.podLocks.Release(context.Background(), lockKey, lockToken) }()
+	log := s.log.With(zap.Uint("task_id", taskID), zap.String("namespace", req.Namespace), zap.String("pod", req.PodName))
 	timeout := time.Duration(s.cfg.Diagnosis.TaskTimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	baseCtx := parentCtx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, timeout)
 	defer cancel()
+	ctx, span := observability.Tracer().Start(ctx, "diagnosis.run",
+		trace.WithAttributes(
+			attribute.Int64("task.id", int64(taskID)),
+			attribute.String("k8s.namespace", req.Namespace),
+			attribute.String("k8s.pod.name", req.PodName),
+		),
+	)
+	defer span.End()
 
 	task, err := s.taskRepo.GetByID(ctx, taskID)
 	if err != nil {
-		s.log.Error("load task failed", zap.Uint("task_id", taskID), zap.Error(err))
+		log.Error("load task failed", zap.Error(err))
 		return
 	}
 
@@ -162,25 +205,58 @@ func (s *DiagnosisService) runDiagnosis(taskID uint, req PodDiagnosisRequest) {
 			task.RootCauseSummary = failure.Error()
 		}
 		if err := s.taskRepo.Update(ctx, task); err != nil {
-			s.log.Error("update task failed", zap.Uint("task_id", taskID), zap.Error(err))
+			log.Error("update task failed", zap.Error(err))
 		}
+		observability.IncDiagnosisTotal(task.FaultType, status)
 	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err := fmt.Errorf("diagnosis worker panic: %v", recovered)
+			log.Error("diagnosis worker panic recovered", zap.Any("panic", recovered))
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			finish(model.TaskStatusFailed, nil, err)
+		}
+	}()
 
-	diagCtx, err := s.snapshotService.Collect(ctx, req)
+	start := time.Now()
+	snapshotCtx, stageSpan := observability.Tracer().Start(ctx, "diagnosis.snapshot")
+	diagCtx, err := s.snapshotService.Collect(snapshotCtx, req)
 	if err != nil {
+		stageSpan.RecordError(err)
+		stageSpan.SetStatus(codes.Error, err.Error())
+	}
+	stageSpan.End()
+	observability.ObserveDiagnosisStage("snapshot", time.Since(start))
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		finish(model.TaskStatusFailed, nil, err)
 		return
 	}
 
+	start = time.Now()
+	_, stageSpan = observability.Tracer().Start(ctx, "diagnosis.analyze")
 	report, err := s.engine.Diagnose(diagCtx)
 	if err != nil {
+		stageSpan.RecordError(err)
+		stageSpan.SetStatus(codes.Error, err.Error())
+	}
+	stageSpan.End()
+	observability.ObserveDiagnosisStage("analyze", time.Since(start))
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		finish(model.TaskStatusFailed, nil, err)
 		return
 	}
 
+	var runbookHits []rag.Hit
 	if s.runbookRetriever != nil {
 		hits, err := s.runbookRetriever.Retrieve(ctx, report.FaultType, report.RootCauseSummary, 3)
 		if err == nil {
+			runbookHits = hits
+			diagCtx.RunbookHits = toDiagnosticRunbookHits(hits)
 			for _, hit := range hits {
 				report.Evidences = append(report.Evidences, diagnostic.EvidenceRecord{
 					SourceType: "runbook",
@@ -193,20 +269,97 @@ func (s *DiagnosisService) runDiagnosis(taskID uint, req PodDiagnosisRequest) {
 			}
 		}
 	}
+	s.enhanceReportWithLLM(ctx, diagCtx, report, runbookHits)
 
+	start = time.Now()
+	_, stageSpan = observability.Tracer().Start(ctx, "diagnosis.persist")
 	evidences := toModelEvidences(taskID, report.Evidences)
 	if err := s.evidenceRepo.CreateBatch(ctx, evidences); err != nil {
+		stageSpan.RecordError(err)
+		stageSpan.SetStatus(codes.Error, err.Error())
+		stageSpan.End()
+		observability.ObserveDiagnosisStage("persist", time.Since(start))
 		finish(model.TaskStatusFailed, report, err)
 		return
 	}
 
 	reportModel := toModelReport(taskID, report, evidences)
 	if err := s.reportService.Save(ctx, reportModel); err != nil {
+		stageSpan.RecordError(err)
+		stageSpan.SetStatus(codes.Error, err.Error())
+		stageSpan.End()
+		observability.ObserveDiagnosisStage("persist", time.Since(start))
 		finish(model.TaskStatusFailed, report, err)
 		return
 	}
+	stageSpan.End()
+	observability.ObserveDiagnosisStage("persist", time.Since(start))
 
 	finish(model.TaskStatusSuccess, report, nil)
+}
+
+// enhanceReportWithLLM asks the LLM to summarize the rule report. Failures are
+// recorded as warning evidence and the rule-based report remains authoritative.
+func (s *DiagnosisService) enhanceReportWithLLM(ctx context.Context, diagCtx *diagnostic.DiagnosticContext, report *diagnostic.Report, runbookHits []rag.Hit) {
+	ruleResult := llm.RuleResultFromReport(report)
+	report.RuleBasedResult = ruleResult
+	if s.llmClient == nil {
+		return
+	}
+	prompt := llm.BuildPrompt(diagCtx, ruleResult, report.Evidences, runbookHits)
+	var summary *llm.EnhancedSummary
+	start := time.Now()
+	ctx, span := observability.Tracer().Start(ctx, "diagnosis.llm")
+	err := resilience.Do(ctx, s.llmRetryConfig(), func() error {
+		var err error
+		summary, err = s.llmClient.GenerateDiagnosisSummary(ctx, prompt)
+		return err
+	})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
+	observability.ObserveDiagnosisStage("llm", time.Since(start))
+	if err != nil {
+		observability.IncLLMCallTotal("failed")
+		s.log.Warn("llm enhancement failed; keep rule-based report", zap.Error(err))
+		report.Evidences = append(report.Evidences, diagnostic.EvidenceRecord{
+			SourceType: "llm",
+			Title:      "LLM enhancement failed",
+			Content:    err.Error(),
+			Severity:   "warning",
+			Raw:        map[string]string{"error": err.Error()},
+			Timestamp:  time.Now(),
+		})
+		return
+	}
+	observability.IncLLMCallTotal("success")
+	report.LLMEnhancedSummary = summary
+}
+
+// llmRetryConfig returns retry settings for optional LLM enhancement calls.
+func (s *DiagnosisService) llmRetryConfig() resilience.RetryConfig {
+	if s == nil || s.cfg == nil {
+		return resilience.FromMilliseconds(1, 0, 0)
+	}
+	return resilience.FromMilliseconds(
+		s.cfg.LLM.RetryMaxAttempts,
+		s.cfg.LLM.RetryInitialBackoffMS,
+		s.cfg.LLM.RetryMaxBackoffMS,
+	)
+}
+
+// toDiagnosticRunbookHits converts RAG hits into context runbook hits.
+func toDiagnosticRunbookHits(hits []rag.Hit) []diagnostic.RunbookHit {
+	result := make([]diagnostic.RunbookHit, 0, len(hits))
+	for _, hit := range hits {
+		result = append(result, diagnostic.RunbookHit{
+			Title:   hit.Title,
+			Content: hit.Content,
+		})
+	}
+	return result
 }
 
 // toModelEvidences converts in-memory evidence records into database models.
@@ -234,22 +387,38 @@ func toModelEvidences(taskID uint, records []diagnostic.EvidenceRecord) []model.
 // toModelReport converts an analyzer report into the persisted report model.
 func toModelReport(taskID uint, report *diagnostic.Report, evidences []model.Evidence) *model.DiagnosisReport {
 	actionsBytes, _ := json.Marshal(report.SuggestedActions)
+	remediationBytes, _ := json.Marshal(report.RemediationActions)
 	now := time.Now()
 	return &model.DiagnosisReport{
-		TaskID:           taskID,
-		Namespace:        report.Namespace,
-		PodName:          report.PodName,
-		FaultType:        report.FaultType,
-		RootCauseSummary: report.RootCauseSummary,
-		ConfidenceScore:  clamp(report.ConfidenceScore),
-		ImpactAnalysis:   report.ImpactAnalysis,
-		SuggestedActions: string(actionsBytes),
-		RiskLevel:        normalizeRisk(report.RiskLevel),
-		NeedHumanConfirm: report.NeedHumanConfirm,
-		CreatedAt:        now,
-		GeneratedAt:      now,
-		Evidences:        evidences,
+		TaskID:             taskID,
+		Namespace:          report.Namespace,
+		PodName:            report.PodName,
+		FaultType:          report.FaultType,
+		RootCauseSummary:   report.RootCauseSummary,
+		ConfidenceScore:    clamp(report.ConfidenceScore),
+		ImpactAnalysis:     report.ImpactAnalysis,
+		SuggestedActions:   string(actionsBytes),
+		RemediationActions: model.JSONText(remediationBytes),
+		RiskLevel:          normalizeRisk(report.RiskLevel),
+		NeedHumanConfirm:   report.NeedHumanConfirm,
+		RuleBasedResult:    marshalJSONField(report.RuleBasedResult),
+		LLMEnhancedSummary: marshalJSONField(report.LLMEnhancedSummary),
+		CreatedAt:          now,
+		GeneratedAt:        now,
+		Evidences:          evidences,
 	}
+}
+
+// marshalJSONField serializes optional structured report sections.
+func marshalJSONField(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	bytes, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(bytes)
 }
 
 // clamp keeps confidence scores inside the [0, 1] range.
@@ -307,4 +476,39 @@ func (s *DiagnosisService) TriggerFromAlert(ctx context.Context, req AlertDiagno
 		return nil, err
 	}
 	return &AlertDiagnosisResult{Task: task}, nil
+}
+
+// podLockTTL returns the configured duplicate diagnosis lock duration.
+func (s *DiagnosisService) podLockTTL() time.Duration {
+	if s == nil || s.cfg == nil || s.cfg.Diagnosis.PodLockTTLSeconds <= 0 {
+		return 5 * time.Minute
+	}
+	return time.Duration(s.cfg.Diagnosis.PodLockTTLSeconds) * time.Second
+}
+
+// diagnosisRetryConfig returns retry settings shared by read-only diagnosis calls.
+func (s *DiagnosisService) diagnosisRetryConfig() resilience.RetryConfig {
+	if s == nil || s.cfg == nil {
+		return resilience.FromMilliseconds(1, 0, 0)
+	}
+	return resilience.FromMilliseconds(
+		s.cfg.Diagnosis.RetryMaxAttempts,
+		s.cfg.Diagnosis.RetryInitialBackoffMS,
+		s.cfg.Diagnosis.RetryMaxBackoffMS,
+	)
+}
+
+// podLockKey builds a stable duplicate guard key.
+func podLockKey(namespace, podName string) string {
+	return namespace + "/" + podName
+}
+
+// IsInvalidDiagnosisRequest reports whether an error is request validation.
+func IsInvalidDiagnosisRequest(err error) bool {
+	return errors.Is(err, ErrInvalidDiagnosisRequest)
+}
+
+// IsDiagnosisAlreadyRunning reports whether a pod diagnosis lock is held.
+func IsDiagnosisAlreadyRunning(err error) bool {
+	return errors.Is(err, ErrDiagnosisAlreadyRunning)
 }

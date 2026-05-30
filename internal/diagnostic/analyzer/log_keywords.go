@@ -37,6 +37,7 @@ func keyLogEvidences(logs []diagnostic.ContainerLogs, title string, keywords []s
 		}{
 			{name: "previous", text: item.Previous},
 			{name: "current", text: item.Current},
+			{name: "loki", text: item.Loki},
 		} {
 			matches := matchingLogLines(source.text, keywords, 12)
 			if len(matches) == 0 {

@@ -10,7 +10,7 @@ metadata:
   name: kubesage-reader
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log", "events", "services", "endpoints", "nodes"]
+    resources: ["pods", "pods/log", "events", "services", "endpoints", "nodes", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["replicasets", "deployments"]

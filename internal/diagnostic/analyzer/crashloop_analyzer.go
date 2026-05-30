@@ -95,12 +95,12 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 	}
 
 	for _, logs := range ctx.Logs {
-		text := strings.ToLower(logs.Previous + "\n" + logs.Current)
+		text := strings.ToLower(logs.Previous + "\n" + logs.Current + "\n" + logs.Loki)
 		if containsAny(text, crashLoopLogKeywords) {
 			evidences = append(evidences, diagnostic.EvidenceRecord{
 				SourceType: "k8s_log",
 				Title:      "Suspicious startup log keywords",
-				Content:    trimLog(logs.ContainerName, logs.Previous, logs.Current),
+				Content:    trimLog(logs.ContainerName, logs.Previous, logs.Current, logs.Loki),
 				Severity:   "warning",
 				Raw:        logs,
 				Timestamp:  time.Now(),
@@ -110,6 +110,7 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 	}
 
 	evidences = append(evidences, keyLogEvidences(ctx.Logs, "Key CrashLoopBackOff log fragments", crashLoopLogKeywords, "warning")...)
+	confidence = crashLoopConfidence(ctx, evidences, confidence)
 
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
@@ -122,6 +123,27 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 		RiskLevel:        "medium",
 		NeedHumanConfirm: true,
 	}, nil
+}
+
+// crashLoopConfidence increases confidence when restart status, exit code, and
+// suspicious log evidence agree.
+func crashLoopConfidence(ctx *diagnostic.DiagnosticContext, evidences []diagnostic.EvidenceRecord, base float64) float64 {
+	score := base
+	if hasEvidence(evidences, "k8s_pod_status", "restart") {
+		score += 0.04
+	}
+	if hasEvidence(evidences, "k8s_key_log", "") {
+		score += 0.03
+	}
+	if ctx != nil && ctx.Pod != nil {
+		for _, status := range ctx.Pod.Status.ContainerStatuses {
+			if status.LastTerminationState.Terminated != nil && status.LastTerminationState.Terminated.FinishedAt.IsZero() == false {
+				score += 0.02
+				break
+			}
+		}
+	}
+	return clampConfidence(score)
 }
 
 // eventEvidence converts one Kubernetes Event into a diagnostic evidence row.
@@ -147,11 +169,16 @@ func containsAny(text string, keywords []string) bool {
 	return false
 }
 
-// trimLog chooses previous logs when available and caps stored log text size.
-func trimLog(containerName, previous, current string) string {
+// trimLog chooses previous/current/Loki logs in that order and caps stored text.
+func trimLog(containerName, previous, current string, extras ...string) string {
 	text := previous
 	if text == "" {
 		text = current
+	}
+	for _, extra := range extras {
+		if text == "" {
+			text = extra
+		}
 	}
 	if len(text) > 4000 {
 		text = text[len(text)-4000:]

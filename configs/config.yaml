@@ -3,6 +3,7 @@ server:
   port: 8080
   read_timeout_seconds: 15
   write_timeout_seconds: 30
+  auth_token: ""
 
 mysql:
   host: "127.0.0.1"
@@ -23,14 +24,50 @@ diagnosis:
   task_timeout_seconds: 60
   log_window_before_seconds: 120
   log_window_after_seconds: 60
+  pod_lock_ttl_seconds: 300
+  retry_max_attempts: 2
+  retry_initial_backoff_ms: 100
+  retry_max_backoff_ms: 1000
 
 prometheus:
   base_url: ""
   timeout_seconds: 10
+  retry_max_attempts: 2
+  retry_initial_backoff_ms: 100
+  retry_max_backoff_ms: 1000
+
+llm:
+  enabled: false
+  base_url: "https://api.deepseek.com"
+  api_key: ""
+  model: "deepseek-chat"
+  retry_max_attempts: 2
+  retry_initial_backoff_ms: 200
+  retry_max_backoff_ms: 2000
 
 loki:
-  address: ""
+  enabled: false
+  base_url: ""
+  tenant_id: ""
   timeout_seconds: 10
+
+redis:
+  enabled: false
+  address: "127.0.0.1:6379"
+  password: ""
+  db: 0
+  key_prefix: "kubesage"
+
+otel:
+  enabled: false
+  service_name: "kubesage"
+  exporter: "stdout"
+  endpoint: ""
+  insecure: true
+
+migrations:
+  enabled: true
+  dir: "./migrations"
 
 runbook:
   dir: "./runbooks"

@@ -16,6 +16,7 @@ type DiagnosticContext struct {
 	Pod            *corev1.Pod
 	Events         []corev1.Event
 	Logs           []ContainerLogs
+	PVCs           []PVCBrief
 	Topology       *TopologyInfo
 	NodeSnapshots  []NodeSnapshot
 	RunbookHits    []RunbookHit
@@ -33,11 +34,20 @@ type ContainerLogs struct {
 	ContainerName string
 	Current       string
 	Previous      string
+	Loki          string    `json:"loki,omitempty"`
 	FaultTime     time.Time `json:"fault_time,omitempty"`
 	WindowStart   time.Time `json:"window_start,omitempty"`
 	WindowEnd     time.Time `json:"window_end,omitempty"`
 	Precise       bool      `json:"precise"`
 	Fallback      string    `json:"fallback,omitempty"`
+}
+
+type PVCBrief struct {
+	Name         string `json:"name"`
+	Phase        string `json:"phase"`
+	StorageClass string `json:"storage_class,omitempty"`
+	VolumeName   string `json:"volume_name,omitempty"`
+	Capacity     string `json:"capacity,omitempty"`
 }
 
 type TopologyInfo struct {

@@ -42,6 +42,81 @@ mysql:
 docker compose -f deployments/docker-compose.yaml --profile mysql up -d
 ```
 
+## 可靠性、安全与可观测性
+
+KubeSage 当前内置了一组轻量级运行保护：
+
+- 手动 API 和 Alertmanager 触发都会经过同一个 per-pod TTL 锁。生产环境建议开启 Redis 分布式锁，默认 300 秒内同一 `namespace/pod` 只允许一个诊断任务运行。
+- 诊断 goroutine 内部带 `recover()`，panic 会把任务标记为 failed，并写入错误摘要。
+- Kubernetes、Prometheus、LLM 的只读调用支持指数退避重试。
+- `/healthz` 是轻量 liveness；`/readyz` 会检查 MySQL ping 和 Kubernetes API ping。
+- `/metrics` 通过 Prometheus `client_golang` 暴露指标：`diagnosis_total`、`diagnosis_duration_seconds` histogram、`llm_call_total`、`analyzer_match_total`。
+- OpenTelemetry trace 可贯穿 HTTP API、Snapshot、Analyze、LLM、Persist 阶段。
+
+API 认证可通过 Bearer token 开启：
+
+```yaml
+server:
+  auth_token: ""
+```
+
+生产环境建议只通过环境变量注入：
+
+```bash
+export KUBESAGE_SERVER_AUTH_TOKEN=change-me
+```
+
+开启后，`/api/v1/*` 需要携带：
+
+```bash
+Authorization: Bearer change-me
+```
+
+诊断可靠性参数：
+
+```yaml
+diagnosis:
+  task_timeout_seconds: 60
+  pod_lock_ttl_seconds: 300
+  retry_max_attempts: 2
+  retry_initial_backoff_ms: 100
+  retry_max_backoff_ms: 1000
+```
+
+Redis 分布式锁：
+
+```yaml
+redis:
+  enabled: true
+  address: "redis:6379"
+  password: ""
+  db: 0
+  key_prefix: "kubesage"
+```
+
+OpenTelemetry：
+
+```yaml
+otel:
+  enabled: true
+  service_name: "kubesage"
+  exporter: "otlp"
+  endpoint: "otel-collector:4318"
+  insecure: true
+```
+
+如果 `otel.exporter=stdout`，trace 会直接输出到标准输出，适合本地调试。
+
+数据库迁移默认启用：
+
+```yaml
+migrations:
+  enabled: true
+  dir: "./migrations"
+```
+
+关闭 migrations 时才会回退到 GORM `AutoMigrate`，生产环境不建议关闭。
+
 ## 配置 kubeconfig
 
 编辑 `configs/config.yaml`：
@@ -66,6 +141,8 @@ kubernetes:
 
 报告的 `impact_analysis` 会结合拓扑信息补充影响判断：多副本且其他副本正常时影响较低；Service endpoints 全部不可用时影响较高；Node 存在 Pressure 时提示可能是节点级问题。
 
+Pending 诊断会直接读取 Pod 引用的 PersistentVolumeClaim 状态，并将 PVC `phase/storageClass/volumeName/capacity` 保存为 `source_type=k8s_pvc` 的 evidence。Analyzer 的 `confidence_score` 不再完全依赖固定常量，会根据终止状态、Events、关键日志、Prometheus、PVC、Node 等证据进行加权。
+
 ## Prometheus 配置
 
 OOMKilled 诊断在启用 `include_metrics` 时会调用 Prometheus HTTP API，按 `lastState.terminated.finishedAt` 作为故障时间，查询前后 5 分钟的 `container_memory_working_set_bytes`，并将查询结果写入 evidence。
@@ -76,15 +153,83 @@ OOMKilled 诊断在启用 `include_metrics` 时会调用 Prometheus HTTP API，�
 prometheus:
   base_url: "http://prometheus:9090"
   timeout_seconds: 10
+  retry_max_attempts: 2
+  retry_initial_backoff_ms: 100
+  retry_max_backoff_ms: 1000
 ```
 
-也可以通过环境变量覆盖：
+`api_key` 不建议写入配置文件，请通过环境变量注入：
 
 ```bash
 export KUBESAGE_PROMETHEUS_BASE_URL=http://127.0.0.1:9090
 ```
 
 如果 Prometheus 未配置、不可访问或查询不到数据，诊断任务不会失败；系统会保存一条 `source_type=prometheus`、`severity=warning` 的 evidence，说明指标查询被跳过或失败。
+
+## Loki 配置
+
+KubeSage 可以把 Loki 作为 Kubernetes Pod logs 之外的日志源。启用后，精准日志窗口会同时查询 Loki `query_range`，并把命中的关键日志作为 evidence 保存。
+
+```yaml
+loki:
+  enabled: true
+  base_url: "http://loki:3100"
+  tenant_id: ""
+  timeout_seconds: 10
+```
+
+默认 Loki selector 使用 `{namespace="<ns>",pod="<pod>",container="<container>"}`。如果集群日志标签不同，需要在 `internal/loki/client.go` 调整查询表达式。
+
+## LLM 与 Runbook RAG
+
+KubeSage 可以在规则诊断完成后调用 DeepSeek 或其他 OpenAI-compatible API，对实时上下文、Evidence、关键日志、Prometheus 摘要和 Runbook 检索结果做自然语言增强总结。LLM 只负责总结、解释和生成建议，不会执行任何操作；如果 LLM 调用失败，系统会自动降级为原有规则报告。
+
+编辑 `configs/config.yaml`：
+
+```yaml
+llm:
+  enabled: true
+  base_url: "https://api.deepseek.com"
+  api_key: ""
+  model: "deepseek-chat"
+  retry_max_attempts: 2
+  retry_initial_backoff_ms: 200
+  retry_max_backoff_ms: 2000
+```
+
+也可以通过环境变量覆盖：
+
+```bash
+export KUBESAGE_LLM_ENABLED=true
+export KUBESAGE_LLM_BASE_URL=https://api.deepseek.com
+export KUBESAGE_LLM_API_KEY=sk-...
+export KUBESAGE_LLM_MODEL=deepseek-chat
+```
+
+LLM Prompt 会包含：
+
+- Pod 基本信息
+- 规则诊断故障类型
+- Evidence 列表
+- Events 摘要
+- 关键日志片段
+- Prometheus 指标摘要
+- Runbook 检索结果
+
+LLM 必须返回结构化 JSON：
+
+```json
+{
+  "root_cause_summary": "...",
+  "confidence_score": 0.86,
+  "evidence_reasoning": "...",
+  "suggested_actions": ["..."],
+  "risk_level": "medium",
+  "need_human_confirm": true
+}
+```
+
+报告会同时保存 `rule_based_result` 和 `llm_enhanced_summary`。规则结果始终保留，LLM 输出只作为增强总结；高风险命令类建议会被过滤，且所有建议都需要人工确认。
 
 ## 精准日志窗口
 
@@ -106,6 +251,38 @@ diagnosis:
 
 命中关键字的日志会作为独立 evidence 保存，`source_type=k8s_key_log`，便于报告中单独查看关键日志片段。
 
+## Remediation 建议
+
+KubeSage 会在规则诊断和拓扑分析之后生成结构化 `remediation_actions`。MVP 阶段所有动作都只是建议，不会自动执行；`command_preview` 仅用于人工复核或 dry-run 预览。
+
+每个动作包含：
+
+```json
+{
+  "action_type": "view_previous_logs",
+  "description": "Review previous logs for container api to inspect the failure window before restart.",
+  "command_preview": "kubectl logs -n default api-0 -c api --previous --timestamps --tail=200",
+  "risk_level": "low",
+  "need_human_confirm": false,
+  "executable": false
+}
+```
+
+当前支持的建议类型：
+
+- `view_previous_logs`：查看 previous logs，低风险，只读。
+- `adjust_memory_limit`：调整 memory limit，高风险，必须人工确认，命令预览使用 `--dry-run=server`。
+- `check_configmap_secret`：检查 ConfigMap / Secret，低风险，只读。
+- `extend_probe_initial_delay`：延长 probe `initialDelaySeconds`，中风险，必须人工确认，命令预览使用 dry-run。
+- `fix_probe_path`：修正 readiness / liveness HTTP path，中风险，必须人工确认，命令预览使用 dry-run。
+- `check_node_taint_toleration`：检查 node taint / toleration，低风险，只读。
+
+安全约束：
+
+- MVP 阶段 `executable=false`，系统不会自动执行修复。
+- 中高风险动作会强制 `need_human_confirm=true`。
+- 禁止生成删除数据库、删除 PVC、删除 Namespace 等危险动作；相关命令会被过滤。
+
 ## 启动服务
 
 ```bash
@@ -113,10 +290,24 @@ go mod tidy
 go run ./cmd/server
 ```
 
+构建镜像：
+
+```bash
+docker build -t kubesage:latest .
+```
+
+Helm 部署模板位于 `deployments/helm/kubesage`：
+
+```bash
+helm install kubesage deployments/helm/kubesage -n kubesage --create-namespace
+```
+
 健康检查：
 
 ```bash
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/readyz
+curl http://127.0.0.1:8080/metrics
 ```
 
 ## Pod 诊断接口
@@ -266,6 +457,24 @@ curl -X POST http://127.0.0.1:8080/api/v1/alertmanager/webhook \
   "suggested_actions": [
     "查看 previous logs 中的启动错误栈和最近发布变更。",
     "确认启动命令、配置文件、环境变量、依赖服务地址和端口是否正确。"
+  ],
+  "remediation_actions": [
+    {
+      "action_type": "view_previous_logs",
+      "description": "Review previous logs for container api to inspect the failure window before restart.",
+      "command_preview": "kubectl logs -n default api-7c9c9d6b5d-abcde -c api --previous --timestamps --tail=200",
+      "risk_level": "low",
+      "need_human_confirm": false,
+      "executable": false
+    },
+    {
+      "action_type": "check_configmap_secret",
+      "description": "Check referenced ConfigMaps, Secrets, envFrom entries, and mounted files for missing keys or invalid values.",
+      "command_preview": "kubectl describe pod -n default api-7c9c9d6b5d-abcde; kubectl get configmap,secret -n default --show-labels",
+      "risk_level": "low",
+      "need_human_confirm": false,
+      "executable": false
+    }
   ],
   "risk_level": "medium",
   "need_human_confirm": true,

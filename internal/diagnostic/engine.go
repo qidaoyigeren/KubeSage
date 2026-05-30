@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"kubesage/internal/observability"
 )
 
 type DiagnosisEngine struct {
@@ -20,6 +22,7 @@ func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 	var results []*AnalyzeResult
 	for _, analyzer := range e.analyzers {
 		if analyzer.Match(ctx) {
+			observability.IncAnalyzerMatchTotal(analyzer.Name())
 			result, err := analyzer.Analyze(ctx)
 			if err != nil {
 				return nil, err
@@ -48,11 +51,13 @@ func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 			NeedHumanConfirm: true,
 		}
 		enrichReportWithTopology(ctx, report)
+		AttachRemediationActions(ctx, report)
 		return report, nil
 	}
 
 	report := aggregate(ctx, results)
 	enrichReportWithTopology(ctx, report)
+	AttachRemediationActions(ctx, report)
 	return report, nil
 }
 

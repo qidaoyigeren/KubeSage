@@ -100,16 +100,47 @@ func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 			Timestamp:  time.Now(),
 		})
 	}
+	for _, pvc := range ctx.PVCs {
+		severity := "info"
+		if pvc.Phase != string(corev1.ClaimBound) {
+			severity = "critical"
+			summary = "Pod 依赖的 PVC 未处于 Bound 状态，导致无法调度或启动。"
+			actions = append(actions, "优先检查 PVC/PV/StorageClass 绑定状态，而不是只调整 Pod 调度约束。")
+		}
+		evidences = append(evidences, diagnostic.EvidenceRecord{
+			SourceType: "k8s_pvc",
+			Title:      "PVC binding status",
+			Content:    fmt.Sprintf("pvc=%s phase=%s storageClass=%s volumeName=%s capacity=%s", pvc.Name, pvc.Phase, pvc.StorageClass, pvc.VolumeName, pvc.Capacity),
+			Severity:   severity,
+			Raw:        pvc,
+			Timestamp:  time.Now(),
+		})
+	}
 
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
 		FaultType:        "PodPending",
 		RootCauseSummary: summary,
-		ConfidenceScore:  0.86,
+		ConfidenceScore:  pendingConfidence(evidences),
 		Evidences:        evidences,
 		ImpactAnalysis:   "Pod 尚未运行，业务副本数可能低于期望值。",
 		SuggestedActions: actions,
 		RiskLevel:        "medium",
 		NeedHumanConfirm: true,
 	}, nil
+}
+
+// pendingConfidence weighs scheduler events, PVC status, and node snapshots.
+func pendingConfidence(evidences []diagnostic.EvidenceRecord) float64 {
+	score := 0.70
+	if hasEvidence(evidences, "k8s_event", "FailedScheduling") {
+		score += 0.08
+	}
+	if hasEvidence(evidences, "k8s_pvc", "") {
+		score += 0.05
+	}
+	if hasEvidence(evidences, "k8s_node", "") {
+		score += 0.03
+	}
+	return clampConfidence(score)
 }

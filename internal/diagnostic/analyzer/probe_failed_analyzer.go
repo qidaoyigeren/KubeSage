@@ -50,11 +50,11 @@ func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagn
 		evidences = append(evidences, probeEvidence(c.Name, "startupProbe", c.StartupProbe))
 	}
 	for _, logs := range ctx.Logs {
-		if containsAny(logs.Current+"\n"+logs.Previous, probeFailedLogKeywords) {
+		if containsAny(logs.Current+"\n"+logs.Previous+"\n"+logs.Loki, probeFailedLogKeywords) {
 			evidences = append(evidences, diagnostic.EvidenceRecord{
 				SourceType: "k8s_log",
 				Title:      "Health check related logs",
-				Content:    trimLog(logs.ContainerName, logs.Previous, logs.Current),
+				Content:    trimLog(logs.ContainerName, logs.Previous, logs.Current, logs.Loki),
 				Severity:   "info",
 				Raw:        logs,
 				Timestamp:  time.Now(),
@@ -63,17 +63,41 @@ func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagn
 	}
 	evidences = append(evidences, keyLogEvidences(ctx.Logs, "Key Probe Failed log fragments", probeFailedLogKeywords, "warning")...)
 
+	confidence := probeConfidence(ctx, evidences)
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
 		FaultType:        "ProbeFailed",
 		RootCauseSummary: summary,
-		ConfidenceScore:  0.84,
+		ConfidenceScore:  confidence,
 		Evidences:        evidences,
 		ImpactAnalysis:   "Readiness 失败会摘除流量，Liveness 失败会触发重启，可能造成流量抖动。",
 		SuggestedActions: []string{"确认 probe path、port、scheme 是否与应用实际监听一致。", "慢启动服务可适当增加 initialDelaySeconds 或配置 startupProbe。", "偶发慢请求可评估提高 timeoutSeconds 或 failureThreshold。"},
 		RiskLevel:        "medium",
 		NeedHumanConfirm: true,
 	}, nil
+}
+
+// probeConfidence weighs unhealthy events, probe specs, and matching logs.
+func probeConfidence(ctx *diagnostic.DiagnosticContext, evidences []diagnostic.EvidenceRecord) float64 {
+	score := 0.72
+	if hasEvidence(evidences, "k8s_event", "Unhealthy") {
+		score += 0.07
+	}
+	if hasEvidence(evidences, "k8s_pod_status", "Probe") {
+		score += 0.03
+	}
+	if hasEvidence(evidences, "k8s_key_log", "") {
+		score += 0.03
+	}
+	if ctx != nil && ctx.Pod != nil {
+		for _, container := range ctx.Pod.Spec.Containers {
+			if container.ReadinessProbe != nil || container.LivenessProbe != nil {
+				score += 0.02
+				break
+			}
+		}
+	}
+	return clampConfidence(score)
 }
 
 // probeEvidence converts one probe config into diagnostic evidence.

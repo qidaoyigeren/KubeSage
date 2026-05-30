@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kubesage
+description: Kubernetes pod RCA agent with rule, metrics, logs, RAG, and LLM enrichment.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

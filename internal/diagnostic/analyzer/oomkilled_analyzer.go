@@ -117,7 +117,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 			evidences = append(evidences, diagnostic.EvidenceRecord{
 				SourceType: "k8s_log",
 				Title:      "Previous logs before OOMKilled",
-				Content:    trimLog(logs.ContainerName, logs.Previous, logs.Current),
+				Content:    trimLog(logs.ContainerName, logs.Previous, logs.Current, logs.Loki),
 				Severity:   "info",
 				Raw:        logs,
 				Timestamp:  time.Now(),
@@ -142,7 +142,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 	}
 
 	summary := "容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 limit 不足、应用内存持续增长或突发内存分配。"
-	confidence := 0.9
+	confidence := 0.82
 	actions := []string{
 		"检查应用内存泄漏、大对象缓存、批量查询、JVM/Go heap 参数和近期发布变更。",
 		"结合 Prometheus 中 container_memory_working_set_bytes 与 memory limit 的比例确认是否长期贴近上限。",
@@ -150,9 +150,9 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 	}
 	if sustainedNearLimit {
 		summary = "Prometheus 内存曲线显示 OOM 前后工作集持续接近容器 memory limit，根因更倾向于 memory limit 不足或应用内存持续增长。"
-		confidence = 0.95
 		actions = append(actions, "优先降低峰值内存或提高 memory limit，并为关键容器补充内存使用率告警。")
 	}
+	confidence = oomConfidence(terminations, evidences, sustainedNearLimit)
 
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
@@ -165,6 +165,25 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 		RiskLevel:        "high",
 		NeedHumanConfirm: true,
 	}, nil
+}
+
+// oomConfidence adjusts confidence according to termination, log, and metric
+// evidence strength instead of relying on a single hard-coded value.
+func oomConfidence(terminations []oomTermination, evidences []diagnostic.EvidenceRecord, sustainedNearLimit bool) float64 {
+	score := 0.72
+	if len(terminations) > 0 {
+		score += 0.10
+	}
+	if hasEvidence(evidences, "k8s_key_log", "") {
+		score += 0.03
+	}
+	if hasEvidence(evidences, "prometheus", "working set") {
+		score += 0.05
+	}
+	if sustainedNearLimit {
+		score += 0.05
+	}
+	return clampConfidence(score)
 }
 
 // queryMemoryEvidence queries Prometheus around one OOM termination and returns

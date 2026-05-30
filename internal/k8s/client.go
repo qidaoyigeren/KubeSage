@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +20,14 @@ type Client struct {
 	Clientset *kubernetes.Clientset
 	Timeout   time.Duration
 	TailLines int64
+}
+
+// Ping verifies Kubernetes API connectivity with a cheap discovery request.
+func (c *Client) Ping(ctx context.Context) error {
+	if c == nil || c.Clientset == nil {
+		return fmt.Errorf("kubernetes client is not configured")
+	}
+	return c.Clientset.Discovery().RESTClient().Get().AbsPath("/version").Do(ctx).Error()
 }
 
 // NewClient builds a Kubernetes clientset from kubeconfig or in-cluster config.

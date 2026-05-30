@@ -1,0 +1,67 @@
+replicaCount: 1
+
+image:
+  repository: kubesage
+  tag: latest
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+config:
+  server:
+    authToken: ""
+  mysql:
+    host: mysql
+    port: 3306
+    username: kubesage
+    password: kubesage
+    database: kubesage
+  kubernetes:
+    kubeconfig: ""
+  diagnosis:
+    taskTimeoutSeconds: 60
+    podLockTTLSeconds: 300
+  prometheus:
+    baseURL: ""
+  llm:
+    enabled: false
+    baseURL: https://api.deepseek.com
+    apiKey: ""
+    model: deepseek-chat
+  loki:
+    enabled: false
+    baseURL: ""
+    tenantID: ""
+  redis:
+    enabled: false
+    address: redis:6379
+    password: ""
+    db: 0
+  otel:
+    enabled: false
+    exporter: stdout
+    endpoint: ""
+    insecure: true
+
+resources: {}
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}

@@ -8,6 +8,8 @@ import (
 	"kubesage/internal/config"
 	"kubesage/internal/diagnostic"
 	"kubesage/internal/k8s"
+	"kubesage/internal/loki"
+	"kubesage/internal/resilience"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -20,11 +22,13 @@ type SnapshotService struct {
 	events   *k8s.EventCollector
 	logs     *k8s.LogCollector
 	nodes    *k8s.NodeCollector
+	pvcs     *k8s.PVCCollector
 	topology *k8s.TopologyCollector
+	loki     *loki.Client
 }
 
 // NewSnapshotService creates the Kubernetes snapshot collector service.
-func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger) *SnapshotService {
+func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger, lokiClient *loki.Client) *SnapshotService {
 	return &SnapshotService{
 		cfg:      cfg,
 		log:      log,
@@ -32,14 +36,20 @@ func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger)
 		events:   k8s.NewEventCollector(client),
 		logs:     k8s.NewLogCollector(client),
 		nodes:    k8s.NewNodeCollector(client),
+		pvcs:     k8s.NewPVCCollector(client),
 		topology: k8s.NewTopologyCollector(client),
+		loki:     lokiClient,
 	}
 }
 
 // Collect gathers pod, event, log, topology, and node context for analyzers.
 func (s *SnapshotService) Collect(ctx context.Context, req PodDiagnosisRequest) (*diagnostic.DiagnosticContext, error) {
-	pod, err := s.pods.GetPod(ctx, req.Namespace, req.PodName)
-	if err != nil {
+	var pod *corev1.Pod
+	if err := resilience.Do(ctx, s.retryConfig(), func() error {
+		var err error
+		pod, err = s.pods.GetPod(ctx, req.Namespace, req.PodName)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	result := &diagnostic.DiagnosticContext{
@@ -51,8 +61,12 @@ func (s *SnapshotService) Collect(ctx context.Context, req PodDiagnosisRequest) 
 	}
 
 	if req.IncludeEvents || req.IncludeLogs {
-		events, err := s.events.ListPodEvents(ctx, pod)
-		if err != nil {
+		var events []corev1.Event
+		if err := resilience.Do(ctx, s.retryConfig(), func() error {
+			var err error
+			events, err = s.events.ListPodEvents(ctx, pod)
+			return err
+		}); err != nil {
 			s.log.Warn("collect events failed", zap.Error(err))
 		} else {
 			result.Events = events
@@ -61,13 +75,17 @@ func (s *SnapshotService) Collect(ctx context.Context, req PodDiagnosisRequest) 
 	if req.IncludeLogs {
 		faultTime, fallback := resolveFaultTime(pod, result.Events, req.AlertTime)
 		before, after := s.logWindow()
-		logs, err := s.logs.CollectPodLogs(ctx, pod, k8s.LogCollectionOptions{
-			ContainerName: req.ContainerName,
-			FaultTime:     faultTime,
-			WindowBefore:  before,
-			WindowAfter:   after,
-		})
-		if err != nil {
+		var logs []diagnostic.ContainerLogs
+		if err := resilience.Do(ctx, s.retryConfig(), func() error {
+			var err error
+			logs, err = s.logs.CollectPodLogs(ctx, pod, k8s.LogCollectionOptions{
+				ContainerName: req.ContainerName,
+				FaultTime:     faultTime,
+				WindowBefore:  before,
+				WindowAfter:   after,
+			})
+			return err
+		}); err != nil {
 			s.log.Warn("collect logs failed", zap.Error(err))
 		} else {
 			result.Logs = logs
@@ -78,22 +96,79 @@ func (s *SnapshotService) Collect(ctx context.Context, req PodDiagnosisRequest) 
 				result.LogWindowStart = faultTime.Add(-before)
 				result.LogWindowEnd = faultTime.Add(after)
 			}
+			s.collectLokiLogs(ctx, result)
 		}
 	}
-	topology, err := s.topology.Collect(ctx, pod)
-	if err != nil {
+	var pvcs []diagnostic.PVCBrief
+	if err := resilience.Do(ctx, s.retryConfig(), func() error {
+		var err error
+		pvcs, err = s.pvcs.ListPodPVCs(ctx, pod)
+		return err
+	}); err != nil {
+		s.log.Warn("collect pvc snapshots failed", zap.Error(err))
+	} else {
+		result.PVCs = pvcs
+	}
+	var topology *diagnostic.TopologyInfo
+	if err := resilience.Do(ctx, s.retryConfig(), func() error {
+		var err error
+		topology, err = s.topology.Collect(ctx, pod)
+		return err
+	}); err != nil {
 		s.log.Warn("collect topology failed", zap.Error(err))
 	} else {
 		result.Topology = topology
 	}
-	nodes, err := s.nodes.ListNodeSnapshots(ctx)
-	if err != nil {
+	var nodes []diagnostic.NodeSnapshot
+	if err := resilience.Do(ctx, s.retryConfig(), func() error {
+		var err error
+		nodes, err = s.nodes.ListNodeSnapshots(ctx)
+		return err
+	}); err != nil {
 		s.log.Warn("collect node snapshots failed", zap.Error(err))
 	} else {
 		result.NodeSnapshots = nodes
 	}
 
 	return result, nil
+}
+
+// collectLokiLogs enriches collected Kubernetes logs with Loki entries when
+// Loki is configured. Failure is warning-only and never blocks diagnosis.
+func (s *SnapshotService) collectLokiLogs(ctx context.Context, result *diagnostic.DiagnosticContext) {
+	if s == nil || s.loki == nil || !s.loki.Configured() || result == nil || len(result.Logs) == 0 {
+		return
+	}
+	start, end := result.LogWindowStart, result.LogWindowEnd
+	if start.IsZero() || end.IsZero() {
+		end = time.Now()
+		start = end.Add(-10 * time.Minute)
+	}
+	for i := range result.Logs {
+		container := result.Logs[i].ContainerName
+		var entries []loki.LogEntry
+		if err := resilience.Do(ctx, s.retryConfig(), func() error {
+			var err error
+			entries, err = s.loki.QueryPodLogs(ctx, result.Namespace, result.PodName, container, start, end)
+			return err
+		}); err != nil {
+			s.log.Warn("collect loki logs failed", zap.String("container", container), zap.Error(err))
+			continue
+		}
+		result.Logs[i].Loki = loki.FormatEntries(entries)
+	}
+}
+
+// retryConfig returns the configured retry policy for Kubernetes read calls.
+func (s *SnapshotService) retryConfig() resilience.RetryConfig {
+	if s == nil || s.cfg == nil {
+		return resilience.FromMilliseconds(1, 0, 0)
+	}
+	return resilience.FromMilliseconds(
+		s.cfg.Diagnosis.RetryMaxAttempts,
+		s.cfg.Diagnosis.RetryInitialBackoffMS,
+		s.cfg.Diagnosis.RetryMaxBackoffMS,
+	)
 }
 
 // logWindow returns the configured log window with safe defaults.

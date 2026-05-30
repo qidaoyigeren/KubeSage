@@ -32,6 +32,14 @@ func (h *DiagnoseHandler) DiagnosePod(c *gin.Context) {
 
 	task, err := h.service.StartPodDiagnosis(c.Request.Context(), req)
 	if err != nil {
+		if service.IsInvalidDiagnosisRequest(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": err.Error()})
+			return
+		}
+		if service.IsDiagnosisAlreadyRunning(err) {
+			c.JSON(http.StatusConflict, gin.H{"code": 409, "message": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
 		return
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"kubesage/internal/config"
+	"kubesage/internal/resilience"
 )
 
 const defaultQueryStep = 30 * time.Second
@@ -20,6 +21,7 @@ type Client struct {
 	baseURL string
 	timeout time.Duration
 	http    *http.Client
+	retry   resilience.RetryConfig
 }
 
 type Point struct {
@@ -62,6 +64,11 @@ func NewClient(cfg config.PrometheusConfig) *Client {
 		baseURL: baseURL,
 		timeout: timeout,
 		http:    &http.Client{Timeout: timeout},
+		retry: resilience.FromMilliseconds(
+			cfg.RetryMaxAttempts,
+			cfg.RetryInitialBackoffMS,
+			cfg.RetryMaxBackoffMS,
+		),
 	}
 }
 
@@ -141,31 +148,39 @@ func (c *Client) QueryRange(ctx context.Context, query string, start, end time.T
 	q.Set("step", strconv.FormatInt(int64(step.Seconds()), 10))
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("prometheus query failed: %s", resp.Status)
-	}
-
-	var raw queryRangeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, err
-	}
-	if raw.Status != "success" {
-		if raw.Error != "" {
-			return nil, fmt.Errorf("prometheus query failed: %s: %s", raw.ErrorType, raw.Error)
+	var result *QueryRangeResult
+	err = resilience.Do(ctx, c.retry, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return err
 		}
-		return nil, fmt.Errorf("prometheus query failed: status=%s", raw.Status)
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return fmt.Errorf("prometheus query failed: %s", resp.Status)
+		}
+
+		var raw queryRangeResponse
+		if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+			return err
+		}
+		if raw.Status != "success" {
+			if raw.Error != "" {
+				return fmt.Errorf("prometheus query failed: %s: %s", raw.ErrorType, raw.Error)
+			}
+			return fmt.Errorf("prometheus query failed: status=%s", raw.Status)
+		}
+		result = raw.toResult(query, start, end, step)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	return raw.toResult(query, start, end, step), nil
+	return result, nil
 }
 
 // apiURL joins the configured base URL with a Prometheus API path.
