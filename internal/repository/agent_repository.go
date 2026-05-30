@@ -58,3 +58,30 @@ func (r *AgentRepository) ListRemediationExecutionsByTaskID(ctx context.Context,
 	err := r.db.WithContext(ctx).Where("task_id = ?", taskID).Order("id asc").Find(&executions).Error
 	return executions, err
 }
+
+// ListPendingApprovals returns remediation executions with status pending_approval.
+func (r *AgentRepository) ListPendingApprovals(ctx context.Context) ([]model.RemediationExecution, error) {
+	var executions []model.RemediationExecution
+	err := r.db.WithContext(ctx).Where("status = ?", "pending_approval").Order("created_at DESC").Find(&executions).Error
+	return executions, err
+}
+
+// ApproveRemediation updates a remediation execution to approved status.
+func (r *AgentRepository) ApproveRemediation(ctx context.Context, executionID uint, actor string) error {
+	return r.db.WithContext(ctx).Model(&model.RemediationExecution{}).
+		Where("id = ? AND status = ?", executionID, "pending_approval").
+		Updates(map[string]interface{}{
+			"status":      "dry_run_pending",
+			"approval_by": actor,
+		}).Error
+}
+
+// RejectRemediation updates a remediation execution to blocked status.
+func (r *AgentRepository) RejectRemediation(ctx context.Context, executionID uint, actor, reason string) error {
+	return r.db.WithContext(ctx).Model(&model.RemediationExecution{}).
+		Where("id = ? AND status = ?", executionID, "pending_approval").
+		Updates(map[string]interface{}{
+			"status":      "blocked",
+			"approval_by": actor,
+		}).Error
+}

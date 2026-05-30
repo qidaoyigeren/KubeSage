@@ -46,6 +46,36 @@ spec:
                 secretKeyRef:
                   name: {{ include "kubesage.fullname" . }}
                   key: redis-password
+            - name: KUBESAGE_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubesage.fullname" . }}
+                  key: redis-sentinel-password
+            - name: KUBESAGE_RAG_EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubesage.fullname" . }}
+                  key: rag-embedding-api-key
+            - name: KUBESAGE_RAG_QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubesage.fullname" . }}
+                  key: qdrant-api-key
+            - name: KUBESAGE_NOTIFICATION_SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubesage.fullname" . }}
+                  key: slack-webhook-url
+            - name: KUBESAGE_NOTIFICATION_FEISHU_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubesage.fullname" . }}
+                  key: feishu-webhook-url
+            - name: KUBESAGE_NOTIFICATION_DINGTALK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubesage.fullname" . }}
+                  key: dingtalk-webhook-url
           volumeMounts:
             - name: config
               mountPath: /app/configs/config.yaml

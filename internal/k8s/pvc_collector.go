@@ -40,17 +40,55 @@ func (c *PVCCollector) ListPodPVCs(ctx context.Context, pod *corev1.Pod) ([]diag
 			continue
 		}
 		brief := diagnostic.PVCBrief{
-			Name:       pvc.Name,
-			Phase:      string(pvc.Status.Phase),
-			VolumeName: pvc.Spec.VolumeName,
+			Name:         pvc.Name,
+			Phase:        string(pvc.Status.Phase),
+			VolumeName:   pvc.Spec.VolumeName,
+			PVName:       pvc.Spec.VolumeName,
+			SelectedNode: pvc.Annotations["volume.kubernetes.io/selected-node"],
 		}
 		if pvc.Spec.StorageClassName != nil {
 			brief.StorageClass = *pvc.Spec.StorageClassName
+			c.enrichStorageClass(ctx, &brief)
 		}
 		if storage := pvc.Status.Capacity.Storage(); storage != nil {
 			brief.Capacity = storage.String()
 		}
+		c.enrichPersistentVolume(ctx, &brief)
 		result = append(result, brief)
 	}
 	return result, nil
+}
+
+func (c *PVCCollector) enrichPersistentVolume(ctx context.Context, brief *diagnostic.PVCBrief) {
+	if brief == nil || brief.PVName == "" {
+		return
+	}
+	pv, err := c.client.Clientset.CoreV1().PersistentVolumes().Get(ctx, brief.PVName, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	brief.PVPhase = string(pv.Status.Phase)
+	brief.ReclaimPolicy = string(pv.Spec.PersistentVolumeReclaimPolicy)
+	if brief.Capacity == "" {
+		if storage := pv.Spec.Capacity.Storage(); storage != nil {
+			brief.Capacity = storage.String()
+		}
+	}
+	if brief.StorageClass == "" {
+		brief.StorageClass = pv.Spec.StorageClassName
+	}
+}
+
+func (c *PVCCollector) enrichStorageClass(ctx context.Context, brief *diagnostic.PVCBrief) {
+	if brief == nil || brief.StorageClass == "" {
+		return
+	}
+	sc, err := c.client.Clientset.StorageV1().StorageClasses().Get(ctx, brief.StorageClass, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	brief.StorageClassProvisioner = sc.Provisioner
+	if sc.VolumeBindingMode != nil {
+		brief.VolumeBindingMode = string(*sc.VolumeBindingMode)
+	}
 }

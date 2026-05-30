@@ -38,6 +38,16 @@ func NewOOMKilledAnalyzer(clients ...*prometheus.Client) *OOMKilledAnalyzer {
 // Name returns the analyzer identifier used in reports.
 func (a *OOMKilledAnalyzer) Name() string { return "oomkilled" }
 
+func (a *OOMKilledAnalyzer) Metadata() diagnostic.AnalyzerMetadata {
+	return diagnostic.AnalyzerMetadata{
+		Name:             a.Name(),
+		FaultType:        "OOMKilled",
+		Priority:         100,
+		MatchSignals:     []string{"lastState.terminated.reason=OOMKilled", "exitCode=137", "event.message contains oom"},
+		RequiredEvidence: []string{"k8s_pod_status", "prometheus", "k8s_key_log", "k8s_topology", "correlation_evidence"},
+	}
+}
+
 // Match decides whether the current pod snapshot looks like an OOMKilled case.
 func (a *OOMKilledAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	if ctx.Pod == nil {
@@ -152,7 +162,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 		summary = "Prometheus 内存曲线显示 OOM 前后工作集持续接近容器 memory limit，根因更倾向于 memory limit 不足或应用内存持续增长。"
 		actions = append(actions, "优先降低峰值内存或提高 memory limit，并为关键容器补充内存使用率告警。")
 	}
-	confidence = oomConfidence(terminations, evidences, sustainedNearLimit)
+	confidence = oomConfidence(terminations, evidences, sustainedNearLimit, ctx.MetricTrends)
 
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
@@ -169,7 +179,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 
 // oomConfidence adjusts confidence according to termination, log, and metric
 // evidence strength instead of relying on a single hard-coded value.
-func oomConfidence(terminations []oomTermination, evidences []diagnostic.EvidenceRecord, sustainedNearLimit bool) float64 {
+func oomConfidence(terminations []oomTermination, evidences []diagnostic.EvidenceRecord, sustainedNearLimit bool, trends []diagnostic.MetricTrend) float64 {
 	score := 0.72
 	if len(terminations) > 0 {
 		score += 0.10
@@ -182,6 +192,17 @@ func oomConfidence(terminations []oomTermination, evidences []diagnostic.Evidenc
 	}
 	if sustainedNearLimit {
 		score += 0.05
+	}
+	// Boost confidence when metric trends show progressive memory growth.
+	for _, trend := range trends {
+		if strings.Contains(strings.ToLower(trend.Metric), "memory") {
+			switch trend.Classification {
+			case "progressive_growth":
+				score += 0.08
+			case "sudden_spike":
+				score += 0.04
+			}
+		}
 	}
 	return clampConfidence(score)
 }

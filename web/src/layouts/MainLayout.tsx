@@ -9,6 +9,9 @@ import {
   BugOutlined,
   LockOutlined,
   CheckCircleOutlined,
+  FileTextOutlined,
+  FileProtectOutlined,
+  SafetyOutlined,
 } from '@ant-design/icons';
 import { setAuthModalHandler } from '../api/client';
 
@@ -18,6 +21,9 @@ const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
   { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务列表' },
   { key: '/diagnose', icon: <MedicineBoxOutlined />, label: '新建诊断' },
+  { key: '/runbooks', icon: <FileTextOutlined />, label: 'Runbook 管理' },
+  { key: '/approvals', icon: <SafetyOutlined />, label: '审批中心' },
+  { key: '/audit-logs', icon: <FileProtectOutlined />, label: '审计日志' },
 ];
 
 const MainLayout = () => {

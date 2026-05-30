@@ -51,12 +51,16 @@ func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 			NeedHumanConfirm: true,
 		}
 		enrichReportWithTopology(ctx, report)
+		enrichReportWithCorrelation(ctx, report)
+		enrichReportWithMetricTrends(ctx, report)
 		AttachRemediationActions(ctx, report)
 		return report, nil
 	}
 
 	report := aggregate(ctx, results)
 	enrichReportWithTopology(ctx, report)
+	enrichReportWithCorrelation(ctx, report)
+	enrichReportWithMetricTrends(ctx, report)
 	AttachRemediationActions(ctx, report)
 	return report, nil
 }
@@ -115,6 +119,61 @@ func enrichReportWithTopology(ctx *DiagnosticContext, report *Report) {
 		return
 	}
 	report.ImpactAnalysis = report.ImpactAnalysis + "\n" + impact
+}
+
+func enrichReportWithCorrelation(ctx *DiagnosticContext, report *Report) {
+	if ctx == nil || report == nil || ctx.Correlations == nil {
+		return
+	}
+	report.Evidences = append(report.Evidences, EvidenceRecord{
+		SourceType: "correlation_evidence",
+		Title:      "Related pod failures on node, workload, and namespace",
+		Content:    correlationEvidenceContent(ctx.Correlations),
+		Severity:   correlationSeverity(ctx.Correlations),
+		Raw:        ctx.Correlations,
+		Timestamp:  time.Now(),
+	})
+	impact := correlationImpact(ctx.Correlations)
+	if impact == "" {
+		return
+	}
+	if strings.TrimSpace(report.ImpactAnalysis) == "" {
+		report.ImpactAnalysis = impact
+		return
+	}
+	report.ImpactAnalysis += "\n" + impact
+}
+
+func enrichReportWithMetricTrends(ctx *DiagnosticContext, report *Report) {
+	if ctx == nil || report == nil || len(ctx.MetricTrends) == 0 {
+		return
+	}
+	critical := false
+	parts := make([]string, 0, len(ctx.MetricTrends))
+	for _, trend := range ctx.MetricTrends {
+		parts = append(parts, trend.Profile+"/"+trend.Window+"="+trend.Classification)
+		if trend.Classification == "progressive_growth" || trend.Classification == "sudden_spike" || trend.Classification == "restart_increasing" {
+			critical = true
+		}
+	}
+	severity := "info"
+	if critical {
+		severity = "warning"
+	}
+	report.Evidences = append(report.Evidences, EvidenceRecord{
+		SourceType: "prometheus_trend",
+		Title:      "Prometheus 1h/6h metric trend analysis",
+		Content:    strings.Join(parts, " "),
+		Severity:   severity,
+		Raw:        ctx.MetricTrends,
+		Timestamp:  time.Now(),
+	})
+	if critical {
+		if strings.TrimSpace(report.ImpactAnalysis) != "" {
+			report.ImpactAnalysis += "\n"
+		}
+		report.ImpactAnalysis += "Prometheus trend evidence indicates progressive growth, a sudden spike, or increasing restarts; this diagnosis uses recent behavior rather than only the current snapshot."
+	}
 }
 
 // topologyEvidence converts the collected Kubernetes topology into report
@@ -202,6 +261,48 @@ func topologyImpactAnalysis(topology *TopologyInfo) string {
 		impacts = append(impacts, "当前 Pod 所在 Node 存在 Pressure condition，需关注节点级资源问题。")
 	}
 	return strings.Join(impacts, "\n")
+}
+
+func correlationEvidenceContent(info *CorrelationInfo) string {
+	if info == nil {
+		return ""
+	}
+	parts := []string{
+		"node=" + info.NodeName,
+		"deployment=" + info.DeploymentName,
+		"namespace=" + info.Namespace,
+		"nodeAbnormal=" + itoa(info.NodeAbnormalCount),
+		"peerAbnormal=" + itoa(info.PeerAbnormalCount),
+		"namespaceHot=" + itoa(info.NamespaceHotCount),
+	}
+	return strings.Join(parts, " ")
+}
+
+func correlationSeverity(info *CorrelationInfo) string {
+	if info == nil {
+		return "info"
+	}
+	if info.NodeAbnormalCount > 0 || info.PeerAbnormalCount > 0 || info.NamespaceHotCount >= 3 {
+		return "warning"
+	}
+	return "info"
+}
+
+func correlationImpact(info *CorrelationInfo) string {
+	if info == nil {
+		return ""
+	}
+	parts := []string{}
+	if info.NodeAbnormalCount > 0 {
+		parts = append(parts, "Other abnormal Pods exist on the same Node; node-level resource, runtime, or network issues should be considered.")
+	}
+	if info.PeerAbnormalCount > 0 {
+		parts = append(parts, "Other Pods in the same Deployment are abnormal; this is likely workload-wide rather than a single-Pod incident.")
+	}
+	if info.NamespaceHotCount >= 3 {
+		parts = append(parts, "Multiple Pods in the Namespace are abnormal or restarting; check shared dependencies, quota, policy, or recent rollout scope.")
+	}
+	return strings.Join(parts, "\n")
 }
 
 // serviceEndpointsUnavailable reports whether every selected service has zero

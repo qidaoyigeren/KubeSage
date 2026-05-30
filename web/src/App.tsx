@@ -4,6 +4,9 @@ import Dashboard from './pages/Dashboard';
 import TaskList from './pages/TaskList';
 import TaskDetail from './pages/TaskDetail';
 import Diagnose from './pages/Diagnose';
+import Runbooks from './pages/Runbooks';
+import AuditLogs from './pages/AuditLogs';
+import Approvals from './pages/Approvals';
 
 const App = () => (
   <Routes>
@@ -12,6 +15,9 @@ const App = () => (
       <Route path="/tasks" element={<TaskList />} />
       <Route path="/tasks/:id" element={<TaskDetail />} />
       <Route path="/diagnose" element={<Diagnose />} />
+      <Route path="/runbooks" element={<Runbooks />} />
+      <Route path="/audit-logs" element={<AuditLogs />} />
+      <Route path="/approvals" element={<Approvals />} />
     </Route>
   </Routes>
 );

@@ -18,6 +18,8 @@ type DiagnosticContext struct {
 	Logs           []ContainerLogs
 	PVCs           []PVCBrief
 	Topology       *TopologyInfo
+	Correlations   *CorrelationInfo
+	MetricTrends   []MetricTrend
 	NodeSnapshots  []NodeSnapshot
 	RunbookHits    []RunbookHit
 	FaultTime      time.Time
@@ -43,11 +45,17 @@ type ContainerLogs struct {
 }
 
 type PVCBrief struct {
-	Name         string `json:"name"`
-	Phase        string `json:"phase"`
-	StorageClass string `json:"storage_class,omitempty"`
-	VolumeName   string `json:"volume_name,omitempty"`
-	Capacity     string `json:"capacity,omitempty"`
+	Name                    string `json:"name"`
+	Phase                   string `json:"phase"`
+	StorageClass            string `json:"storage_class,omitempty"`
+	VolumeName              string `json:"volume_name,omitempty"`
+	PVName                  string `json:"pv_name,omitempty"`
+	PVPhase                 string `json:"pv_phase,omitempty"`
+	ReclaimPolicy           string `json:"reclaim_policy,omitempty"`
+	Capacity                string `json:"capacity,omitempty"`
+	StorageClassProvisioner string `json:"storage_class_provisioner,omitempty"`
+	VolumeBindingMode       string `json:"volume_binding_mode,omitempty"`
+	SelectedNode            string `json:"selected_node,omitempty"`
 }
 
 type TopologyInfo struct {
@@ -100,6 +108,36 @@ type NodeHealth struct {
 	MemoryPressure bool   `json:"memory_pressure"`
 	DiskPressure   bool   `json:"disk_pressure"`
 	PIDPressure    bool   `json:"pid_pressure"`
+}
+
+type CorrelationInfo struct {
+	NodeName          string     `json:"node_name,omitempty"`
+	DeploymentName    string     `json:"deployment_name,omitempty"`
+	Namespace         string     `json:"namespace,omitempty"`
+	NodeAbnormalPods  []PodBrief `json:"node_abnormal_pods,omitempty"`
+	PeerAbnormalPods  []PodBrief `json:"peer_abnormal_pods,omitempty"`
+	NamespaceHotPods  []PodBrief `json:"namespace_hot_pods,omitempty"`
+	NodeAbnormalCount int        `json:"node_abnormal_count"`
+	PeerAbnormalCount int        `json:"peer_abnormal_count"`
+	NamespaceHotCount int        `json:"namespace_hot_count"`
+}
+
+type MetricTrend struct {
+	Profile        string    `json:"profile"`
+	Metric         string    `json:"metric"`
+	Window         string    `json:"window"`
+	Classification string    `json:"classification"`
+	Query          string    `json:"query,omitempty"`
+	SampleCount    int       `json:"sample_count"`
+	FirstValue     float64   `json:"first_value"`
+	LastValue      float64   `json:"last_value"`
+	MinValue       float64   `json:"min_value"`
+	MaxValue       float64   `json:"max_value"`
+	AvgValue       float64   `json:"avg_value"`
+	GrowthRatio    float64   `json:"growth_ratio"`
+	Error          string    `json:"error,omitempty"`
+	WindowStart    time.Time `json:"window_start,omitempty"`
+	WindowEnd      time.Time `json:"window_end,omitempty"`
 }
 
 type NodeSnapshot struct {

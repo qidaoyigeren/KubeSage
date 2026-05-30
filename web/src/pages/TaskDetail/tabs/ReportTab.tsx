@@ -1,4 +1,6 @@
-import { Card, Descriptions, Typography, Alert, Space, Divider, List, Tag } from 'antd';
+import { Card, Descriptions, Typography, Alert, Space, Divider, List, Tag, Button, message, Modal, Form, Input, Select } from 'antd';
+import type { ReactNode } from 'react';
+import { useState } from 'react';
 import {
   WarningOutlined,
   ExperimentOutlined,
@@ -6,56 +8,101 @@ import {
   SafetyOutlined,
   RobotOutlined,
   BulbOutlined,
+  LikeOutlined,
+  DislikeOutlined,
+  CommentOutlined,
 } from '@ant-design/icons';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import ConfidenceBar from '../../../components/ConfidenceBar';
 import RiskLevelTag from '../../../components/RiskLevelTag';
 import JsonViewer from '../../../components/JsonViewer';
+import { submitFeedback } from '../../../api/tasks';
 import type { DiagnosisReport } from '../../../api/types';
 
 const { Paragraph, Text } = Typography;
 
 const ReportTab = ({ report }: { report: DiagnosisReport }) => {
-  if (!report) return <Typography.Text type="secondary">暂无报告数据</Typography.Text>;
+  const queryClient = useQueryClient();
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackRating, setFeedbackRating] = useState<'useful' | 'not_useful'>('useful');
+  const [form] = Form.useForm();
+
+  const feedback = useMutation({
+    mutationFn: (values: { rating: 'useful' | 'not_useful'; corrected_root_cause?: string; comment?: string }) =>
+      submitFeedback(report.task_id, values),
+    onSuccess: () => {
+      message.success('Feedback recorded');
+      queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      setFeedbackModalOpen(false);
+      form.resetFields();
+    },
+  });
+
+  const handleQuickFeedback = (rating: 'useful' | 'not_useful') => {
+    feedback.mutate({ rating });
+  };
+
+  const handleDetailedFeedback = () => {
+    form.validateFields().then((values) => {
+      feedback.mutate({
+        rating: feedbackRating,
+        corrected_root_cause: values.corrected_root_cause,
+        comment: values.comment,
+      });
+    });
+  };
+
+  if (!report) return <Typography.Text type="secondary">No report data</Typography.Text>;
 
   const snapshot = report.agent_report_snapshot;
 
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-      {/* Root Cause */}
       <Card
         className="report-section-card"
         title={
           <Space>
-            <ExperimentOutlined style={{ color: '#667eea' }} />
-            <span>根因分析</span>
+            <ExperimentOutlined style={{ color: '#1677ff' }} />
+            <span>Root Cause Analysis</span>
+          </Space>
+        }
+        extra={
+          <Space>
+            <Button icon={<LikeOutlined />} size="small" onClick={() => handleQuickFeedback('useful')} loading={feedback.isPending}>
+              Useful
+            </Button>
+            <Button icon={<DislikeOutlined />} size="small" onClick={() => handleQuickFeedback('not_useful')} loading={feedback.isPending}>
+              Not useful
+            </Button>
+            <Button
+              icon={<CommentOutlined />}
+              size="small"
+              onClick={() => {
+                setFeedbackRating('useful');
+                setFeedbackModalOpen(true);
+              }}
+            >
+              Detailed Feedback
+            </Button>
           </Space>
         }
         bordered={false}
       >
         <Descriptions column={2} size="small">
-          <Descriptions.Item label="故障类型">
-            {report.fault_type ? (
-              <Text strong style={{ color: '#667eea' }}>{report.fault_type}</Text>
-            ) : '-'}
+          <Descriptions.Item label="Fault type">
+            {report.fault_type ? <Text strong>{report.fault_type}</Text> : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="置信度">
+          <Descriptions.Item label="Confidence">
             <ConfidenceBar score={report.confidence_score} />
           </Descriptions.Item>
-          <Descriptions.Item label="风险等级">
+          <Descriptions.Item label="Risk">
             <RiskLevelTag level={report.risk_level} />
           </Descriptions.Item>
-          <Descriptions.Item label="需要人工确认">
+          <Descriptions.Item label="Human confirmation">
             {report.need_human_confirm ? (
-              <Alert
-                message="是"
-                type="warning"
-                showIcon
-                icon={<WarningOutlined />}
-                banner
-                style={{ display: 'inline-block', padding: '2px 10px' }}
-              />
+              <Alert message="Required" type="warning" showIcon icon={<WarningOutlined />} banner style={{ display: 'inline-block', padding: '2px 10px' }} />
             ) : (
-              <Text type="success">否</Text>
+              <Text type="success">Not required</Text>
             )}
           </Descriptions.Item>
         </Descriptions>
@@ -63,113 +110,51 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
           <>
             <Divider style={{ margin: '16px 0' }} />
             <div style={{ padding: '12px 16px', background: '#f6ffed', borderRadius: 8, border: '1px solid #b7eb8f' }}>
-              <Text strong style={{ color: '#389e0d' }}>根因摘要：</Text>
+              <Text strong style={{ color: '#389e0d' }}>Summary: </Text>
               <div style={{ marginTop: 4 }}>{report.root_cause_summary}</div>
             </div>
           </>
         )}
       </Card>
 
-      {/* Impact Analysis */}
       {report.impact_analysis && (
-        <Card
-          className="report-section-card"
-          title={
-            <Space>
-              <SafetyOutlined style={{ color: '#faad14' }} />
-              <span>影响分析</span>
-            </Space>
-          }
-          bordered={false}
-        >
-          <Paragraph style={{ margin: 0, lineHeight: 1.8 }}>{report.impact_analysis}</Paragraph>
+        <Card className="report-section-card" title={<SectionTitle icon={<SafetyOutlined />} text="Impact Analysis" />} bordered={false}>
+          <Paragraph style={{ margin: 0, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{report.impact_analysis}</Paragraph>
         </Card>
       )}
 
-      {/* Suggested Actions */}
       {report.suggested_actions && (
-        <Card
-          className="report-section-card"
-          title={
-            <Space>
-              <BulbOutlined style={{ color: '#52c41a' }} />
-              <span>建议操作</span>
-            </Space>
-          }
-          bordered={false}
-        >
-          <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-            {report.suggested_actions}
-          </Paragraph>
+        <Card className="report-section-card" title={<SectionTitle icon={<BulbOutlined />} text="Suggested Actions" />} bordered={false}>
+          <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{report.suggested_actions}</Paragraph>
         </Card>
       )}
 
-      {/* Rule-based Result */}
       {report.rule_based_result && (
-        <Card
-          className="report-section-card"
-          title={
-            <Space>
-              <FileTextOutlined style={{ color: '#722ed1' }} />
-              <span>规则引擎分析结果</span>
-            </Space>
-          }
-          bordered={false}
-        >
-          <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-            {report.rule_based_result}
-          </Paragraph>
+        <Card className="report-section-card" title={<SectionTitle icon={<FileTextOutlined />} text="Rule Result" />} bordered={false}>
+          <JsonViewer data={safeJSON(report.rule_based_result)} maxHeight={360} />
         </Card>
       )}
 
-      {/* LLM Summary */}
       {report.llm_enhanced_summary && (
-        <Card
-          className="report-section-card"
-          title={
-            <Space>
-              <RobotOutlined style={{ color: '#13c2c2' }} />
-              <span>LLM 增强摘要</span>
-            </Space>
-          }
-          bordered={false}
-        >
-          <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-            {report.llm_enhanced_summary}
-          </Paragraph>
+        <Card className="report-section-card" title={<SectionTitle icon={<RobotOutlined />} text="LLM Summary" />} bordered={false}>
+          <JsonViewer data={safeJSON(report.llm_enhanced_summary)} maxHeight={360} />
         </Card>
       )}
 
-      {/* Agent Execution Summary */}
       {report.agent_execution_summary && (
-        <Card
-          className="report-section-card"
-          title={
-            <Space>
-              <ExperimentOutlined style={{ color: '#667eea' }} />
-              <span>Agent 执行摘要</span>
-            </Space>
-          }
-          bordered={false}
-        >
-          <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>
-            {report.agent_execution_summary}
-          </Paragraph>
+        <Card className="report-section-card" title={<SectionTitle icon={<ExperimentOutlined />} text="Agent Summary" />} bordered={false}>
+          <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{report.agent_execution_summary}</Paragraph>
         </Card>
       )}
 
-      {/* Stop Reason */}
       {snapshot?.stop_reason && (
-        <Card className="report-section-card" title="Agent 停止原因" bordered={false}>
-          <Tag color="blue" style={{ fontSize: 13, padding: '2px 12px' }}>
-            {snapshot.stop_reason}
-          </Tag>
+        <Card className="report-section-card" title="Agent Stop Reason" bordered={false}>
+          <Tag color="blue" style={{ fontSize: 13, padding: '2px 12px' }}>{snapshot.stop_reason}</Tag>
         </Card>
       )}
 
-      {/* Residual Risks */}
       {snapshot?.residual_risks && snapshot.residual_risks.length > 0 && (
-        <Card className="report-section-card" title="残余风险" bordered={false}>
+        <Card className="report-section-card" title="Residual Risks" bordered={false}>
           <List
             size="small"
             dataSource={snapshot.residual_risks}
@@ -183,17 +168,16 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
         </Card>
       )}
 
-      {/* Verification Plan */}
       {snapshot?.verification_plan && snapshot.verification_plan.length > 0 && (
-        <Card className="report-section-card" title="验证计划" bordered={false}>
+        <Card className="report-section-card" title="Verification Plan" bordered={false}>
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
             {snapshot.verification_plan.map((vp, i) => (
-              <Card key={i} type="inner" size="small" title={vp.action_id}>
+              <Card key={`${vp.action_id}-${i}`} type="inner" size="small" title={vp.action_id}>
                 <Descriptions column={1} size="small">
-                  <Descriptions.Item label="验证内容">{vp.what_to_check}</Descriptions.Item>
-                  <Descriptions.Item label="使用工具">{vp.tool_to_use}</Descriptions.Item>
-                  <Descriptions.Item label="成功条件">{vp.success_condition}</Descriptions.Item>
-                  <Descriptions.Item label="超时">{vp.timeout_seconds}s</Descriptions.Item>
+                  <Descriptions.Item label="Check">{vp.what_to_check}</Descriptions.Item>
+                  <Descriptions.Item label="Tool">{vp.tool_to_use}</Descriptions.Item>
+                  <Descriptions.Item label="Success">{vp.success_condition}</Descriptions.Item>
+                  <Descriptions.Item label="Timeout">{vp.timeout_seconds}s</Descriptions.Item>
                 </Descriptions>
               </Card>
             ))}
@@ -201,18 +185,59 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
         </Card>
       )}
 
-      {/* Raw Snapshot */}
       {report.agent_report_snapshot && (
-        <Card
-          className="report-section-card"
-          title="Agent 报告快照 (原始 JSON)"
-          bordered={false}
-        >
+        <Card className="report-section-card" title="Agent Report Snapshot" bordered={false}>
           <JsonViewer data={report.agent_report_snapshot} maxHeight={500} />
         </Card>
       )}
+
+      {/* Detailed Feedback Modal */}
+      <Modal
+        title="Detailed Feedback"
+        open={feedbackModalOpen}
+        onCancel={() => setFeedbackModalOpen(false)}
+        onOk={handleDetailedFeedback}
+        confirmLoading={feedback.isPending}
+        okText="Submit Feedback"
+      >
+        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item label="Rating">
+            <Select value={feedbackRating} onChange={setFeedbackRating}>
+              <Select.Option value="useful">Useful - Diagnosis was accurate</Select.Option>
+              <Select.Option value="not_useful">Not Useful - Diagnosis was inaccurate</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item label="Corrected Root Cause" name="corrected_root_cause">
+            <Input.TextArea
+              rows={3}
+              placeholder="If the diagnosis was wrong, what was the actual root cause?"
+            />
+          </Form.Item>
+          <Form.Item label="Additional Comments" name="comment">
+            <Input.TextArea
+              rows={3}
+              placeholder="Any additional feedback about the diagnosis quality..."
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Space>
   );
+};
+
+const SectionTitle = ({ icon, text }: { icon: ReactNode; text: string }) => (
+  <Space>
+    {icon}
+    <span>{text}</span>
+  </Space>
+);
+
+const safeJSON = (value: string) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 };
 
 export default ReportTab;

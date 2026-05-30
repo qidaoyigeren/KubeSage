@@ -11,6 +11,20 @@ type LLMClient interface {
 	GenerateDiagnosisSummary(ctx context.Context, prompt Prompt) (*EnhancedSummary, error)
 }
 
+type UsageRecord struct {
+	Provider         string
+	Model            string
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	LatencyMS        int64
+	EstimatedCost    float64
+}
+
+type UsageReporter interface {
+	LastUsage() UsageRecord
+}
+
 // Prompt stores the system and user messages sent to the chat API.
 type Prompt struct {
 	System string

@@ -166,3 +166,42 @@ export interface DiagnoseRequest {
   include_events?: boolean;
   include_metrics?: boolean;
 }
+
+export interface DashboardBucket {
+  name: string;
+  count: number;
+  rate?: number;
+}
+
+export interface DashboardSummary {
+  total_tasks: number;
+  running_tasks: number;
+  success_tasks: number;
+  failed_tasks: number;
+  success_rate: number;
+  average_duration_seconds: number;
+  feedback_useful: number;
+  feedback_not_useful: number;
+  feedback_accuracy_rate: number;
+  top_root_causes: DashboardBucket[] | null;
+  analyzer_hit_rates: DashboardBucket[] | null;
+  llm_calls: Record<string, number>;
+  llm_total_tokens: number;
+  llm_average_latency_ms: number;
+  llm_estimated_cost: number;
+}
+
+export interface DashboardTrendPoint {
+  date: string;
+  fault_type: string;
+  count: number;
+}
+
+export interface FeedbackRequest {
+  rating: 'useful' | 'not_useful';
+  corrected_root_cause?: string;
+  helpful_evidence_refs?: string[];
+  helpful_tool_names?: string[];
+  helpful_hypothesis_types?: string[];
+  comment?: string;
+}

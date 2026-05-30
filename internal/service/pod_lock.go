@@ -24,7 +24,7 @@ type localPodLock struct {
 }
 
 type redisPodLock struct {
-	client *redis.Client
+	client redis.UniversalClient
 	prefix string
 }
 
@@ -37,7 +37,7 @@ return 0
 
 // newDiagnosisLock prefers Redis for cross-instance locking and falls back to
 // an in-process lock when Redis is not enabled.
-func newDiagnosisLock(cfg config.RedisConfig, client *redis.Client) diagnosisLock {
+func newDiagnosisLock(cfg config.RedisConfig, client redis.UniversalClient) diagnosisLock {
 	if cfg.Enabled && client != nil {
 		prefix := strings.TrimSpace(cfg.KeyPrefix)
 		if prefix == "" {

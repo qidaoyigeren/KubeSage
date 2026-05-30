@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -14,7 +15,8 @@ func NewRulePlanner() *RulePlanner {
 
 // BuildInitialPlan creates a safe, read-oriented diagnostic plan from the
 // requested fault type and available tool set.
-func (p *RulePlanner) BuildInitialPlan(goal Goal, tools []ToolMetadata) Plan {
+func (p *RulePlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan {
+	_ = ctx
 	available := map[string]bool{}
 	for _, tool := range tools {
 		available[tool.Name] = true
@@ -61,6 +63,10 @@ func (p *RulePlanner) BuildInitialPlan(goal Goal, tools []ToolMetadata) Plan {
 		add("k8s.get_events", "inspect scheduler failure events", false, baseInput)
 		add("k8s.get_pvc_status", "check PVC binding state directly", false, baseInput)
 		add("k8s.get_topology", "inspect scheduling and node context", false, baseInput)
+	case "nodenotready":
+		add("k8s.get_topology", "inspect node health and pressure conditions", true, baseInput)
+		add("k8s.get_events", "collect node-related events", false, baseInput)
+		add("k8s.get_previous_logs", "check for node-related log messages", false, baseInput)
 	default:
 		add("k8s.get_events", "collect general pod events", false, baseInput)
 		add("k8s.get_previous_logs", "collect general container logs", false, baseInput)
@@ -68,6 +74,7 @@ func (p *RulePlanner) BuildInitialPlan(goal Goal, tools []ToolMetadata) Plan {
 		add("k8s.get_topology", "collect workload impact context", false, baseInput)
 	}
 
+	applyDefaultParallelGroups(steps)
 	return Plan{
 		Summary:              "rule-based Kubernetes incident response plan",
 		Steps:                steps,
@@ -160,6 +167,27 @@ func nextPlanStep(plan *Plan) *PlanStep {
 	return nil
 }
 
+func nextPlanSteps(plan *Plan) []*PlanStep {
+	first := nextPlanStep(plan)
+	if first == nil {
+		return nil
+	}
+	if first.ParallelGroup == "" {
+		return []*PlanStep{first}
+	}
+	result := []*PlanStep{first}
+	for i := range plan.Steps {
+		step := &plan.Steps[i]
+		if step.ID == first.ID || step.Completed || step.Skipped {
+			continue
+		}
+		if step.ParallelGroup == first.ParallelGroup {
+			result = append(result, step)
+		}
+	}
+	return result
+}
+
 func markStepComplete(plan *Plan, id string) {
 	if plan == nil {
 		return
@@ -184,11 +212,12 @@ func appendIfMissing(plan *Plan, tool, reason string, state *ToolState) {
 		input["pod_name"] = state.Goal.PodName
 	}
 	plan.Steps = append(plan.Steps, PlanStep{
-		ID:         fmt.Sprintf("step-%02d", len(plan.Steps)+1),
-		ToolName:   tool,
-		Reason:     reason,
-		Input:      input,
-		AppendedBy: "observation",
+		ID:            fmt.Sprintf("step-%02d", len(plan.Steps)+1),
+		ToolName:      tool,
+		Reason:        reason,
+		Input:         input,
+		AppendedBy:    "observation",
+		ParallelGroup: "followup-evidence",
 	})
 }
 
@@ -224,4 +253,28 @@ func normalizeFault(fault string) string {
 	fault = strings.ReplaceAll(fault, "-", "")
 	fault = strings.ReplaceAll(fault, " ", "")
 	return fault
+}
+
+func applyDefaultParallelGroups(steps []PlanStep) {
+	for i := range steps {
+		switch steps[i].ToolName {
+		case "k8s.get_events", "k8s.get_previous_logs", "k8s.get_topology", "k8s.get_pvc_status", "prometheus.query_range", "loki.query_logs":
+			steps[i].ParallelGroup = "evidence-snapshot"
+		}
+	}
+}
+
+func firstPlanner(planner Planner) Planner {
+	if planner != nil {
+		return planner
+	}
+	return NewRulePlanner()
+}
+
+func toolNames(steps []*PlanStep) []string {
+	names := make([]string, 0, len(steps))
+	for _, step := range steps {
+		names = append(names, step.ToolName)
+	}
+	return names
 }

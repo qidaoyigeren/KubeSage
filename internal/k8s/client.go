@@ -10,6 +10,9 @@ import (
 
 	"kubesage/internal/config"
 
+	authnv1 "k8s.io/api/authentication/v1"
+	authzv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -28,6 +31,42 @@ func (c *Client) Ping(ctx context.Context) error {
 		return fmt.Errorf("kubernetes client is not configured")
 	}
 	return c.Clientset.Discovery().RESTClient().Get().AbsPath("/version").Do(ctx).Error()
+}
+
+func (c *Client) ReviewToken(ctx context.Context, token string) (*authnv1.UserInfo, bool, error) {
+	if c == nil || c.Clientset == nil {
+		return nil, false, fmt.Errorf("kubernetes client is not configured")
+	}
+	review, err := c.Clientset.AuthenticationV1().TokenReviews().Create(ctx, &authnv1.TokenReview{
+		Spec: authnv1.TokenReviewSpec{Token: token},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return nil, false, err
+	}
+	return &review.Status.User, review.Status.Authenticated, nil
+}
+
+func (c *Client) SubjectCanGetPod(ctx context.Context, user authnv1.UserInfo, namespace, podName string) (bool, string, error) {
+	if c == nil || c.Clientset == nil {
+		return false, "", fmt.Errorf("kubernetes client is not configured")
+	}
+	review, err := c.Clientset.AuthorizationV1().SubjectAccessReviews().Create(ctx, &authzv1.SubjectAccessReview{
+		Spec: authzv1.SubjectAccessReviewSpec{
+			User:   user.Username,
+			Groups: user.Groups,
+			ResourceAttributes: &authzv1.ResourceAttributes{
+				Namespace: namespace,
+				Verb:      "get",
+				Group:     "",
+				Resource:  "pods",
+				Name:      podName,
+			},
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return false, "", err
+	}
+	return review.Status.Allowed, review.Status.Reason, nil
 }
 
 // NewClient builds a Kubernetes clientset from kubeconfig or in-cluster config.

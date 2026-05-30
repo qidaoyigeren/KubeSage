@@ -27,6 +27,28 @@ import (
 	"go.uber.org/zap"
 )
 
+// buildRunbookChunks loads markdown runbooks from disk and converts them into
+// indexable chunks for the vector store.
+func buildRunbookChunks(dir string) []rag.IndexChunk {
+	runbooks, err := rag.LoadRunbooks(dir)
+	if err != nil {
+		return nil
+	}
+	var chunks []rag.IndexChunk
+	for _, rb := range runbooks {
+		for i, section := range rb.Sections {
+			chunks = append(chunks, rag.IndexChunk{
+				ID:        fmt.Sprintf("runbook_%s_%d", rb.FaultType, i),
+				RunbookID: 0, // file-based runbooks have no DB ID
+				FaultType: rb.FaultType,
+				Title:     section.Title,
+				Content:   section.Content,
+			})
+		}
+	}
+	return chunks
+}
+
 // main initializes dependencies, starts the HTTP server, and handles shutdown.
 func main() {
 	cfg, err := config.Load("configs/config.yaml")
@@ -39,6 +61,11 @@ func main() {
 		panic(fmt.Sprintf("init logger: %v", err))
 	}
 	defer func() { _ = log.Sync() }()
+
+	// Print security warnings for sensitive config fields.
+	for _, w := range cfg.SecurityWarnings() {
+		log.Warn("SECURITY WARNING: " + w)
+	}
 
 	traceShutdown, err := observability.InitTracing(context.Background(), cfg.OTel)
 	if err != nil {
@@ -62,7 +89,7 @@ func main() {
 		}
 	} else {
 		log.Warn("database migrations disabled; falling back to GORM AutoMigrate")
-		if err := database.AutoMigrate(&model.DiagnosisTask{}, &model.Evidence{}, &model.DiagnosisReport{}, &model.AgentStep{}, &model.Hypothesis{}, &model.RemediationExecution{}); err != nil {
+		if err := database.AutoMigrate(&model.DiagnosisTask{}, &model.Evidence{}, &model.DiagnosisReport{}, &model.AgentStep{}, &model.Hypothesis{}, &model.RemediationExecution{}, &model.DiagnosisFeedback{}, &model.AuditLog{}, &model.Runbook{}, &model.RunbookChunk{}, &model.DiagnosisQueueDeadLetter{}, &model.LLMUsageRecord{}); err != nil {
 			log.Fatal("auto migrate failed", zap.Error(err))
 		}
 	}
@@ -76,11 +103,58 @@ func main() {
 	evidenceRepo := repository.NewEvidenceRepository(database)
 	reportRepo := repository.NewReportRepository(database)
 	agentRepo := repository.NewAgentRepository(database)
+	feedbackRepo := repository.NewFeedbackRepository(database)
+	auditRepo := repository.NewAuditRepository(database)
+	runbookRepo := repository.NewRunbookRepository(database)
+	dashboardRepo := repository.NewDashboardRepository(database)
+	deadLetterRepo := repository.NewDeadLetterRepository(database)
+	retentionRepo := repository.NewRetentionRepository(database)
+	llmUsageRepo := repository.NewLLMUsageRepository(database)
 
-	runbookRetriever, err := rag.NewSimpleKeywordRetriever(cfg.Runbook.Dir)
+	keywordRetriever, err := rag.NewSimpleKeywordRetriever(cfg.Runbook.Dir)
 	if err != nil {
 		log.Warn("load runbooks failed", zap.Error(err))
 	}
+	vectorIndexer := rag.NewIndexer(cfg.RAG)
+	var vectorRetriever rag.Retriever
+	if vectorIndexer != nil {
+		vectorRetriever = vectorIndexer
+		// Ensure Qdrant collection exists and index runbooks on startup.
+		go func() {
+			indexCtx, indexCancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer indexCancel()
+			dimension := cfg.RAG.Embedding.Dimension
+			if dimension <= 0 {
+				dimension = 1536 // default for text-embedding-ada-002
+			}
+			if err := vectorIndexer.EnsureCollection(indexCtx, dimension); err != nil {
+				log.Warn("ensure qdrant collection failed", zap.Error(err))
+				return
+			}
+			chunks := buildRunbookChunks(cfg.Runbook.Dir)
+			// Also index DB-stored runbooks.
+			dbRunbooks, err := runbookRepo.List(indexCtx)
+			if err == nil {
+				for _, rb := range dbRunbooks {
+					chunks = append(chunks, rag.IndexChunk{
+						ID:        fmt.Sprintf("db_runbook_%d", rb.ID),
+						RunbookID: rb.ID,
+						FaultType: rb.FaultType,
+						Title:     rb.Title,
+						Content:   rb.Content,
+					})
+				}
+			}
+			if len(chunks) > 0 {
+				if err := vectorIndexer.Upsert(indexCtx, chunks); err != nil {
+					log.Warn("startup runbook indexing failed", zap.Error(err))
+				} else {
+					log.Info("startup runbook indexing completed", zap.Int("chunks", len(chunks)))
+				}
+			}
+		}()
+	}
+	runbookRetriever := rag.NewHybridRetriever(vectorRetriever, keywordRetriever, cfg.RAG.PreferVector)
 	var llmClient llm.LLMClient
 	if cfg.LLM.Enabled {
 		llmClient = llm.NewOpenAICompatibleClient(cfg.LLM)
@@ -89,18 +163,31 @@ func main() {
 	if cfg.Loki.Enabled {
 		lokiClient = loki.NewClient(cfg.Loki)
 	}
-	var redisClient *redis.Client
+	var redisClient redis.UniversalClient
 	if cfg.Redis.Enabled {
-		redisClient = redis.NewClient(&redis.Options{
-			Addr:     cfg.Redis.Address,
-			Password: cfg.Redis.Password,
-			DB:       cfg.Redis.DB,
-		})
+		redisClient = db.NewRedis(cfg.Redis)
 		if err := redisClient.Ping(context.Background()).Err(); err != nil {
 			log.Fatal("connect redis failed", zap.Error(err))
 		}
 		defer func() { _ = redisClient.Close() }()
 	}
+	prometheusClient := prometheus.NewClient(cfg.Prometheus)
+	operationsSvc := service.NewOperationsService(service.OperationsOptions{
+		FeedbackRepo:  feedbackRepo,
+		AuditRepo:     auditRepo,
+		DashboardRepo: dashboardRepo,
+		RunbookRepo:   runbookRepo,
+		RetentionRepo: retentionRepo,
+		AgentRepo:     agentRepo,
+		Indexer:       vectorIndexer,
+		RetentionDays: cfg.Retention.TaskDays,
+	})
+	if err := operationsSvc.CleanupRetention(context.Background()); err != nil {
+		log.Warn("retention cleanup failed", zap.Error(err))
+	}
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
+	operationsSvc.StartRetentionLoop(appCtx, 24*time.Hour)
 
 	diagnosisSvc := service.NewDiagnosisService(service.DiagnosisServiceOptions{
 		Config:           cfg,
@@ -109,20 +196,29 @@ func main() {
 		EvidenceRepo:     evidenceRepo,
 		ReportRepo:       reportRepo,
 		AgentRepo:        agentRepo,
-		SnapshotService:  service.NewSnapshotService(cfg, k8sClient, log, lokiClient),
+		DeadLetterRepo:   deadLetterRepo,
+		LLMUsageRepo:     llmUsageRepo,
+		SnapshotService:  service.NewSnapshotService(cfg, k8sClient, log, lokiClient, prometheusClient),
 		ReportService:    service.NewReportService(reportRepo),
-		PrometheusClient: prometheus.NewClient(cfg.Prometheus),
+		PrometheusClient: prometheusClient,
 		LLMClient:        llmClient,
 		RunbookRetriever: runbookRetriever,
 		RedisClient:      redisClient,
+		Notifier:         service.NewNotifier(cfg.Notification),
 	})
+	if err := diagnosisSvc.StartQueueWorkers(appCtx); err != nil {
+		log.Fatal("start diagnosis queue worker failed", zap.Error(err))
+	}
 
 	router := api.NewRouter(api.RouterOptions{
-		DiagnosisService: diagnosisSvc,
-		Logger:           log,
-		DB:               database,
-		K8sClient:        k8sClient,
-		AuthToken:        cfg.Server.AuthToken,
+		DiagnosisService:  diagnosisSvc,
+		OperationsService: operationsSvc,
+		Authorizer:        service.NewKubernetesAuthorizer(cfg.Auth, k8sClient),
+		Logger:            log,
+		DB:                database,
+		K8sClient:         k8sClient,
+		AuthToken:         cfg.Server.AuthToken,
+		AuthMode:          cfg.Auth.Mode,
 	})
 
 	server := &http.Server{
@@ -147,5 +243,14 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
 		log.Error("server shutdown failed", zap.Error(err))
+	}
+	drainTimeout := time.Duration(cfg.Queue.DrainTimeoutSeconds) * time.Second
+	if drainTimeout <= 0 {
+		drainTimeout = 30 * time.Second
+	}
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), drainTimeout)
+	defer drainCancel()
+	if err := diagnosisSvc.Shutdown(drainCtx); err != nil {
+		log.Warn("diagnosis worker drain timed out", zap.Error(err))
 	}
 }

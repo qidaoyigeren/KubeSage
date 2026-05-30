@@ -3,17 +3,27 @@ server:
   port: 8080
   read_timeout_seconds: 15
   write_timeout_seconds: 30
+  # SENSITIVE: Set via KUBESAGE_SERVER_AUTH_TOKEN env var
   auth_token: ""
 
+auth:
+  mode: "bearer"
+
 mysql:
+  dsn: ""
   host: "127.0.0.1"
   port: 3306
   username: "kubesage"
-  password: "kubesage"
+  # SENSITIVE: Set via KUBESAGE_MYSQL_PASSWORD env var
+  password: ""
   database: "kubesage"
   charset: "utf8mb4"
   parse_time: true
   loc: "Local"
+  read_replicas: []
+  max_idle_conns: 10
+  max_open_conns: 50
+  conn_max_lifetime_seconds: 3600
 
 kubernetes:
   kubeconfig: "~/.kube/config"
@@ -34,6 +44,25 @@ agent:
   max_steps: 12
   tool_timeout_seconds: 10
   enable_dry_run_preview: true
+  hypothesis_config_path: ""
+
+# Planner type: "llm" (default, uses LLM when available with rule-based fallback)
+# or "rule" (always use deterministic rule-based planning)
+planner:
+  type: "llm"
+
+queue:
+  type: ""
+  stream: "kubesage:diagnosis"
+  group: "kubesage-workers"
+  consumer: "worker-1"
+  max_retry: 3
+  retry_delay_seconds: 5
+  blocking_seconds: 5
+  drain_timeout_seconds: 30
+
+retention:
+  task_days: 30
 
 prometheus:
   base_url: ""
@@ -45,6 +74,7 @@ prometheus:
 llm:
   enabled: false
   base_url: "https://api.deepseek.com"
+  # SENSITIVE: Set via KUBESAGE_LLM_API_KEY env var
   api_key: ""
   model: "deepseek-chat"
   retry_max_attempts: 2
@@ -59,10 +89,18 @@ loki:
 
 redis:
   enabled: false
+  mode: "single"
   address: "127.0.0.1:6379"
+  addresses: []
+  # SENSITIVE: Set via KUBESAGE_REDIS_PASSWORD env var
   password: ""
+  username: ""
   db: 0
   key_prefix: "kubesage"
+  sentinel_master: ""
+  sentinel_username: ""
+  # SENSITIVE: Set via KUBESAGE_REDIS_SENTINEL_PASSWORD env var
+  sentinel_password: ""
 
 otel:
   enabled: false
@@ -77,6 +115,27 @@ migrations:
 
 runbook:
   dir: "./runbooks"
+
+rag:
+  vector_store: ""
+  prefer_vector: false
+  embedding:
+    provider: ""
+    base_url: ""
+    # SENSITIVE: Set via KUBESAGE_RAG_EMBEDDING_API_KEY env var
+    api_key: ""
+    model: ""
+  qdrant:
+    base_url: ""
+    # SENSITIVE: Set via KUBESAGE_RAG_QDRANT_API_KEY env var
+    api_key: ""
+    collection: "kubesage_runbooks"
+
+notification:
+  slack_webhook_url: ""
+  feishu_webhook_url: ""
+  dingtalk_webhook_url: ""
+  alertmanager_writeback: false
 
 log:
   level: "info"

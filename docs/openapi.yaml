@@ -1,0 +1,159 @@
+openapi: 3.0.3
+info:
+  title: KubeSage API
+  version: 0.2.0
+  description: Kubernetes RCA diagnosis, feedback, dashboard, and runbook APIs.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /diagnose/pod:
+    post:
+      summary: Start a Pod diagnosis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiagnoseRequest'
+      responses:
+        '200':
+          description: Diagnosis task
+  /diagnose/tasks:
+    get:
+      summary: List diagnosis tasks
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated task list
+  /diagnose/tasks/{id}:
+    get:
+      summary: Get diagnosis task details
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Diagnosis task with report, evidence, and agent timeline
+  /diagnose/tasks/{id}/feedback:
+    post:
+      summary: Submit diagnosis quality feedback
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeedbackRequest'
+      responses:
+        '200':
+          description: Stored feedback
+  /dashboard/summary:
+    get:
+      summary: Operational diagnosis summary
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, default: 7 }
+      responses:
+        '200':
+          description: Dashboard summary
+  /dashboard/trends:
+    get:
+      summary: Fault trend points
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, default: 14 }
+      responses:
+        '200':
+          description: Daily fault trend list
+  /runbooks:
+    get:
+      summary: List managed runbooks
+      responses:
+        '200':
+          description: Runbook list
+    post:
+      summary: Create a managed runbook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunbookRequest'
+      responses:
+        '200':
+          description: Created runbook
+  /runbooks/{id}:
+    put:
+      summary: Update a managed runbook and re-index chunks
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunbookRequest'
+      responses:
+        '200':
+          description: Updated runbook
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+  schemas:
+    DiagnoseRequest:
+      type: object
+      required: [namespace, pod_name]
+      properties:
+        namespace: { type: string }
+        pod_name: { type: string }
+        container_name: { type: string }
+        expected_fault_type: { type: string }
+        include_logs: { type: boolean }
+        include_events: { type: boolean }
+        include_metrics: { type: boolean }
+    FeedbackRequest:
+      type: object
+      required: [rating]
+      properties:
+        rating:
+          type: string
+          enum: [useful, not_useful]
+        corrected_root_cause: { type: string }
+        helpful_evidence_refs:
+          type: array
+          items: { type: string }
+        helpful_tool_names:
+          type: array
+          items: { type: string }
+        helpful_hypothesis_types:
+          type: array
+          items: { type: string }
+        comment: { type: string }
+    RunbookRequest:
+      type: object
+      required: [fault_type, title, content]
+      properties:
+        fault_type: { type: string }
+        title: { type: string }
+        content: { type: string }
+        hints:
+          type: object
+          additionalProperties: true

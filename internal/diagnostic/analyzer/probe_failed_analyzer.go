@@ -18,6 +18,16 @@ func NewProbeFailedAnalyzer() *ProbeFailedAnalyzer {
 // Name returns the analyzer identifier used in reports.
 func (a *ProbeFailedAnalyzer) Name() string { return "probe_failed" }
 
+func (a *ProbeFailedAnalyzer) Metadata() diagnostic.AnalyzerMetadata {
+	return diagnostic.AnalyzerMetadata{
+		Name:             a.Name(),
+		FaultType:        "ProbeFailed",
+		Priority:         60,
+		MatchSignals:     []string{"event.reason=Unhealthy", "readiness probe failed", "liveness probe failed"},
+		RequiredEvidence: []string{"k8s_event", "k8s_pod_status", "k8s_log", "k8s_topology", "prometheus"},
+	}
+}
+
 // Match decides whether pod events contain failed readiness/liveness probes.
 func (a *ProbeFailedAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	for _, event := range ctx.Events {

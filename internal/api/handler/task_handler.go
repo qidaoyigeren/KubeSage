@@ -11,7 +11,8 @@ import (
 )
 
 type TaskHandler struct {
-	service TaskReader
+	service   TaskReader
+	canceller TaskCanceller
 }
 
 type TaskReader interface {
@@ -19,9 +20,17 @@ type TaskReader interface {
 	ListTasks(ctx context.Context, page, pageSize int) ([]model.DiagnosisTask, int64, error)
 }
 
+type TaskCanceller interface {
+	CancelTask(ctx context.Context, taskID uint) error
+}
+
 // NewTaskHandler creates handlers for reading diagnosis task state.
-func NewTaskHandler(service TaskReader) *TaskHandler {
-	return &TaskHandler{service: service}
+func NewTaskHandler(service TaskReader, canceller ...TaskCanceller) *TaskHandler {
+	h := &TaskHandler{service: service}
+	if len(canceller) > 0 {
+		h.canceller = canceller[0]
+	}
+	return h
 }
 
 // GetTask loads one diagnosis task and its report/evidence by task ID.
@@ -67,4 +76,22 @@ func parsePositiveInt(raw string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// CancelTask cancels a running diagnosis task.
+func (h *TaskHandler) CancelTask(c *gin.Context) {
+	if h.canceller == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"code": 501, "message": "task cancellation is not supported"})
+		return
+	}
+	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id64 == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "invalid task id"})
+		return
+	}
+	if err := h.canceller.CancelTask(c.Request.Context(), uint(id64)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "task cancelled"})
 }

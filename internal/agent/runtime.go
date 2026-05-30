@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"kubesage/internal/diagnostic"
@@ -17,7 +18,7 @@ import (
 type Runtime struct {
 	store        Store
 	registry     *ToolRegistry
-	planner      *RulePlanner
+	planner      Planner
 	hypotheses   *HypothesisEngine
 	verification *VerificationPlanner
 	analyzer     Analyzer
@@ -29,15 +30,24 @@ type RuntimeDeps struct {
 	Registry *ToolRegistry
 	Analyzer Analyzer
 	Policy   *RemediationPolicy
+	Planner  Planner
 }
 
 // NewRuntime creates the Agent Runtime MVP coordinator.
 func NewRuntime(deps RuntimeDeps) *Runtime {
+	hypotheses := NewHypothesisEngine()
+	// Wire LLM-assisted hypothesis scoring if the planner is an LLMPlanner
+	// with a client that also implements LLMHypothesisScorer.
+	if llmPlanner, ok := deps.Planner.(*LLMPlanner); ok && llmPlanner.HasLLMClient() {
+		if scorer, ok := llmPlanner.client.(LLMHypothesisScorer); ok {
+			hypotheses.WithLLMScorer(scorer)
+		}
+	}
 	return &Runtime{
 		store:        deps.Store,
 		registry:     deps.Registry,
-		planner:      NewRulePlanner(),
-		hypotheses:   NewHypothesisEngine(),
+		planner:      firstPlanner(deps.Planner),
+		hypotheses:   hypotheses,
 		verification: NewVerificationPlanner(),
 		analyzer:     deps.Analyzer,
 		policy:       deps.Policy,
@@ -79,9 +89,9 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 
 	state := &ToolState{TaskID: opts.TaskID, Goal: opts.Goal}
 	planCtx, planSpan := observability.Tracer().Start(ctx, "agent.planner")
-	plan := r.planner.BuildInitialPlan(opts.Goal, r.registry.Metadata())
+	plan := r.planner.BuildInitialPlan(planCtx, opts.Goal, r.registry.Metadata())
 	planSpan.End()
-	recorder.record(planCtx, stepRecord{Stage: StagePlan, Status: model.AgentStepStatusSuccess, Input: opts.Goal, Output: plan, Reason: plan.Summary})
+	recorder.record(planCtx, stepRecord{Stage: StagePlan, ToolName: plannerToolName(r.planner), Status: model.AgentStepStatusSuccess, Input: opts.Goal, Output: plan, Reason: plan.Summary})
 
 	allEvidence := []diagnostic.EvidenceRecord{}
 	latestScores := []HypothesisScore{}
@@ -97,56 +107,49 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			stopReason = StopReasonMaxSteps
 			break
 		}
-		step := nextPlanStep(&plan)
-		if step == nil {
+		steps := nextPlanSteps(&plan)
+		if len(steps) == 0 {
 			stopReason = StopReasonPlanComplete
 			break
 		}
-		tool, ok := r.registry.Get(step.ToolName)
-		if !ok {
-			step.Skipped = true
-			recorder.record(ctx, stepRecord{Stage: StageDecision, ToolName: step.ToolName, Status: model.AgentStepStatusSkipped, Input: step, Reason: "tool is not registered"})
-			continue
-		}
-
-		toolCtx, cancel := context.WithTimeout(ctx, opts.ToolTimeout)
-		toolCtx, toolSpan := observability.Tracer().Start(toolCtx, "agent.tool",
-			trace.WithAttributes(attribute.String("agent.tool", step.ToolName)),
-		)
-		result := tool.Execute(toolCtx, step.Input, state)
-		cancel()
-		if !result.Success {
-			toolSpan.RecordError(fmt.Errorf("%s", result.Error))
-			toolSpan.SetStatus(codes.Error, result.Error)
-		}
-		toolSpan.End()
-		observeToolMetrics(result)
-		status := model.AgentStepStatusSuccess
-		if !result.Success {
-			status = model.AgentStepStatusFailed
-		}
-		toolStep := recorder.record(ctx, stepRecord{
-			Stage:    StageToolCall,
-			ToolName: step.ToolName,
-			Status:   status,
-			Input:    step.Input,
-			Output:   result,
-			Duration: time.Duration(result.DurationMS) * time.Millisecond,
-			Reason:   step.Reason,
-		})
-		recorder.record(ctx, stepRecord{
-			ParentStepID: stepIDPtr(toolStep),
-			Stage:        StageObservation,
-			ToolName:     step.ToolName,
-			Status:       status,
-			Output:       map[string]interface{}{"observation": result.Observation, "error": result.Error},
-			Reason:       result.Observation,
-		})
-		stepsExecuted++
-		markStepComplete(&plan, step.ID)
-
-		if len(result.EvidenceRecords) > 0 {
-			allEvidence = append(allEvidence, result.EvidenceRecords...)
+		executions := r.executePlanSteps(ctx, steps, state, opts.ToolTimeout)
+		for _, execution := range executions {
+			step := execution.Step
+			result := execution.Result
+			if execution.MissingTool {
+				step.Skipped = true
+				recorder.record(ctx, stepRecord{Stage: StageDecision, ToolName: step.ToolName, Status: model.AgentStepStatusSkipped, Input: step, Reason: "tool is not registered"})
+				continue
+			}
+			status := model.AgentStepStatusSuccess
+			if !result.Success {
+				status = model.AgentStepStatusFailed
+			}
+			toolStep := recorder.record(ctx, stepRecord{
+				Stage:    StageToolCall,
+				ToolName: step.ToolName,
+				Status:   status,
+				Input:    step.Input,
+				Output:   result,
+				Duration: time.Duration(result.DurationMS) * time.Millisecond,
+				Reason:   step.Reason,
+			})
+			recorder.record(ctx, stepRecord{
+				ParentStepID: stepIDPtr(toolStep),
+				Stage:        StageObservation,
+				ToolName:     step.ToolName,
+				Status:       status,
+				Output:       map[string]interface{}{"observation": result.Observation, "error": result.Error},
+				Reason:       result.Observation,
+			})
+			stepsExecuted++
+			markStepComplete(&plan, step.ID)
+			if len(result.EvidenceRecords) > 0 {
+				allEvidence = append(allEvidence, result.EvidenceRecords...)
+			}
+			if step.Critical && !result.Success {
+				stopReason = StopReasonCriticalToolFailed
+			}
 		}
 		hypothesisCtx, hypothesisSpan := observability.Tracer().Start(ctx, "agent.hypothesis_update")
 		latestScores = r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, allEvidence)
@@ -154,20 +157,49 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		recorder.record(hypothesisCtx, stepRecord{
 			Stage:  StageReflection,
 			Status: model.AgentStepStatusSuccess,
-			Input:  map[string]interface{}{"tool": step.ToolName},
+			Input:  map[string]interface{}{"tools": toolNames(steps)},
 			Output: latestScores,
 			Reason: "updated root-cause hypotheses from latest observation",
 		})
 
-		if step.Critical && !result.Success {
-			stopReason = StopReasonCriticalToolFailed
+		// LLM-driven reflection: ask the LLM whether to continue or stop.
+		if rp, ok := r.planner.(ReflectivePlanner); ok {
+			reflection, reflectErr := rp.Reflect(ctx, plan, state, latestScores)
+			if reflectErr == nil {
+				recorder.record(ctx, stepRecord{
+					Stage:  StageReflection,
+					Status: model.AgentStepStatusSuccess,
+					Input:  map[string]interface{}{"should_continue": reflection.ShouldContinue},
+					Output: reflection,
+					Reason: reflection.Reason,
+				})
+				if !reflection.ShouldContinue {
+					stopReason = stopReasonLLMReflectionComplete
+					break
+				}
+				// Append any new steps suggested by LLM reflection.
+				for _, newStep := range reflection.NewSteps {
+					if newStep.ID == "" {
+						newStep.ID = "reflect-" + newStep.ToolName
+					}
+					newStep.AppendedBy = "llm_reflection"
+					plan.Steps = append(plan.Steps, newStep)
+				}
+			}
+		}
+
+		if stopReason != "" {
 			break
 		}
 		if hasConfirmed(latestScores) {
 			stopReason = StopReasonConfirmedHypothesis
 			break
 		}
-		r.planner.AdjustPlan(&plan, state, result, latestScores)
+		for _, execution := range executions {
+			if !execution.MissingTool {
+				r.planner.AdjustPlan(&plan, state, execution.Result, latestScores)
+			}
+		}
 		if nextPlanStep(&plan) == nil {
 			stopReason = StopReasonNoEffectiveTool
 			break
@@ -247,6 +279,53 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		StopReason:       stopReason,
 		StepsExecuted:    stepsExecuted,
 	}, nil
+}
+
+type planExecution struct {
+	Step        *PlanStep
+	Result      ToolResult
+	MissingTool bool
+}
+
+func (r *Runtime) executePlanSteps(ctx context.Context, steps []*PlanStep, state *ToolState, timeout time.Duration) []planExecution {
+	results := make([]planExecution, len(steps))
+	var wg sync.WaitGroup
+	for i, step := range steps {
+		tool, ok := r.registry.Get(step.ToolName)
+		if !ok {
+			results[i] = planExecution{Step: step, MissingTool: true}
+			continue
+		}
+		wg.Add(1)
+		go func(index int, step *PlanStep, tool Tool) {
+			defer wg.Done()
+			toolCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			toolCtx, toolSpan := observability.Tracer().Start(toolCtx, "agent.tool",
+				trace.WithAttributes(
+					attribute.String("agent.tool", step.ToolName),
+					attribute.String("agent.parallel_group", step.ParallelGroup),
+				),
+			)
+			result := tool.Execute(toolCtx, step.Input, state)
+			if !result.Success {
+				toolSpan.RecordError(fmt.Errorf("%s", result.Error))
+				toolSpan.SetStatus(codes.Error, result.Error)
+			}
+			toolSpan.End()
+			observeToolMetrics(result)
+			results[index] = planExecution{Step: step, Result: result}
+		}(i, step, tool)
+	}
+	wg.Wait()
+	return results
+}
+
+func plannerToolName(planner Planner) string {
+	if _, ok := planner.(*LLMPlanner); ok {
+		return "llm.plan"
+	}
+	return "rule.plan"
 }
 
 func (r *Runtime) runAnalyzer(ctx context.Context, recorder *stepRecorder, state *ToolState) (*diagnostic.Report, error) {

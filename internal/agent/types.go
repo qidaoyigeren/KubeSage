@@ -47,6 +47,56 @@ type RuntimeOptions struct {
 	Goal                Goal
 }
 
+type Planner interface {
+	BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan
+	AdjustPlan(plan *Plan, state *ToolState, last ToolResult, hypotheses []HypothesisScore)
+}
+
+type PlanClient interface {
+	GenerateAgentPlan(ctx context.Context, prompt PlanPrompt) (Plan, error)
+	GeneratePlanAdjustment(ctx context.Context, prompt AdjustmentPrompt) (Plan, error)
+	GenerateReflection(ctx context.Context, prompt ReflectionPrompt) (ReflectionResult, error)
+}
+
+type PlanPrompt struct {
+	Goal   Goal           `json:"goal"`
+	Tools  []ToolMetadata `json:"tools"`
+	Safety []string       `json:"safety"`
+}
+
+type AdjustmentPrompt struct {
+	CurrentPlan  Plan              `json:"current_plan"`
+	Observations []string          `json:"observations"`
+	Hypotheses   []HypothesisScore `json:"hypotheses"`
+	Tools        []ToolMetadata    `json:"tools"`
+	Safety       []string          `json:"safety"`
+	Goal         Goal              `json:"goal"`
+}
+
+// ReflectionResult is returned by ReflectivePlanner after LLM-driven reflection.
+type ReflectionResult struct {
+	ShouldContinue bool       `json:"should_continue"`
+	Reason         string     `json:"reason"`
+	NewSteps       []PlanStep `json:"new_steps,omitempty"`
+}
+
+// ReflectionPrompt contains the context for LLM reflection decisions.
+type ReflectionPrompt struct {
+	Plan         Plan              `json:"plan"`
+	Goal         Goal              `json:"goal"`
+	Hypotheses   []HypothesisScore `json:"hypotheses"`
+	Tools        []ToolMetadata    `json:"tools"`
+	Safety       []string          `json:"safety"`
+	Evidence     string            `json:"evidence,omitempty"`
+	Observations []string          `json:"observations,omitempty"`
+}
+
+// ReflectivePlanner extends Planner with LLM-driven reflection capabilities.
+type ReflectivePlanner interface {
+	Planner
+	Reflect(ctx context.Context, plan Plan, state *ToolState, hypotheses []HypothesisScore) (ReflectionResult, error)
+}
+
 type SnapshotFunc func(context.Context, Goal) (*diagnostic.DiagnosticContext, error)
 
 type Store interface {
@@ -79,14 +129,15 @@ type Plan struct {
 }
 
 type PlanStep struct {
-	ID         string                 `json:"id"`
-	ToolName   string                 `json:"tool_name"`
-	Input      map[string]interface{} `json:"input,omitempty"`
-	Reason     string                 `json:"reason"`
-	Critical   bool                   `json:"critical"`
-	Completed  bool                   `json:"-"`
-	Skipped    bool                   `json:"-"`
-	AppendedBy string                 `json:"appended_by,omitempty"`
+	ID            string                 `json:"id"`
+	ToolName      string                 `json:"tool_name"`
+	Input         map[string]interface{} `json:"input,omitempty"`
+	Reason        string                 `json:"reason"`
+	Critical      bool                   `json:"critical"`
+	Completed     bool                   `json:"-"`
+	Skipped       bool                   `json:"-"`
+	AppendedBy    string                 `json:"appended_by,omitempty"`
+	ParallelGroup string                 `json:"parallel_group,omitempty"`
 }
 
 type ToolMetadata struct {

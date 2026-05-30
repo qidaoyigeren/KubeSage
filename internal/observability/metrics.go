@@ -67,10 +67,22 @@ var (
 		},
 		[]string{"risk_level", "status"},
 	)
+	llmPlannerFallbackTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_planner_fallback_total",
+			Help: "Total LLM planner fallback events by operation type.",
+		},
+		[]string{"operation", "reason"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(diagnosisTotal, diagnosisDuration, llmCallTotal, analyzerMatchTotal, agentStepTotal, agentToolDuration, agentHypothesisUpdatesTotal, remediationActionTotal)
+	prometheus.MustRegister(diagnosisTotal, diagnosisDuration, llmCallTotal, analyzerMatchTotal, agentStepTotal, agentToolDuration, agentHypothesisUpdatesTotal, remediationActionTotal, llmPlannerFallbackTotal)
+}
+
+// IncLLMPlannerFallback records an LLM planner fallback event.
+func IncLLMPlannerFallback(operation, reason string) {
+	llmPlannerFallbackTotal.WithLabelValues(operation, reason).Inc()
 }
 
 // IncDiagnosisTotal records one completed diagnosis task.

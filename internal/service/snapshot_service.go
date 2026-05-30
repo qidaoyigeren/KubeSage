@@ -9,6 +9,7 @@ import (
 	"kubesage/internal/diagnostic"
 	"kubesage/internal/k8s"
 	"kubesage/internal/loki"
+	"kubesage/internal/prometheus"
 	"kubesage/internal/resilience"
 
 	"go.uber.org/zap"
@@ -16,29 +17,37 @@ import (
 )
 
 type SnapshotService struct {
-	cfg      *config.Config
-	log      *zap.Logger
-	pods     *k8s.PodCollector
-	events   *k8s.EventCollector
-	logs     *k8s.LogCollector
-	nodes    *k8s.NodeCollector
-	pvcs     *k8s.PVCCollector
-	topology *k8s.TopologyCollector
-	loki     *loki.Client
+	cfg          *config.Config
+	log          *zap.Logger
+	pods         *k8s.PodCollector
+	events       *k8s.EventCollector
+	logs         *k8s.LogCollector
+	nodes        *k8s.NodeCollector
+	pvcs         *k8s.PVCCollector
+	topology     *k8s.TopologyCollector
+	correlations *k8s.CorrelationCollector
+	loki         *loki.Client
+	prometheus   *prometheus.Client
 }
 
 // NewSnapshotService creates the Kubernetes snapshot collector service.
-func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger, lokiClient *loki.Client) *SnapshotService {
+func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger, lokiClient *loki.Client, prometheusClients ...*prometheus.Client) *SnapshotService {
+	var prometheusClient *prometheus.Client
+	if len(prometheusClients) > 0 {
+		prometheusClient = prometheusClients[0]
+	}
 	return &SnapshotService{
-		cfg:      cfg,
-		log:      log,
-		pods:     k8s.NewPodCollector(client),
-		events:   k8s.NewEventCollector(client),
-		logs:     k8s.NewLogCollector(client),
-		nodes:    k8s.NewNodeCollector(client),
-		pvcs:     k8s.NewPVCCollector(client),
-		topology: k8s.NewTopologyCollector(client),
-		loki:     lokiClient,
+		cfg:          cfg,
+		log:          log,
+		pods:         k8s.NewPodCollector(client),
+		events:       k8s.NewEventCollector(client),
+		logs:         k8s.NewLogCollector(client),
+		nodes:        k8s.NewNodeCollector(client),
+		pvcs:         k8s.NewPVCCollector(client),
+		topology:     k8s.NewTopologyCollector(client),
+		correlations: k8s.NewCorrelationCollector(client),
+		loki:         lokiClient,
+		prometheus:   prometheusClient,
 	}
 }
 
@@ -119,6 +128,16 @@ func (s *SnapshotService) Collect(ctx context.Context, req PodDiagnosisRequest) 
 	} else {
 		result.Topology = topology
 	}
+	var correlations *diagnostic.CorrelationInfo
+	if err := resilience.Do(ctx, s.retryConfig(), func() error {
+		var err error
+		correlations, err = s.correlations.Collect(ctx, pod, result.Topology)
+		return err
+	}); err != nil {
+		s.log.Warn("collect correlation context failed", zap.Error(err))
+	} else {
+		result.Correlations = correlations
+	}
 	var nodes []diagnostic.NodeSnapshot
 	if err := resilience.Do(ctx, s.retryConfig(), func() error {
 		var err error
@@ -129,6 +148,7 @@ func (s *SnapshotService) Collect(ctx context.Context, req PodDiagnosisRequest) 
 	} else {
 		result.NodeSnapshots = nodes
 	}
+	s.collectMetricTrends(ctx, result, req)
 
 	return result, nil
 }

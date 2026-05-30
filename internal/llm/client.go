@@ -11,8 +11,10 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"kubesage/internal/agent"
 	"kubesage/internal/config"
 )
 
@@ -21,6 +23,8 @@ type OpenAICompatibleClient struct {
 	apiKey  string
 	model   string
 	http    *http.Client
+	mu      sync.Mutex
+	usage   UsageRecord
 }
 
 type chatCompletionRequest struct {
@@ -43,6 +47,11 @@ type chatCompletionResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -83,6 +92,7 @@ func (c *OpenAICompatibleClient) GenerateDiagnosisSummary(ctx context.Context, p
 	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
 		return nil, fmt.Errorf("llm client is not configured")
 	}
+	start := time.Now()
 	endpoint, err := c.chatCompletionsURL()
 	if err != nil {
 		return nil, err
@@ -128,12 +138,360 @@ func (c *OpenAICompatibleClient) GenerateDiagnosisSummary(ctx context.Context, p
 	if len(raw.Choices) == 0 {
 		return nil, fmt.Errorf("llm response has no choices")
 	}
+	c.captureUsage(raw.Usage, time.Since(start))
 	summary, err := parseEnhancedSummary(raw.Choices[0].Message.Content)
 	if err != nil {
 		return nil, err
 	}
 	sanitizeEnhancedSummary(summary)
 	return summary, nil
+}
+
+func (c *OpenAICompatibleClient) LastUsage() UsageRecord {
+	if c == nil {
+		return UsageRecord{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.usage
+}
+
+func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt agent.PlanPrompt) (agent.Plan, error) {
+	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
+		return agent.Plan{}, fmt.Errorf("llm client is not configured")
+	}
+	start := time.Now()
+	endpoint, err := c.chatCompletionsURL()
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	payloadBytes, _ := json.MarshalIndent(prompt, "", "  ")
+	payload := chatCompletionRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: strings.Join([]string{
+				"You are KubeSage's Kubernetes RCA planner.",
+				"Return JSON only using fields: plan_summary, steps, expected_observations, stop_condition.",
+				"Each step must use an available read-only tool name from the supplied tools.",
+				"Do not propose remediation execution or cluster mutation.",
+			}, "\n")},
+			{Role: "user", Content: string(payloadBytes)},
+		},
+		Temperature:    0.1,
+		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	if resp.StatusCode >= 300 {
+		return agent.Plan{}, fmt.Errorf("llm plan request failed: %s: %s", resp.Status, string(respBody))
+	}
+	var raw chatCompletionResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return agent.Plan{}, err
+	}
+	if raw.Error != nil {
+		return agent.Plan{}, fmt.Errorf("llm plan response error: %s: %s", raw.Error.Type, raw.Error.Message)
+	}
+	if len(raw.Choices) == 0 {
+		return agent.Plan{}, fmt.Errorf("llm plan response has no choices")
+	}
+	c.captureUsage(raw.Usage, time.Since(start))
+	var plan agent.Plan
+	content := strings.TrimSpace(raw.Choices[0].Message.Content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &plan); err != nil {
+		return agent.Plan{}, err
+	}
+	if len(plan.Steps) == 0 {
+		return agent.Plan{}, fmt.Errorf("llm plan has no steps")
+	}
+	return plan, nil
+}
+
+// GeneratePlanAdjustment asks the LLM to revise the current plan based on
+// observations and hypothesis scores collected so far.
+func (c *OpenAICompatibleClient) GeneratePlanAdjustment(ctx context.Context, prompt agent.AdjustmentPrompt) (agent.Plan, error) {
+	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
+		return agent.Plan{}, fmt.Errorf("llm client is not configured")
+	}
+	start := time.Now()
+	endpoint, err := c.chatCompletionsURL()
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	payloadBytes, _ := json.MarshalIndent(prompt, "", "  ")
+	payload := chatCompletionRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: strings.Join([]string{
+				"You are KubeSage's Kubernetes RCA planner revising a diagnostic plan mid-execution.",
+				"You will receive the current plan, observations so far, hypothesis scores, and available tools.",
+				"Return a revised JSON plan using fields: plan_summary, steps, expected_observations, stop_condition.",
+				"Each step must use an available read-only tool name from the supplied tools.",
+				"Do not propose remediation execution or cluster mutation.",
+				"Remove steps that are no longer needed and add steps to fill evidence gaps.",
+			}, "\n")},
+			{Role: "user", Content: string(payloadBytes)},
+		},
+		Temperature:    0.1,
+		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return agent.Plan{}, err
+	}
+	if resp.StatusCode >= 300 {
+		return agent.Plan{}, fmt.Errorf("llm adjustment request failed: %s: %s", resp.Status, string(respBody))
+	}
+	var raw chatCompletionResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return agent.Plan{}, err
+	}
+	if raw.Error != nil {
+		return agent.Plan{}, fmt.Errorf("llm adjustment response error: %s: %s", raw.Error.Type, raw.Error.Message)
+	}
+	if len(raw.Choices) == 0 {
+		return agent.Plan{}, fmt.Errorf("llm adjustment response has no choices")
+	}
+	c.captureUsage(raw.Usage, time.Since(start))
+	var plan agent.Plan
+	content := strings.TrimSpace(raw.Choices[0].Message.Content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &plan); err != nil {
+		return agent.Plan{}, err
+	}
+	return plan, nil
+}
+
+// ScoreHypotheses asks the LLM to re-rank hypothesis candidates based on the
+// evidence. Returns adjusted scores with the same hypothesis types.
+func (c *OpenAICompatibleClient) ScoreHypotheses(ctx context.Context, candidates []agent.HypothesisScore) ([]agent.HypothesisScore, error) {
+	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
+		return nil, fmt.Errorf("llm client is not configured")
+	}
+	start := time.Now()
+	endpoint, err := c.chatCompletionsURL()
+	if err != nil {
+		return nil, err
+	}
+
+	payloadBytes, _ := json.MarshalIndent(map[string]interface{}{
+		"candidates": candidates,
+	}, "", "  ")
+	payload := chatCompletionRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: strings.Join([]string{
+				"You are KubeSage's hypothesis scoring engine.",
+				"Given the current hypothesis candidates with keyword-based confidence scores,",
+				"re-rank them by adjusting confidence based on your understanding of Kubernetes故障诊断.",
+				"Return JSON: {\"hypotheses\": [{\"type\": string, \"confidence\": float, \"summary\": string}]}",
+				"Only include hypotheses you want to adjust. Keep type names exactly as provided.",
+				"Confidence must be between 0 and 1.",
+			}, "\n")},
+			{Role: "user", Content: string(payloadBytes)},
+		},
+		Temperature:    0.1,
+		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("llm hypothesis scoring failed: %s: %s", resp.Status, string(respBody))
+	}
+	var raw chatCompletionResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, err
+	}
+	if raw.Error != nil {
+		return nil, fmt.Errorf("llm hypothesis scoring error: %s: %s", raw.Error.Type, raw.Error.Message)
+	}
+	if len(raw.Choices) == 0 {
+		return nil, fmt.Errorf("llm hypothesis scoring has no choices")
+	}
+	c.captureUsage(raw.Usage, time.Since(start))
+
+	content := strings.TrimSpace(raw.Choices[0].Message.Content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	var parsed struct {
+		Hypotheses []struct {
+			Type       string  `json:"type"`
+			Confidence float64 `json:"confidence"`
+			Summary    string  `json:"summary"`
+		} `json:"hypotheses"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &parsed); err != nil {
+		return nil, err
+	}
+	result := make([]agent.HypothesisScore, 0, len(parsed.Hypotheses))
+	for _, h := range parsed.Hypotheses {
+		if h.Confidence < 0 {
+			h.Confidence = 0
+		}
+		if h.Confidence > 1 {
+			h.Confidence = 1
+		}
+		result = append(result, agent.HypothesisScore{
+			Type:       h.Type,
+			Confidence: h.Confidence,
+			Summary:    h.Summary,
+		})
+	}
+	return result, nil
+}
+
+// GenerateReflection asks the LLM to decide whether to continue investigating
+// or stop, based on the current evidence and hypothesis scores.
+func (c *OpenAICompatibleClient) GenerateReflection(ctx context.Context, prompt agent.ReflectionPrompt) (agent.ReflectionResult, error) {
+	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
+		return agent.ReflectionResult{}, fmt.Errorf("llm client is not configured")
+	}
+	start := time.Now()
+	endpoint, err := c.chatCompletionsURL()
+	if err != nil {
+		return agent.ReflectionResult{}, err
+	}
+	payloadBytes, _ := json.MarshalIndent(prompt, "", "  ")
+	payload := chatCompletionRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: strings.Join([]string{
+				"You are KubeSage's reflection engine for Kubernetes root cause analysis.",
+				"Given the current diagnostic plan, observations, hypothesis scores, and evidence,",
+				"decide whether the agent should continue investigating or the evidence is sufficient.",
+				"Return JSON: {\"should_continue\": bool, \"reason\": string, \"new_steps\": []}",
+				"new_steps is optional. Each step: {\"id\": string, \"tool_name\": string, \"reason\": string, \"critical\": bool}",
+				"Only suggest new steps if there are clear evidence gaps that would change the diagnosis.",
+				"If the top hypothesis has confidence >= 0.75 and no major evidence is missing, set should_continue to false.",
+			}, "\n")},
+			{Role: "user", Content: string(payloadBytes)},
+		},
+		Temperature:    0.1,
+		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return agent.ReflectionResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return agent.ReflectionResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return agent.ReflectionResult{}, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return agent.ReflectionResult{}, err
+	}
+	if resp.StatusCode >= 300 {
+		return agent.ReflectionResult{}, fmt.Errorf("llm reflection request failed: %s: %s", resp.Status, string(respBody))
+	}
+	var raw chatCompletionResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return agent.ReflectionResult{}, err
+	}
+	if raw.Error != nil {
+		return agent.ReflectionResult{}, fmt.Errorf("llm reflection response error: %s: %s", raw.Error.Type, raw.Error.Message)
+	}
+	if len(raw.Choices) == 0 {
+		return agent.ReflectionResult{}, fmt.Errorf("llm reflection response has no choices")
+	}
+	c.captureUsage(raw.Usage, time.Since(start))
+	content := strings.TrimSpace(raw.Choices[0].Message.Content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	var result agent.ReflectionResult
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &result); err != nil {
+		return agent.ReflectionResult{}, err
+	}
+	return result, nil
+}
+
+// Ensure OpenAICompatibleClient implements the agent interfaces at compile time.
+var _ agent.PlanClient = (*OpenAICompatibleClient)(nil)
+
+func (c *OpenAICompatibleClient) captureUsage(usage *struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}, latency time.Duration) {
+	if c == nil {
+		return
+	}
+	record := UsageRecord{
+		Provider:  "openai_compatible",
+		Model:     c.model,
+		LatencyMS: latency.Milliseconds(),
+	}
+	if usage != nil {
+		record.PromptTokens = usage.PromptTokens
+		record.CompletionTokens = usage.CompletionTokens
+		record.TotalTokens = usage.TotalTokens
+	}
+	c.mu.Lock()
+	c.usage = record
+	c.mu.Unlock()
 }
 
 // chatCompletionsURL resolves the OpenAI-compatible chat completions endpoint.

@@ -20,6 +20,16 @@ func NewCrashLoopBackOffAnalyzer() *CrashLoopBackOffAnalyzer {
 // Name returns the analyzer identifier used in reports.
 func (a *CrashLoopBackOffAnalyzer) Name() string { return "crashloopbackoff" }
 
+func (a *CrashLoopBackOffAnalyzer) Metadata() diagnostic.AnalyzerMetadata {
+	return diagnostic.AnalyzerMetadata{
+		Name:             a.Name(),
+		FaultType:        "CrashLoopBackOff",
+		Priority:         90,
+		MatchSignals:     []string{"waiting.reason=CrashLoopBackOff", "restartCount>0", "lastState.terminated"},
+		RequiredEvidence: []string{"k8s_pod_status", "k8s_event", "k8s_log", "k8s_topology", "correlation_evidence"},
+	}
+}
+
 // Match decides whether pod status indicates repeated container restarts.
 func (a *CrashLoopBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	if ctx.Pod == nil {
@@ -140,6 +150,14 @@ func crashLoopConfidence(ctx *diagnostic.DiagnosticContext, evidences []diagnost
 			if status.LastTerminationState.Terminated != nil && status.LastTerminationState.Terminated.FinishedAt.IsZero() == false {
 				score += 0.02
 				break
+			}
+		}
+	}
+	// Boost confidence when metric trends show increasing restarts.
+	if ctx != nil {
+		for _, trend := range ctx.MetricTrends {
+			if strings.Contains(strings.ToLower(trend.Metric), "restart") && trend.Classification == "progressive_growth" {
+				score += 0.05
 			}
 		}
 	}

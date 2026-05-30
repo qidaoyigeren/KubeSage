@@ -17,7 +17,7 @@ func BenchmarkAgentPlanning(b *testing.B) {
 	}
 	goal := Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled"}
 	for i := 0; i < b.N; i++ {
-		_ = planner.BuildInitialPlan(goal, tools)
+		_ = planner.BuildInitialPlan(context.Background(), goal, tools)
 	}
 }
 

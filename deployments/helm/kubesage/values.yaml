@@ -1,3 +1,10 @@
+# KubeSage Helm Values
+# IMPORTANT: For production, override sensitive values via:
+#   1. Kubernetes Secrets (recommended)
+#   2. --set flags: helm install --set config.mysql.password=xxx
+#   3. Environment variables with KUBESAGE_ prefix
+# NEVER commit real credentials to version control.
+
 replicaCount: 1
 
 image:
@@ -16,17 +23,40 @@ service:
 config:
   server:
     authToken: ""
+  auth:
+    mode: bearer
   mysql:
+    dsn: ""
     host: mysql
     port: 3306
     username: kubesage
     password: kubesage
     database: kubesage
+    readReplicas: []
+    maxIdleConns: 10
+    maxOpenConns: 50
+    connMaxLifetimeSeconds: 3600
   kubernetes:
     kubeconfig: ""
   diagnosis:
     taskTimeoutSeconds: 60
     podLockTTLSeconds: 300
+  agent:
+    enabled: true
+    maxSteps: 12
+    toolTimeoutSeconds: 10
+  planner:
+    type: llm
+  queue:
+    type: ""
+    stream: kubesage:diagnosis
+    group: kubesage-workers
+    consumer: worker-1
+    maxRetry: 3
+    retryDelaySeconds: 5
+    drainTimeoutSeconds: 30
+  retention:
+    taskDays: 30
   prometheus:
     baseURL: ""
   llm:
@@ -40,9 +70,32 @@ config:
     tenantID: ""
   redis:
     enabled: false
+    mode: single
     address: redis:6379
+    addresses: []
     password: ""
+    username: ""
     db: 0
+    sentinelMaster: ""
+    sentinelUsername: ""
+    sentinelPassword: ""
+  rag:
+    vectorStore: ""
+    preferVector: false
+    embedding:
+      provider: ""
+      baseURL: ""
+      apiKey: ""
+      model: ""
+    qdrant:
+      baseURL: ""
+      apiKey: ""
+      collection: kubesage_runbooks
+  notification:
+    slackWebhookURL: ""
+    feishuWebhookURL: ""
+    dingTalkWebhookURL: ""
+    alertmanagerWriteback: false
   otel:
     enabled: false
     exporter: stdout

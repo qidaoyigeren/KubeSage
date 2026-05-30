@@ -10,7 +10,10 @@ data:
       read_timeout_seconds: 15
       write_timeout_seconds: 30
       auth_token: ""
+    auth:
+      mode: {{ .Values.config.auth.mode | quote }}
     mysql:
+      dsn: {{ .Values.config.mysql.dsn | quote }}
       host: {{ .Values.config.mysql.host | quote }}
       port: {{ .Values.config.mysql.port }}
       username: {{ .Values.config.mysql.username | quote }}
@@ -19,6 +22,11 @@ data:
       charset: "utf8mb4"
       parse_time: true
       loc: "Local"
+      read_replicas:
+{{ toYaml .Values.config.mysql.readReplicas | indent 8 }}
+      max_idle_conns: {{ .Values.config.mysql.maxIdleConns }}
+      max_open_conns: {{ .Values.config.mysql.maxOpenConns }}
+      conn_max_lifetime_seconds: {{ .Values.config.mysql.connMaxLifetimeSeconds }}
     kubernetes:
       kubeconfig: {{ .Values.config.kubernetes.kubeconfig | quote }}
       request_timeout_seconds: 15
@@ -31,6 +39,25 @@ data:
       retry_max_attempts: 2
       retry_initial_backoff_ms: 100
       retry_max_backoff_ms: 1000
+    agent:
+      enabled: {{ .Values.config.agent.enabled }}
+      max_steps: {{ .Values.config.agent.maxSteps }}
+      tool_timeout_seconds: {{ .Values.config.agent.toolTimeoutSeconds }}
+      enable_dry_run_preview: true
+      hypothesis_config_path: ""
+    planner:
+      type: {{ .Values.config.planner.type | quote }}
+    queue:
+      type: {{ .Values.config.queue.type | quote }}
+      stream: {{ .Values.config.queue.stream | quote }}
+      group: {{ .Values.config.queue.group | quote }}
+      consumer: {{ .Values.config.queue.consumer | quote }}
+      max_retry: {{ .Values.config.queue.maxRetry }}
+      retry_delay_seconds: {{ .Values.config.queue.retryDelaySeconds }}
+      blocking_seconds: 5
+      drain_timeout_seconds: {{ .Values.config.queue.drainTimeoutSeconds }}
+    retention:
+      task_days: {{ .Values.config.retention.taskDays }}
     prometheus:
       base_url: {{ .Values.config.prometheus.baseURL | quote }}
       timeout_seconds: 10
@@ -52,10 +79,17 @@ data:
       timeout_seconds: 10
     redis:
       enabled: {{ .Values.config.redis.enabled }}
+      mode: {{ .Values.config.redis.mode | quote }}
       address: {{ .Values.config.redis.address | quote }}
+      addresses:
+{{ toYaml .Values.config.redis.addresses | indent 8 }}
       password: ""
+      username: {{ .Values.config.redis.username | quote }}
       db: {{ .Values.config.redis.db }}
       key_prefix: "kubesage"
+      sentinel_master: {{ .Values.config.redis.sentinelMaster | quote }}
+      sentinel_username: {{ .Values.config.redis.sentinelUsername | quote }}
+      sentinel_password: ""
     otel:
       enabled: {{ .Values.config.otel.enabled }}
       service_name: "kubesage"
@@ -67,6 +101,23 @@ data:
       dir: "./migrations"
     runbook:
       dir: "./runbooks"
+    rag:
+      vector_store: {{ .Values.config.rag.vectorStore | quote }}
+      prefer_vector: {{ .Values.config.rag.preferVector }}
+      embedding:
+        provider: {{ .Values.config.rag.embedding.provider | quote }}
+        base_url: {{ .Values.config.rag.embedding.baseURL | quote }}
+        api_key: ""
+        model: {{ .Values.config.rag.embedding.model | quote }}
+      qdrant:
+        base_url: {{ .Values.config.rag.qdrant.baseURL | quote }}
+        api_key: ""
+        collection: {{ .Values.config.rag.qdrant.collection | quote }}
+    notification:
+      slack_webhook_url: ""
+      feishu_webhook_url: ""
+      dingtalk_webhook_url: ""
+      alertmanager_writeback: {{ .Values.config.notification.alertmanagerWriteback }}
     log:
       level: "info"
       development: false

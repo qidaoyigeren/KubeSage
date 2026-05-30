@@ -220,8 +220,8 @@ func pvcObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 		}
 		records = append(records, diagnostic.EvidenceRecord{
 			SourceType: "k8s_pvc",
-			Title:      "PVC binding status",
-			Content:    fmt.Sprintf("pvc=%s phase=%s storageClass=%s volumeName=%s capacity=%s", pvc.Name, pvc.Phase, pvc.StorageClass, pvc.VolumeName, pvc.Capacity),
+			Title:      "PVC/PV/StorageClass topology",
+			Content:    fmt.Sprintf("pvc=%s phase=%s storageClass=%s volumeName=%s pvPhase=%s reclaimPolicy=%s provisioner=%s bindingMode=%s selectedNode=%s capacity=%s", pvc.Name, pvc.Phase, pvc.StorageClass, pvc.VolumeName, pvc.PVPhase, pvc.ReclaimPolicy, pvc.StorageClassProvisioner, pvc.VolumeBindingMode, pvc.SelectedNode, pvc.Capacity),
 			Severity:   severity,
 			Raw:        pvc,
 			Timestamp:  time.Now(),

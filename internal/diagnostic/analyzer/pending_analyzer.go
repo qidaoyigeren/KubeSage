@@ -20,6 +20,16 @@ func NewPendingAnalyzer() *PendingAnalyzer {
 // Name returns the analyzer identifier used in reports.
 func (a *PendingAnalyzer) Name() string { return "pod_pending" }
 
+func (a *PendingAnalyzer) Metadata() diagnostic.AnalyzerMetadata {
+	return diagnostic.AnalyzerMetadata{
+		Name:             a.Name(),
+		FaultType:        "PodPending",
+		Priority:         70,
+		MatchSignals:     []string{"pod.phase=Pending", "PodScheduled=False", "event.reason=FailedScheduling"},
+		RequiredEvidence: []string{"k8s_event", "k8s_pvc", "k8s_node", "k8s_storage_topology", "correlation_evidence"},
+	}
+}
+
 // Match decides whether pod status/events indicate scheduling failure.
 func (a *PendingAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	if ctx.Pod == nil {
@@ -109,8 +119,8 @@ func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		}
 		evidences = append(evidences, diagnostic.EvidenceRecord{
 			SourceType: "k8s_pvc",
-			Title:      "PVC binding status",
-			Content:    fmt.Sprintf("pvc=%s phase=%s storageClass=%s volumeName=%s capacity=%s", pvc.Name, pvc.Phase, pvc.StorageClass, pvc.VolumeName, pvc.Capacity),
+			Title:      "PVC/PV/StorageClass topology",
+			Content:    fmt.Sprintf("pvc=%s phase=%s storageClass=%s volumeName=%s pvPhase=%s reclaimPolicy=%s provisioner=%s bindingMode=%s selectedNode=%s capacity=%s", pvc.Name, pvc.Phase, pvc.StorageClass, pvc.VolumeName, pvc.PVPhase, pvc.ReclaimPolicy, pvc.StorageClassProvisioner, pvc.VolumeBindingMode, pvc.SelectedNode, pvc.Capacity),
 			Severity:   severity,
 			Raw:        pvc,
 			Timestamp:  time.Now(),

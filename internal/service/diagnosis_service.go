@@ -63,12 +63,15 @@ type DiagnosisServiceOptions struct {
 	EvidenceRepo     *repository.EvidenceRepository
 	ReportRepo       *repository.ReportRepository
 	AgentRepo        *repository.AgentRepository
+	DeadLetterRepo   *repository.DeadLetterRepository
+	LLMUsageRepo     *repository.LLMUsageRepository
 	SnapshotService  *SnapshotService
 	ReportService    *ReportService
 	PrometheusClient *prometheus.Client
 	LLMClient        llm.LLMClient
 	RunbookRetriever rag.Retriever
-	RedisClient      *redis.Client
+	RedisClient      redis.UniversalClient
+	Notifier         *Notifier
 }
 
 type DiagnosisService struct {
@@ -78,6 +81,7 @@ type DiagnosisService struct {
 	evidenceRepo     *repository.EvidenceRepository
 	reportRepo       *repository.ReportRepository
 	agentRepo        *repository.AgentRepository
+	llmUsageRepo     *repository.LLMUsageRepository
 	snapshotService  *SnapshotService
 	reportService    *ReportService
 	prometheusClient *prometheus.Client
@@ -86,30 +90,53 @@ type DiagnosisService struct {
 	engine           *diagnostic.DiagnosisEngine
 	alertDedupMu     sync.Mutex
 	podLocks         diagnosisLock
+	queue            *redisDiagnosisQueue
+	notifier         *Notifier
+	queueCancel      context.CancelFunc
+	queueWG          sync.WaitGroup
+	workerWG         sync.WaitGroup
+	cancelMu         sync.Mutex
+	cancelFuncs      map[uint]context.CancelFunc
 }
 
 // NewDiagnosisService wires repositories, collectors, analyzers, and optional
 // enrichment dependencies into the diagnosis service.
 func NewDiagnosisService(opts DiagnosisServiceOptions) *DiagnosisService {
+	cfg := opts.Config
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	registry, err := diagnosticanalyzer.NewDefaultRegistry(opts.PrometheusClient)
+	var analyzers []diagnostic.Analyzer
+	if err == nil {
+		analyzers = registry.Analyzers()
+	}
+	if len(analyzers) == 0 {
+		analyzers = []diagnostic.Analyzer{
+			diagnosticanalyzer.NewCrashLoopBackOffAnalyzer(),
+			diagnosticanalyzer.NewOOMKilledAnalyzer(opts.PrometheusClient),
+			diagnosticanalyzer.NewPendingAnalyzer(),
+			diagnosticanalyzer.NewProbeFailedAnalyzer(),
+		}
+	}
 	return &DiagnosisService{
-		cfg:              opts.Config,
+		cfg:              cfg,
 		log:              opts.Logger,
 		taskRepo:         opts.TaskRepo,
 		evidenceRepo:     opts.EvidenceRepo,
 		reportRepo:       opts.ReportRepo,
 		agentRepo:        opts.AgentRepo,
+		llmUsageRepo:     opts.LLMUsageRepo,
 		snapshotService:  opts.SnapshotService,
 		reportService:    opts.ReportService,
 		prometheusClient: opts.PrometheusClient,
 		llmClient:        opts.LLMClient,
 		runbookRetriever: opts.RunbookRetriever,
-		podLocks:         newDiagnosisLock(opts.Config.Redis, opts.RedisClient),
-		engine: diagnostic.NewDiagnosisEngine(
-			diagnosticanalyzer.NewCrashLoopBackOffAnalyzer(),
-			diagnosticanalyzer.NewOOMKilledAnalyzer(opts.PrometheusClient),
-			diagnosticanalyzer.NewPendingAnalyzer(),
-			diagnosticanalyzer.NewProbeFailedAnalyzer(),
-		),
+		podLocks:         newDiagnosisLock(cfg.Redis, opts.RedisClient),
+		queue:            newRedisDiagnosisQueue(opts.RedisClient, cfg.Queue, opts.DeadLetterRepo, opts.Logger),
+		notifier:         opts.Notifier,
+		engine:           diagnostic.NewDiagnosisEngine(analyzers...),
+		cancelFuncs:      make(map[uint]context.CancelFunc),
 	}
 }
 
@@ -147,7 +174,22 @@ func (s *DiagnosisService) StartPodDiagnosis(ctx context.Context, req PodDiagnos
 		return nil, err
 	}
 
-	go s.runDiagnosis(context.WithoutCancel(ctx), task.ID, req, lockKey, lockToken)
+	if s.queue != nil {
+		if err := s.queue.Enqueue(ctx, queuedDiagnosis{TaskID: task.ID, Request: req, LockKey: lockKey, LockToken: lockToken}); err != nil {
+			_ = s.podLocks.Release(ctx, lockKey, lockToken)
+			task.Status = model.TaskStatusFailed
+			task.RootCauseSummary = err.Error()
+			_ = s.taskRepo.Update(ctx, task)
+			return nil, err
+		}
+		return task, nil
+	}
+
+	s.workerWG.Add(1)
+	go func() {
+		defer s.workerWG.Done()
+		s.runDiagnosis(context.WithoutCancel(ctx), task.ID, req, lockKey, lockToken)
+	}()
 	return task, nil
 }
 
@@ -180,10 +222,92 @@ func (s *DiagnosisService) runDiagnosis(parentCtx context.Context, taskID uint, 
 	s.runAgentDiagnosis(parentCtx, taskID, req, lockKey, lockToken)
 }
 
+func (s *DiagnosisService) StartQueueWorkers(ctx context.Context) error {
+	if s == nil || s.queue == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	s.queueCancel = cancel
+	if err := s.queue.ensureGroup(workerCtx); err != nil {
+		return err
+	}
+	s.queueWG.Add(1)
+	go func() {
+		defer s.queueWG.Done()
+		if err := s.queue.Run(workerCtx, s); err != nil && workerCtx.Err() == nil && s.log != nil {
+			s.log.Warn("diagnosis queue worker stopped", zap.Error(err))
+		}
+	}()
+	return nil
+}
+
+func (s *DiagnosisService) Shutdown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if s.queueCancel != nil {
+		s.queueCancel()
+	}
+	done := make(chan struct{})
+	go func() {
+		s.queueWG.Wait()
+		s.workerWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// CancelTask cancels a running diagnosis task by its ID.
+func (s *DiagnosisService) CancelTask(ctx context.Context, taskID uint) error {
+	if s == nil {
+		return fmt.Errorf("diagnosis service is not configured")
+	}
+	task, err := s.taskRepo.GetByID(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if task.Status != model.TaskStatusRunning && task.Status != model.TaskStatusPending {
+		return fmt.Errorf("task %d is not running (status: %s)", taskID, task.Status)
+	}
+	// Cancel the context if the task is in-flight.
+	s.cancelMu.Lock()
+	if cancel, ok := s.cancelFuncs[taskID]; ok {
+		cancel()
+		delete(s.cancelFuncs, taskID)
+	}
+	s.cancelMu.Unlock()
+	// Update task status.
+	now := time.Now()
+	task.Status = model.TaskStatusFailed
+	task.FinishedAt = &now
+	task.RootCauseSummary = "cancelled by user"
+	return s.taskRepo.Update(ctx, task)
+}
+
+func (s *DiagnosisService) notifyDiagnosisComplete(task *model.DiagnosisTask, report *diagnostic.Report) {
+	if s == nil || s.notifier == nil || !s.notifier.Configured() {
+		return
+	}
+	s.notifier.NotifyDiagnosisComplete(context.Background(), task, report)
+}
+
 // runAgentDiagnosis runs the auditable Agent Runtime and persists the final
 // report using the same evidence/report tables as the legacy pipeline.
 func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID uint, req PodDiagnosisRequest, lockKey, lockToken string) {
-	defer func() { _ = s.podLocks.Release(context.Background(), lockKey, lockToken) }()
+	defer func() {
+		s.cancelMu.Lock()
+		delete(s.cancelFuncs, taskID)
+		s.cancelMu.Unlock()
+		_ = s.podLocks.Release(context.Background(), lockKey, lockToken)
+	}()
 	log := s.log.With(zap.Uint("task_id", taskID), zap.String("namespace", req.Namespace), zap.String("pod", req.PodName), zap.String("stage", "agent"))
 	timeout := time.Duration(s.cfg.Diagnosis.TaskTimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -195,6 +319,10 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 	}
 	ctx, cancel := context.WithTimeout(baseCtx, timeout)
 	defer cancel()
+	// Register cancel function for task cancellation API.
+	s.cancelMu.Lock()
+	s.cancelFuncs[taskID] = cancel
+	s.cancelMu.Unlock()
 	ctx, span := observability.Tracer().Start(ctx, "diagnosis.agent_run",
 		trace.WithAttributes(
 			attribute.Int64("task.id", int64(taskID)),
@@ -227,6 +355,9 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 			log.Error("update task failed", zap.Error(err))
 		}
 		observability.IncDiagnosisTotal(task.FaultType, status)
+		if status == model.TaskStatusSuccess || status == model.TaskStatusFailed {
+			go s.notifyDiagnosisComplete(task, report)
+		}
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -256,6 +387,7 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 		Registry: registry,
 		Analyzer: s.engine,
 		Policy:   agentPolicy,
+		Planner:  s.agentPlanner(),
 	})
 	result, err := runtime.Run(ctx, agent.RuntimeOptions{
 		TaskID:              taskID,
@@ -271,7 +403,7 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 		return
 	}
 
-	s.enhanceReportWithLLM(ctx, result.DiagContext, result.Report, toRAGHits(result.RunbookHits))
+	s.enhanceReportWithLLM(ctx, taskID, result.DiagContext, result.Report, toRAGHits(result.RunbookHits))
 	s.refreshAgentSnapshot(result)
 
 	start := time.Now()
@@ -349,6 +481,9 @@ func (s *DiagnosisService) runLegacyDiagnosis(parentCtx context.Context, taskID 
 			log.Error("update task failed", zap.Error(err))
 		}
 		observability.IncDiagnosisTotal(task.FaultType, status)
+		if status == model.TaskStatusSuccess || status == model.TaskStatusFailed {
+			go s.notifyDiagnosisComplete(task, report)
+		}
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -410,7 +545,7 @@ func (s *DiagnosisService) runLegacyDiagnosis(parentCtx context.Context, taskID 
 			}
 		}
 	}
-	s.enhanceReportWithLLM(ctx, diagCtx, report, runbookHits)
+	s.enhanceReportWithLLM(ctx, taskID, diagCtx, report, runbookHits)
 
 	start = time.Now()
 	_, stageSpan = observability.Tracer().Start(ctx, "diagnosis.persist")
@@ -441,7 +576,7 @@ func (s *DiagnosisService) runLegacyDiagnosis(parentCtx context.Context, taskID 
 
 // enhanceReportWithLLM asks the LLM to summarize the rule report. Failures are
 // recorded as warning evidence and the rule-based report remains authoritative.
-func (s *DiagnosisService) enhanceReportWithLLM(ctx context.Context, diagCtx *diagnostic.DiagnosticContext, report *diagnostic.Report, runbookHits []rag.Hit) {
+func (s *DiagnosisService) enhanceReportWithLLM(ctx context.Context, taskID uint, diagCtx *diagnostic.DiagnosticContext, report *diagnostic.Report, runbookHits []rag.Hit) {
 	ruleResult := llm.RuleResultFromReport(report)
 	report.RuleBasedResult = ruleResult
 	if s.llmClient == nil {
@@ -456,6 +591,7 @@ func (s *DiagnosisService) enhanceReportWithLLM(ctx context.Context, diagCtx *di
 		summary, err = s.llmClient.GenerateDiagnosisSummary(ctx, prompt)
 		return err
 	})
+	s.recordLLMUsage(ctx, taskID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -477,6 +613,31 @@ func (s *DiagnosisService) enhanceReportWithLLM(ctx context.Context, diagCtx *di
 	}
 	observability.IncLLMCallTotal("success")
 	report.LLMEnhancedSummary = summary
+}
+
+func (s *DiagnosisService) recordLLMUsage(ctx context.Context, taskID uint) {
+	if s == nil || s.llmUsageRepo == nil || s.llmClient == nil {
+		return
+	}
+	reporter, ok := s.llmClient.(llm.UsageReporter)
+	if !ok {
+		return
+	}
+	usage := reporter.LastUsage()
+	if usage.Provider == "" && usage.Model == "" && usage.TotalTokens == 0 && usage.LatencyMS == 0 {
+		return
+	}
+	_ = s.llmUsageRepo.Create(ctx, &model.LLMUsageRecord{
+		TaskID:           taskID,
+		Provider:         usage.Provider,
+		Model:            usage.Model,
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+		LatencyMS:        usage.LatencyMS,
+		EstimatedCost:    usage.EstimatedCost,
+		CreatedAt:        time.Now(),
+	})
 }
 
 // llmRetryConfig returns retry settings for optional LLM enhancement calls.
@@ -507,6 +668,25 @@ func (s *DiagnosisService) agentToolTimeout() time.Duration {
 		return 10 * time.Second
 	}
 	return time.Duration(s.cfg.Agent.ToolTimeoutSeconds) * time.Second
+}
+
+func (s *DiagnosisService) agentPlanner() agent.Planner {
+	if s != nil && s.cfg != nil && strings.EqualFold(s.cfg.Planner.Type, "llm") {
+		if client, ok := s.llmClient.(agent.PlanClient); ok {
+			if s.log != nil {
+				s.log.Info("using LLM planner with active LLM client")
+			}
+			return agent.NewLLMPlanner(client)
+		}
+		if s.log != nil {
+			s.log.Warn("LLM planner configured but no LLM client available; falling back to rule-based planner")
+		}
+		return agent.NewLLMPlanner()
+	}
+	if s.log != nil {
+		s.log.Info("using rule-based planner")
+	}
+	return agent.NewRulePlanner()
 }
 
 func (s *DiagnosisService) agentSnapshotFunc(req PodDiagnosisRequest) agent.SnapshotFunc {
