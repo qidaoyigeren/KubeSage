@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"kubesage/internal/agent"
 	"kubesage/internal/config"
 	"kubesage/internal/diagnostic"
 	diagnosticanalyzer "kubesage/internal/diagnostic/analyzer"
@@ -61,6 +62,7 @@ type DiagnosisServiceOptions struct {
 	TaskRepo         *repository.DiagnosisRepository
 	EvidenceRepo     *repository.EvidenceRepository
 	ReportRepo       *repository.ReportRepository
+	AgentRepo        *repository.AgentRepository
 	SnapshotService  *SnapshotService
 	ReportService    *ReportService
 	PrometheusClient *prometheus.Client
@@ -75,6 +77,7 @@ type DiagnosisService struct {
 	taskRepo         *repository.DiagnosisRepository
 	evidenceRepo     *repository.EvidenceRepository
 	reportRepo       *repository.ReportRepository
+	agentRepo        *repository.AgentRepository
 	snapshotService  *SnapshotService
 	reportService    *ReportService
 	prometheusClient *prometheus.Client
@@ -94,6 +97,7 @@ func NewDiagnosisService(opts DiagnosisServiceOptions) *DiagnosisService {
 		taskRepo:         opts.TaskRepo,
 		evidenceRepo:     opts.EvidenceRepo,
 		reportRepo:       opts.ReportRepo,
+		agentRepo:        opts.AgentRepo,
 		snapshotService:  opts.SnapshotService,
 		reportService:    opts.ReportService,
 		prometheusClient: opts.PrometheusClient,
@@ -151,7 +155,12 @@ func (s *DiagnosisService) StartPodDiagnosis(ctx context.Context, req PodDiagnos
 func (s *DiagnosisService) GetTask(ctx context.Context, id uint) (*model.DiagnosisTask, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return s.taskRepo.GetByID(ctx, id)
+	task, err := s.taskRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.hydrateAgentReport(ctx, task)
+	return task, nil
 }
 
 // ListTasks returns a paginated task list.
@@ -161,9 +170,139 @@ func (s *DiagnosisService) ListTasks(ctx context.Context, page, pageSize int) ([
 	return s.taskRepo.List(ctx, page, pageSize)
 }
 
-// runDiagnosis collects snapshots, runs analyzers, persists evidence, and marks
-// the task final status.
+// runDiagnosis selects the Agent Runtime by default and keeps the legacy path
+// available when agent.enabled=false.
 func (s *DiagnosisService) runDiagnosis(parentCtx context.Context, taskID uint, req PodDiagnosisRequest, lockKey, lockToken string) {
+	if !s.agentRuntimeEnabled() {
+		s.runLegacyDiagnosis(parentCtx, taskID, req, lockKey, lockToken)
+		return
+	}
+	s.runAgentDiagnosis(parentCtx, taskID, req, lockKey, lockToken)
+}
+
+// runAgentDiagnosis runs the auditable Agent Runtime and persists the final
+// report using the same evidence/report tables as the legacy pipeline.
+func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID uint, req PodDiagnosisRequest, lockKey, lockToken string) {
+	defer func() { _ = s.podLocks.Release(context.Background(), lockKey, lockToken) }()
+	log := s.log.With(zap.Uint("task_id", taskID), zap.String("namespace", req.Namespace), zap.String("pod", req.PodName), zap.String("stage", "agent"))
+	timeout := time.Duration(s.cfg.Diagnosis.TaskTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	baseCtx := parentCtx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(baseCtx, timeout)
+	defer cancel()
+	ctx, span := observability.Tracer().Start(ctx, "diagnosis.agent_run",
+		trace.WithAttributes(
+			attribute.Int64("task.id", int64(taskID)),
+			attribute.String("k8s.namespace", req.Namespace),
+			attribute.String("k8s.pod.name", req.PodName),
+		),
+	)
+	defer span.End()
+	log = log.With(zap.String("trace_id", span.SpanContext().TraceID().String()))
+
+	task, err := s.taskRepo.GetByID(ctx, taskID)
+	if err != nil {
+		log.Error("load task failed", zap.Error(err))
+		return
+	}
+
+	finish := func(status string, report *diagnostic.Report, failure error) {
+		task.Status = status
+		finishedAt := time.Now()
+		task.FinishedAt = &finishedAt
+		if report != nil {
+			task.FaultType = report.FaultType
+			task.RootCauseSummary = report.RootCauseSummary
+			task.ConfidenceScore = report.ConfidenceScore
+		}
+		if failure != nil {
+			task.RootCauseSummary = failure.Error()
+		}
+		if err := s.taskRepo.Update(ctx, task); err != nil {
+			log.Error("update task failed", zap.Error(err))
+		}
+		observability.IncDiagnosisTotal(task.FaultType, status)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err := fmt.Errorf("agent diagnosis worker panic: %v", recovered)
+			log.Error("agent diagnosis worker panic recovered", zap.Any("panic", recovered))
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			finish(model.TaskStatusFailed, nil, err)
+		}
+	}()
+
+	agentPolicy := agent.NewRemediationPolicy(s.cfg.Agent.EnableDryRunPreview)
+	registry, err := agent.NewDefaultRegistry(agent.RegistryOptions{
+		Snapshot:    s.agentSnapshotFunc(req),
+		Retriever:   agentRunbookRetriever{base: s.runbookRetriever},
+		Policy:      agentPolicy,
+		ToolTimeout: time.Duration(s.cfg.Agent.ToolTimeoutSeconds) * time.Second,
+	})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		finish(model.TaskStatusFailed, nil, err)
+		return
+	}
+	runtime := agent.NewRuntime(agent.RuntimeDeps{
+		Store:    s.agentRepo,
+		Registry: registry,
+		Analyzer: s.engine,
+		Policy:   agentPolicy,
+	})
+	result, err := runtime.Run(ctx, agent.RuntimeOptions{
+		TaskID:              taskID,
+		MaxSteps:            s.agentMaxSteps(),
+		ToolTimeout:         s.agentToolTimeout(),
+		EnableDryRunPreview: s.cfg.Agent.EnableDryRunPreview,
+		Goal:                toAgentGoal(req),
+	})
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		finish(model.TaskStatusFailed, nil, err)
+		return
+	}
+
+	s.enhanceReportWithLLM(ctx, result.DiagContext, result.Report, toRAGHits(result.RunbookHits))
+	s.refreshAgentSnapshot(result)
+
+	start := time.Now()
+	_, stageSpan := observability.Tracer().Start(ctx, "diagnosis.agent_persist")
+	evidences := toModelEvidences(taskID, result.Report.Evidences)
+	if err := s.evidenceRepo.CreateBatch(ctx, evidences); err != nil {
+		stageSpan.RecordError(err)
+		stageSpan.SetStatus(codes.Error, err.Error())
+		stageSpan.End()
+		observability.ObserveDiagnosisStage("agent_persist", time.Since(start))
+		finish(model.TaskStatusFailed, result.Report, err)
+		return
+	}
+	reportModel := toModelReport(taskID, result.Report, evidences)
+	if err := s.reportService.Save(ctx, reportModel); err != nil {
+		stageSpan.RecordError(err)
+		stageSpan.SetStatus(codes.Error, err.Error())
+		stageSpan.End()
+		observability.ObserveDiagnosisStage("agent_persist", time.Since(start))
+		finish(model.TaskStatusFailed, result.Report, err)
+		return
+	}
+	stageSpan.End()
+	observability.ObserveDiagnosisStage("agent_persist", time.Since(start))
+
+	finish(model.TaskStatusSuccess, result.Report, nil)
+}
+
+// runLegacyDiagnosis collects snapshots, runs analyzers, persists evidence, and marks
+// the task final status.
+func (s *DiagnosisService) runLegacyDiagnosis(parentCtx context.Context, taskID uint, req PodDiagnosisRequest, lockKey, lockToken string) {
 	// The worker is read-only against Kubernetes: it collects snapshots, runs rules,
 	// and stores evidence/report rows. It never deletes or patches cluster objects.
 	defer func() { _ = s.podLocks.Release(context.Background(), lockKey, lockToken) }()
@@ -186,6 +325,7 @@ func (s *DiagnosisService) runDiagnosis(parentCtx context.Context, taskID uint, 
 		),
 	)
 	defer span.End()
+	log = log.With(zap.String("trace_id", span.SpanContext().TraceID().String()), zap.String("stage", "legacy"))
 
 	task, err := s.taskRepo.GetByID(ctx, taskID)
 	if err != nil {
@@ -195,7 +335,8 @@ func (s *DiagnosisService) runDiagnosis(parentCtx context.Context, taskID uint, 
 
 	finish := func(status string, report *diagnostic.Report, failure error) {
 		task.Status = status
-		task.FinishedAt = new(time.Now())
+		finishedAt := time.Now()
+		task.FinishedAt = &finishedAt
 		if report != nil {
 			task.FaultType = report.FaultType
 			task.RootCauseSummary = report.RootCauseSummary
@@ -350,6 +491,122 @@ func (s *DiagnosisService) llmRetryConfig() resilience.RetryConfig {
 	)
 }
 
+func (s *DiagnosisService) agentRuntimeEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.Agent.Enabled && s.agentRepo != nil
+}
+
+func (s *DiagnosisService) agentMaxSteps() int {
+	if s == nil || s.cfg == nil || s.cfg.Agent.MaxSteps <= 0 {
+		return 12
+	}
+	return s.cfg.Agent.MaxSteps
+}
+
+func (s *DiagnosisService) agentToolTimeout() time.Duration {
+	if s == nil || s.cfg == nil || s.cfg.Agent.ToolTimeoutSeconds <= 0 {
+		return 10 * time.Second
+	}
+	return time.Duration(s.cfg.Agent.ToolTimeoutSeconds) * time.Second
+}
+
+func (s *DiagnosisService) agentSnapshotFunc(req PodDiagnosisRequest) agent.SnapshotFunc {
+	return func(ctx context.Context, goal agent.Goal) (*diagnostic.DiagnosticContext, error) {
+		if s == nil || s.snapshotService == nil {
+			return nil, fmt.Errorf("snapshot service is not configured")
+		}
+		next := req
+		next.Namespace = goal.Namespace
+		next.PodName = goal.PodName
+		next.ContainerName = goal.ContainerName
+		next.ExpectedFault = goal.ExpectedFault
+		next.AlertName = goal.AlertName
+		next.AlertSeverity = goal.AlertSeverity
+		next.IncludeLogs = goal.IncludeLogs
+		next.IncludeEvents = goal.IncludeEvents
+		next.IncludeMetrics = goal.IncludeMetrics
+		next.AlertTime = goal.AlertTime
+		return s.snapshotService.Collect(ctx, next)
+	}
+}
+
+func toAgentGoal(req PodDiagnosisRequest) agent.Goal {
+	return agent.Goal{
+		Namespace:      req.Namespace,
+		PodName:        req.PodName,
+		ContainerName:  req.ContainerName,
+		ExpectedFault:  req.ExpectedFault,
+		AlertName:      req.AlertName,
+		AlertSeverity:  req.AlertSeverity,
+		IncludeLogs:    req.IncludeLogs,
+		IncludeEvents:  req.IncludeEvents,
+		IncludeMetrics: req.IncludeMetrics,
+		AlertTime:      req.AlertTime,
+	}
+}
+
+type agentRunbookRetriever struct {
+	base rag.Retriever
+}
+
+func (r agentRunbookRetriever) Retrieve(ctx context.Context, faultType, query string, limit int) ([]agent.RunbookHit, error) {
+	if r.base == nil {
+		return nil, nil
+	}
+	hits, err := r.base.Retrieve(ctx, faultType, query, limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]agent.RunbookHit, 0, len(hits))
+	for _, hit := range hits {
+		result = append(result, agent.RunbookHit{
+			Title:            hit.Title,
+			Content:          hit.Content,
+			Score:            hit.Score,
+			RecommendedTools: hit.Hints.RecommendedTools,
+			StopConditions:   hit.Hints.StopConditions,
+		})
+	}
+	return result, nil
+}
+
+func toRAGHits(hits []agent.RunbookHit) []rag.Hit {
+	result := make([]rag.Hit, 0, len(hits))
+	for _, hit := range hits {
+		result = append(result, rag.Hit{
+			Title:   hit.Title,
+			Content: hit.Content,
+			Score:   hit.Score,
+		})
+	}
+	return result
+}
+
+func (s *DiagnosisService) refreshAgentSnapshot(result *agent.RunResult) {
+	if result == nil || result.Report == nil {
+		return
+	}
+	snapshot := agent.BuildReportSnapshot(result.Report, result.Hypotheses, result.RunbookHits, result.Executions, result.VerificationPlan, result.StopReason)
+	result.Report.AgentExecutionSummary = snapshot.AgentExecutionSummary
+	result.Report.AgentReportSnapshot = snapshot
+	result.Report.VerificationPlan = snapshot.VerificationPlan
+	result.Report.ResidualRisks = snapshot.ResidualRisks
+}
+
+func (s *DiagnosisService) hydrateAgentReport(ctx context.Context, task *model.DiagnosisTask) {
+	if s == nil || s.agentRepo == nil || task == nil || task.Report == nil {
+		return
+	}
+	if steps, err := s.agentRepo.ListStepsByTaskID(ctx, task.ID); err == nil {
+		task.Report.AgentTimeline = steps
+	}
+	if hypotheses, err := s.agentRepo.ListHypothesesByTaskID(ctx, task.ID); err == nil {
+		task.Report.Hypotheses = hypotheses
+	}
+	if executions, err := s.agentRepo.ListRemediationExecutionsByTaskID(ctx, task.ID); err == nil {
+		task.Report.RemediationExecutions = executions
+	}
+}
+
 // toDiagnosticRunbookHits converts RAG hits into context runbook hits.
 func toDiagnosticRunbookHits(hits []rag.Hit) []diagnostic.RunbookHit {
 	result := make([]diagnostic.RunbookHit, 0, len(hits))
@@ -390,22 +647,24 @@ func toModelReport(taskID uint, report *diagnostic.Report, evidences []model.Evi
 	remediationBytes, _ := json.Marshal(report.RemediationActions)
 	now := time.Now()
 	return &model.DiagnosisReport{
-		TaskID:             taskID,
-		Namespace:          report.Namespace,
-		PodName:            report.PodName,
-		FaultType:          report.FaultType,
-		RootCauseSummary:   report.RootCauseSummary,
-		ConfidenceScore:    clamp(report.ConfidenceScore),
-		ImpactAnalysis:     report.ImpactAnalysis,
-		SuggestedActions:   string(actionsBytes),
-		RemediationActions: model.JSONText(remediationBytes),
-		RiskLevel:          normalizeRisk(report.RiskLevel),
-		NeedHumanConfirm:   report.NeedHumanConfirm,
-		RuleBasedResult:    marshalJSONField(report.RuleBasedResult),
-		LLMEnhancedSummary: marshalJSONField(report.LLMEnhancedSummary),
-		CreatedAt:          now,
-		GeneratedAt:        now,
-		Evidences:          evidences,
+		TaskID:                taskID,
+		Namespace:             report.Namespace,
+		PodName:               report.PodName,
+		FaultType:             report.FaultType,
+		RootCauseSummary:      report.RootCauseSummary,
+		ConfidenceScore:       clamp(report.ConfidenceScore),
+		ImpactAnalysis:        report.ImpactAnalysis,
+		SuggestedActions:      string(actionsBytes),
+		RemediationActions:    model.JSONText(remediationBytes),
+		RiskLevel:             normalizeRisk(report.RiskLevel),
+		NeedHumanConfirm:      report.NeedHumanConfirm,
+		RuleBasedResult:       marshalJSONField(report.RuleBasedResult),
+		LLMEnhancedSummary:    marshalJSONField(report.LLMEnhancedSummary),
+		AgentExecutionSummary: report.AgentExecutionSummary,
+		AgentReportSnapshot:   model.JSONText(marshalJSONField(report.AgentReportSnapshot)),
+		CreatedAt:             now,
+		GeneratedAt:           now,
+		Evidences:             evidences,
 	}
 }
 

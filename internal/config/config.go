@@ -11,6 +11,7 @@ type Config struct {
 	MySQL      MySQLConfig      `mapstructure:"mysql"`
 	Kubernetes KubernetesConfig `mapstructure:"kubernetes"`
 	Diagnosis  DiagnosisConfig  `mapstructure:"diagnosis"`
+	Agent      AgentConfig      `mapstructure:"agent"`
 	Prometheus PrometheusConfig `mapstructure:"prometheus"`
 	LLM        LLMConfig        `mapstructure:"llm"`
 	Loki       LokiConfig       `mapstructure:"loki"`
@@ -54,6 +55,13 @@ type DiagnosisConfig struct {
 	RetryMaxAttempts       int `mapstructure:"retry_max_attempts"`
 	RetryInitialBackoffMS  int `mapstructure:"retry_initial_backoff_ms"`
 	RetryMaxBackoffMS      int `mapstructure:"retry_max_backoff_ms"`
+}
+
+type AgentConfig struct {
+	Enabled             bool `mapstructure:"enabled"`
+	MaxSteps            int  `mapstructure:"max_steps"`
+	ToolTimeoutSeconds  int  `mapstructure:"tool_timeout_seconds"`
+	EnableDryRunPreview bool `mapstructure:"enable_dry_run_preview"`
 }
 
 type PrometheusConfig struct {
@@ -148,6 +156,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("diagnosis.retry_max_attempts", 2)
 	v.SetDefault("diagnosis.retry_initial_backoff_ms", 100)
 	v.SetDefault("diagnosis.retry_max_backoff_ms", 1000)
+	v.SetDefault("agent.enabled", true)
+	v.SetDefault("agent.max_steps", 12)
+	v.SetDefault("agent.tool_timeout_seconds", 10)
+	v.SetDefault("agent.enable_dry_run_preview", true)
 	v.SetDefault("prometheus.timeout_seconds", 10)
 	v.SetDefault("prometheus.retry_max_attempts", 2)
 	v.SetDefault("prometheus.retry_initial_backoff_ms", 100)

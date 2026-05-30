@@ -1,5 +1,46 @@
 # KubeSage
 
+## Agent Runtime MVP
+
+KubeSage enables the Agent Runtime by default:
+
+```yaml
+agent:
+  enabled: true
+  max_steps: 12
+  tool_timeout_seconds: 10
+  enable_dry_run_preview: true
+```
+
+When `agent.enabled=false`, diagnosis falls back to the legacy snapshot + rule analyzer + LLM summary path.
+
+The Agent Runtime records every planning decision, tool call, observation, hypothesis update, remediation policy decision, and verification plan into `agent_steps`, `hypotheses`, and `remediation_executions`. The API builds `agent_timeline` from `agent_steps` at query time; `diagnosis_reports` only stores `agent_execution_summary` and `agent_report_snapshot`.
+
+MVP stop conditions are `max_steps`, `confirmed_hypothesis`, `timeout`, `no_effective_tool`, and `critical_tool_failed`.
+
+MVP remediation is validation-only: no real cluster mutation is executed, `remediation.dry_run_patch` does not run a shell command, dry-run preview only validates policy, medium-risk actions require human approval, high-risk actions are proposal-only, and forbidden actions are always blocked.
+
+Runbook Markdown files may include YAML frontmatter as planner hints:
+
+```yaml
+---
+fault_type: OOMKilled
+checks:
+  - inspect termination state
+recommended_tools:
+  - k8s.get_previous_logs
+  - prometheus.query_range
+remediation_candidates:
+  - adjust_memory_limit
+risk_policy:
+  adjust_memory_limit: high
+stop_conditions:
+  - confirmed hypothesis
+---
+```
+
+Runbook hints can add safe follow-up checks, but they never override the built-in remediation policy.
+
 KubeSage 是一个面向 Kubernetes 高频 Pod 故障的智能 RCA Agent MVP，当前聚焦：
 
 - CrashLoopBackOff

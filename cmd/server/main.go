@@ -62,7 +62,7 @@ func main() {
 		}
 	} else {
 		log.Warn("database migrations disabled; falling back to GORM AutoMigrate")
-		if err := database.AutoMigrate(&model.DiagnosisTask{}, &model.Evidence{}, &model.DiagnosisReport{}); err != nil {
+		if err := database.AutoMigrate(&model.DiagnosisTask{}, &model.Evidence{}, &model.DiagnosisReport{}, &model.AgentStep{}, &model.Hypothesis{}, &model.RemediationExecution{}); err != nil {
 			log.Fatal("auto migrate failed", zap.Error(err))
 		}
 	}
@@ -75,6 +75,7 @@ func main() {
 	taskRepo := repository.NewDiagnosisRepository(database)
 	evidenceRepo := repository.NewEvidenceRepository(database)
 	reportRepo := repository.NewReportRepository(database)
+	agentRepo := repository.NewAgentRepository(database)
 
 	runbookRetriever, err := rag.NewSimpleKeywordRetriever(cfg.Runbook.Dir)
 	if err != nil {
@@ -107,6 +108,7 @@ func main() {
 		TaskRepo:         taskRepo,
 		EvidenceRepo:     evidenceRepo,
 		ReportRepo:       reportRepo,
+		AgentRepo:        agentRepo,
 		SnapshotService:  service.NewSnapshotService(cfg, k8sClient, log, lokiClient),
 		ReportService:    service.NewReportService(reportRepo),
 		PrometheusClient: prometheus.NewClient(cfg.Prometheus),

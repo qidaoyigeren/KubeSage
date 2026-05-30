@@ -1,20 +1,26 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
-	"kubesage/internal/service"
+	"kubesage/internal/model"
 
 	"github.com/gin-gonic/gin"
 )
 
 type TaskHandler struct {
-	service *service.DiagnosisService
+	service TaskReader
+}
+
+type TaskReader interface {
+	GetTask(ctx context.Context, id uint) (*model.DiagnosisTask, error)
+	ListTasks(ctx context.Context, page, pageSize int) ([]model.DiagnosisTask, int64, error)
 }
 
 // NewTaskHandler creates handlers for reading diagnosis task state.
-func NewTaskHandler(service *service.DiagnosisService) *TaskHandler {
+func NewTaskHandler(service TaskReader) *TaskHandler {
 	return &TaskHandler{service: service}
 }
 

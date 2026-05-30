@@ -29,6 +29,12 @@ diagnosis:
   retry_initial_backoff_ms: 100
   retry_max_backoff_ms: 1000
 
+agent:
+  enabled: true
+  max_steps: 12
+  tool_timeout_seconds: 10
+  enable_dry_run_preview: true
+
 prometheus:
   base_url: ""
   timeout_seconds: 10

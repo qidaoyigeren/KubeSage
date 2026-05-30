@@ -3,9 +3,10 @@ package rag
 import "context"
 
 type Hit struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
-	Score   int    `json:"score"`
+	Title   string       `json:"title"`
+	Content string       `json:"content"`
+	Score   int          `json:"score"`
+	Hints   RunbookHints `json:"hints,omitempty"`
 }
 
 type Retriever interface {

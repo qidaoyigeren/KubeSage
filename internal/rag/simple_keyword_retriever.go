@@ -41,6 +41,7 @@ func (r *SimpleKeywordRetriever) Retrieve(ctx context.Context, faultType, query 
 				Title:   runbook.FaultType + " / " + section.Title,
 				Content: strings.TrimSpace(section.Content),
 				Score:   score,
+				Hints:   runbook.Hints,
 			})
 		}
 	}

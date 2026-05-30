@@ -38,10 +38,39 @@ var (
 		},
 		[]string{"analyzer"},
 	)
+	agentStepTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "agent_step_total",
+			Help: "Total agent steps by stage, status, and tool.",
+		},
+		[]string{"stage", "status", "tool"},
+	)
+	agentToolDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "agent_tool_duration_seconds",
+			Help:    "Agent tool execution duration distribution.",
+			Buckets: prometheus.ExponentialBuckets(0.005, 2, 12),
+		},
+		[]string{"tool"},
+	)
+	agentHypothesisUpdatesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "agent_hypothesis_updates_total",
+			Help: "Total hypothesis updates by type and status.",
+		},
+		[]string{"hypothesis_type", "status"},
+	)
+	remediationActionTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "remediation_action_total",
+			Help: "Total remediation actions by risk level and status.",
+		},
+		[]string{"risk_level", "status"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(diagnosisTotal, diagnosisDuration, llmCallTotal, analyzerMatchTotal)
+	prometheus.MustRegister(diagnosisTotal, diagnosisDuration, llmCallTotal, analyzerMatchTotal, agentStepTotal, agentToolDuration, agentHypothesisUpdatesTotal, remediationActionTotal)
 }
 
 // IncDiagnosisTotal records one completed diagnosis task.
@@ -62,6 +91,26 @@ func IncLLMCallTotal(status string) {
 // IncAnalyzerMatchTotal records that one analyzer matched a diagnostic context.
 func IncAnalyzerMatchTotal(analyzer string) {
 	analyzerMatchTotal.WithLabelValues(analyzer).Inc()
+}
+
+// IncAgentStepTotal records one persisted or attempted agent step.
+func IncAgentStepTotal(stage, status, tool string) {
+	agentStepTotal.WithLabelValues(stage, status, tool).Inc()
+}
+
+// ObserveAgentToolDuration records the elapsed time for one agent tool call.
+func ObserveAgentToolDuration(tool string, duration time.Duration) {
+	agentToolDuration.WithLabelValues(tool).Observe(duration.Seconds())
+}
+
+// IncAgentHypothesisUpdatesTotal records a hypothesis state transition.
+func IncAgentHypothesisUpdatesTotal(hypothesisType, status string) {
+	agentHypothesisUpdatesTotal.WithLabelValues(hypothesisType, status).Inc()
+}
+
+// IncRemediationActionTotal records a policy-vetted remediation action.
+func IncRemediationActionTotal(riskLevel, status string) {
+	remediationActionTotal.WithLabelValues(riskLevel, status).Inc()
 }
 
 // Handler exposes all registered Prometheus metrics using client_golang.

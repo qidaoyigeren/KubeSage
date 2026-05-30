@@ -1,19 +1,25 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 
+	"kubesage/internal/model"
 	"kubesage/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
 type DiagnoseHandler struct {
-	service *service.DiagnosisService
+	service DiagnosisStarter
+}
+
+type DiagnosisStarter interface {
+	StartPodDiagnosis(ctx context.Context, req service.PodDiagnosisRequest) (*model.DiagnosisTask, error)
 }
 
 // NewDiagnoseHandler creates the HTTP handler for pod diagnosis requests.
-func NewDiagnoseHandler(service *service.DiagnosisService) *DiagnoseHandler {
+func NewDiagnoseHandler(service DiagnosisStarter) *DiagnoseHandler {
 	return &DiagnoseHandler{service: service}
 }
 
