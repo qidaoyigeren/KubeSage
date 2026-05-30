@@ -6,3 +6,5 @@ dist
 tmp
 *.log
 coverage.out
+web/node_modules
+web/dist

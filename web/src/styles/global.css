@@ -1,0 +1,397 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Noto Color Emoji';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f0f2f5;
+}
+
+/* Sidebar logo area */
+.sidebar-logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.sidebar-logo:hover {
+  filter: brightness(1.05);
+}
+
+.sidebar-logo .logo-icon {
+  font-size: 26px;
+  color: #fff;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+.sidebar-logo .logo-text {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 1px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+/* Sidebar menu overrides */
+.ant-layout-sider {
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.04);
+}
+
+.ant-menu-inline .ant-menu-item {
+  border-radius: 8px;
+  margin: 4px 8px;
+  transition: all 0.25s ease;
+}
+
+.ant-menu-inline .ant-menu-item:hover {
+  background: rgba(102, 126, 234, 0.08);
+}
+
+.ant-menu-inline .ant-menu-item-selected {
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.12) 0%, rgba(118, 75, 162, 0.08) 100%);
+  font-weight: 600;
+}
+
+/* Header */
+.app-header {
+  background: #fff;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f0f0f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.app-header .page-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1d2129;
+}
+
+/* Stat cards with gradient backgrounds */
+.stat-card {
+  border-radius: 12px;
+  border: none;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+}
+
+.stat-card.card-total {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.stat-card.card-total .ant-statistic-title,
+.stat-card.card-total .ant-statistic-content {
+  color: #fff !important;
+}
+
+.stat-card.card-running {
+  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.stat-card.card-running .ant-statistic-title,
+.stat-card.card-running .ant-statistic-content {
+  color: #fff !important;
+}
+
+.stat-card.card-success {
+  background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+}
+
+.stat-card.card-success .ant-statistic-title,
+.stat-card.card-success .ant-statistic-content {
+  color: #fff !important;
+}
+
+.stat-card.card-failed {
+  background: linear-gradient(135deg, #f5576c 0%, #ff6a88 100%);
+}
+
+.stat-card.card-failed .ant-statistic-title,
+.stat-card.card-failed .ant-statistic-content {
+  color: #fff !important;
+}
+
+/* Dashboard quick diagnose card */
+.quick-diagnose-card {
+  border-radius: 12px;
+  border: 1px solid #e8e8e8;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.quick-diagnose-card .ant-card-head {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+/* Task list card */
+.task-list-card {
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.task-list-card .ant-card-head {
+  border-bottom: 1px solid #f0f0f0;
+  padding: 16px 24px;
+}
+
+.task-list-card .ant-table {
+  border-radius: 0 0 12px 12px;
+}
+
+/* Task detail header */
+.task-detail-header {
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.task-detail-header .root-cause-banner {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #f6ffed 0%, #e6fffb 100%);
+  border-radius: 8px;
+  border: 1px solid #b7eb8f;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Task detail tabs */
+.task-detail-tabs {
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.task-detail-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+  padding: 0 8px;
+}
+
+.task-detail-tabs .ant-tabs-tab {
+  padding: 12px 16px;
+  transition: all 0.25s;
+}
+
+.task-detail-tabs .ant-tabs-tab:hover {
+  color: #667eea;
+}
+
+.task-detail-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  font-weight: 600;
+}
+
+/* Card content sections */
+.report-section-card {
+  border-radius: 10px;
+  margin-bottom: 16px;
+  border: 1px solid #f0f0f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.report-section-card .ant-card-head {
+  background: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  border-radius: 10px 10px 0 0;
+}
+
+/* Hypothesis cards */
+.hypothesis-card {
+  border-radius: 10px;
+  border: 1px solid #f0f0f0;
+  transition: all 0.25s ease;
+  margin-bottom: 12px;
+}
+
+.hypothesis-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.hypothesis-card.status-confirmed {
+  border-left: 4px solid #52c41a;
+}
+
+.hypothesis-card.status-active {
+  border-left: 4px solid #1677ff;
+}
+
+.hypothesis-card.status-rejected {
+  border-left: 4px solid #d9d9d9;
+  opacity: 0.7;
+}
+
+/* Remediation cards */
+.remediation-card {
+  border-radius: 10px;
+  border: 1px solid #f0f0f0;
+  transition: all 0.25s ease;
+  margin-bottom: 12px;
+}
+
+.remediation-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Evidence severity row highlights */
+.ant-table-row.evidence-critical {
+  background: #fff2f0;
+}
+
+.ant-table-row.evidence-warning {
+  background: #fffbe6;
+}
+
+/* Diagnose form card */
+.diagnose-form-card {
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.diagnose-form-card .ant-card-head {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px 12px 0 0;
+  border: none;
+}
+
+.diagnose-form-card .ant-card-head-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Timeline improvements */
+.agent-timeline-step {
+  padding: 8px 0;
+}
+
+.agent-timeline-step .step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-timeline-step .step-reasoning {
+  margin-top: 6px;
+  color: #4e5969;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Json viewer */
+.json-viewer-container {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.json-viewer-container pre {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 16px;
+  overflow: auto;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.7;
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+}
+
+.json-viewer-container .copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #cdd6f4;
+}
+
+.json-viewer-container .copy-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Page transitions */
+.page-enter {
+  animation: fadeSlideIn 0.3s ease-out;
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .stat-card {
+    margin-bottom: 12px;
+  }
+}
+
+/* Running status pulse animation */
+@keyframes pulse-blue {
+  0% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(22, 119, 255, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 119, 255, 0); }
+}
+
+.status-running-pulse {
+  animation: pulse-blue 2s infinite;
+}
+
+/* Empty state */
+.empty-state {
+  padding: 60px 0;
+  text-align: center;
+}
+
+/* Table row hover */
+.ant-table-tbody > tr:hover {
+  background: #fafafa !important;
+  transition: background 0.2s;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
