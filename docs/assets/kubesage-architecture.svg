@@ -1,0 +1,108 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#08111f"/>
+      <stop offset="0.55" stop-color="#0b1828"/>
+      <stop offset="1" stop-color="#0d221e"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10223a"/>
+      <stop offset="1" stop-color="#0c1727"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#1dd3b0"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000814" flood-opacity="0.45"/>
+    </filter>
+    <style>
+      .title { font: 700 38px Inter, Segoe UI, Arial, sans-serif; fill: #eef7ff; }
+      .subtitle { font: 500 16px Inter, Segoe UI, Arial, sans-serif; fill: #9fb3c8; }
+      .label { font: 700 17px Inter, Segoe UI, Arial, sans-serif; fill: #e6f2ff; }
+      .body { font: 500 13px Inter, Segoe UI, Arial, sans-serif; fill: #adc0d4; }
+      .small { font: 600 12px Inter, Segoe UI, Arial, sans-serif; fill: #7dd3fc; }
+      .card { fill: url(#panel); stroke: #203a56; stroke-width: 1.4; rx: 18; filter: url(#shadow); }
+      .core { fill: #0e2b3d; stroke: url(#accent); stroke-width: 2; rx: 24; filter: url(#shadow); }
+      .chip { fill: rgba(29,211,176,0.12); stroke: rgba(56,189,248,0.45); stroke-width: 1; rx: 14; }
+      .arrow { stroke: #38bdf8; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowhead); }
+      .arrow2 { stroke: #f59e0b; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrowhead2); }
+    </style>
+    <marker id="arrowhead" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0 0L8 4.5L0 9Z" fill="#38bdf8"/>
+    </marker>
+    <marker id="arrowhead2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0 0L8 4.5L0 9Z" fill="#f59e0b"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="720" fill="url(#bg)"/>
+  <circle cx="1010" cy="88" r="170" fill="#0ea5e9" opacity="0.07"/>
+  <circle cx="220" cy="650" r="220" fill="#10b981" opacity="0.07"/>
+
+  <text x="60" y="66" class="title">KubeSage RCA Agent Architecture</text>
+  <text x="60" y="96" class="subtitle">Evidence-grounded Kubernetes diagnosis, auditable agent runtime, and safe remediation workflow.</text>
+
+  <rect x="54" y="132" width="236" height="120" class="card"/>
+  <text x="82" y="174" class="label">Signal Sources</text>
+  <text x="82" y="203" class="body">Kubernetes API</text>
+  <text x="82" y="225" class="body">Prometheus / Loki</text>
+  <text x="82" y="247" class="body">Runbooks / Alertmanager</text>
+
+  <rect x="54" y="302" width="236" height="120" class="card"/>
+  <text x="82" y="344" class="label">Collectors</text>
+  <text x="82" y="373" class="body">Pod / Events / Logs</text>
+  <text x="82" y="395" class="body">PVC / Topology / Node</text>
+  <text x="82" y="417" class="body">Metric trends / Correlation</text>
+
+  <rect x="54" y="472" width="236" height="120" class="card"/>
+  <text x="82" y="514" class="label">Persistence</text>
+  <text x="82" y="543" class="body">MySQL reports and evidence</text>
+  <text x="82" y="565" class="body">Agent steps and hypotheses</text>
+  <text x="82" y="587" class="body">Audit logs and feedback</text>
+
+  <rect x="382" y="174" width="436" height="372" class="core"/>
+  <text x="430" y="226" class="label">Agent Runtime</text>
+  <text x="430" y="255" class="body">Plan → Execute → Observe → Hypothesize → Reflect → Verify</text>
+
+  <rect x="430" y="288" width="150" height="44" class="chip"/>
+  <text x="454" y="316" class="small">Rule / LLM Planner</text>
+  <rect x="620" y="288" width="150" height="44" class="chip"/>
+  <text x="645" y="316" class="small">Tool Registry</text>
+  <rect x="430" y="356" width="150" height="44" class="chip"/>
+  <text x="452" y="384" class="small">Hypothesis Engine</text>
+  <rect x="620" y="356" width="150" height="44" class="chip"/>
+  <text x="642" y="384" class="small">Evidence Recorder</text>
+  <rect x="430" y="424" width="150" height="44" class="chip"/>
+  <text x="451" y="452" class="small">Grounding Guard</text>
+  <rect x="620" y="424" width="150" height="44" class="chip"/>
+  <text x="640" y="452" class="small">Policy Dry-run</text>
+
+  <rect x="910" y="132" width="236" height="120" class="card"/>
+  <text x="938" y="174" class="label">RCA Report</text>
+  <text x="938" y="203" class="body">Root cause and confidence</text>
+  <text x="938" y="225" class="body">Evidence refs and chain</text>
+  <text x="938" y="247" class="body">Missing evidence and risks</text>
+
+  <rect x="910" y="302" width="236" height="120" class="card"/>
+  <text x="938" y="344" class="label">Ops Console</text>
+  <text x="938" y="373" class="body">Dashboard and timeline</text>
+  <text x="938" y="395" class="body">Runbooks and audit logs</text>
+  <text x="938" y="417" class="body">Dead-letter retry</text>
+
+  <rect x="910" y="472" width="236" height="120" class="card"/>
+  <text x="938" y="514" class="label">Safe Remediation</text>
+  <text x="938" y="543" class="body">Risk classification</text>
+  <text x="938" y="565" class="body">Forbidden action blocking</text>
+  <text x="938" y="587" class="body">Human approval workflow</text>
+
+  <path class="arrow" d="M290 192 C330 192 342 250 382 250"/>
+  <path class="arrow" d="M290 362 C330 362 342 360 382 360"/>
+  <path class="arrow" d="M290 532 C330 532 342 470 382 470"/>
+  <path class="arrow" d="M818 250 C858 250 870 192 910 192"/>
+  <path class="arrow" d="M818 360 C858 360 870 362 910 362"/>
+  <path class="arrow2" d="M818 470 C858 470 870 532 910 532"/>
+
+  <rect x="368" y="610" width="464" height="54" fill="rgba(14,165,233,0.08)" stroke="rgba(125,211,252,0.26)" rx="18"/>
+  <text x="402" y="643" class="body">Quality gate: 15 golden RCA cases, 100% pass, 0% hallucination, 0 dangerous suggestions.</text>
+</svg>
