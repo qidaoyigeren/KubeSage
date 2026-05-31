@@ -72,6 +72,7 @@ type DiagnosisServiceOptions struct {
 	RunbookRetriever rag.Retriever
 	RedisClient      redis.UniversalClient
 	Notifier         *Notifier
+	MCPProvider      *agent.MCPProvider
 }
 
 type DiagnosisService struct {
@@ -87,6 +88,7 @@ type DiagnosisService struct {
 	prometheusClient *prometheus.Client
 	llmClient        llm.LLMClient
 	runbookRetriever rag.Retriever
+	mcpProvider      *agent.MCPProvider
 	engine           *diagnostic.DiagnosisEngine
 	alertDedupMu     sync.Mutex
 	podLocks         diagnosisLock
@@ -132,6 +134,7 @@ func NewDiagnosisService(opts DiagnosisServiceOptions) *DiagnosisService {
 		prometheusClient: opts.PrometheusClient,
 		llmClient:        opts.LLMClient,
 		runbookRetriever: opts.RunbookRetriever,
+		mcpProvider:      opts.MCPProvider,
 		podLocks:         newDiagnosisLock(cfg.Redis, opts.RedisClient),
 		queue:            newRedisDiagnosisQueue(opts.RedisClient, cfg.Queue, opts.DeadLetterRepo, opts.Logger),
 		notifier:         opts.Notifier,
@@ -210,6 +213,12 @@ func (s *DiagnosisService) ListTasks(ctx context.Context, page, pageSize int) ([
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.taskRepo.List(ctx, page, pageSize)
+}
+
+func (s *DiagnosisService) ListTasksByNamespaces(ctx context.Context, page, pageSize int, namespaces []string) ([]model.DiagnosisTask, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return s.taskRepo.ListByNamespaces(ctx, page, pageSize, namespaces)
 }
 
 // runDiagnosis selects the Agent Runtime by default and keeps the legacy path
@@ -374,7 +383,10 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 		Snapshot:    s.agentSnapshotFunc(req),
 		Retriever:   agentRunbookRetriever{base: s.runbookRetriever},
 		Policy:      agentPolicy,
+		Prometheus:  s.prometheusClient,
+		Loki:        s.agentLokiClient(),
 		ToolTimeout: time.Duration(s.cfg.Agent.ToolTimeoutSeconds) * time.Second,
+		MCPProvider: s.mcpProvider,
 	})
 	if err != nil {
 		span.RecordError(err)
@@ -707,6 +719,13 @@ func (s *DiagnosisService) agentSnapshotFunc(req PodDiagnosisRequest) agent.Snap
 		next.AlertTime = goal.AlertTime
 		return s.snapshotService.Collect(ctx, next)
 	}
+}
+
+func (s *DiagnosisService) agentLokiClient() agent.LokiQueryClient {
+	if s == nil || s.snapshotService == nil {
+		return nil
+	}
+	return s.snapshotService.loki
 }
 
 func toAgentGoal(req PodDiagnosisRequest) agent.Goal {

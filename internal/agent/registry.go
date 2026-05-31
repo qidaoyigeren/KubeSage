@@ -7,17 +7,20 @@ import (
 	"time"
 
 	"kubesage/internal/diagnostic"
+	"kubesage/internal/loki"
 	"kubesage/internal/model"
 	"kubesage/internal/observability"
+	"kubesage/internal/prometheus"
 )
 
 type ToolRegistry struct {
-	tools map[string]Tool
+	tools   map[string]Tool
+	aliases map[string]string
 }
 
 // NewToolRegistry creates an empty registry for structured agent tools.
 func NewToolRegistry() *ToolRegistry {
-	return &ToolRegistry{tools: map[string]Tool{}}
+	return &ToolRegistry{tools: map[string]Tool{}, aliases: map[string]string{}}
 }
 
 // Register adds a tool by name and rejects duplicate registrations.
@@ -37,10 +40,33 @@ func (r *ToolRegistry) Register(tool Tool) error {
 	return nil
 }
 
+// RegisterAlias maps a legacy tool name to a canonical tool implementation.
+func (r *ToolRegistry) RegisterAlias(alias, canonical string) error {
+	if r == nil {
+		return fmt.Errorf("tool registry is nil")
+	}
+	alias = strings.TrimSpace(alias)
+	canonical = strings.TrimSpace(canonical)
+	if alias == "" || canonical == "" {
+		return fmt.Errorf("tool alias and canonical name are required")
+	}
+	if _, ok := r.tools[canonical]; !ok {
+		return fmt.Errorf("canonical tool %s is not registered", canonical)
+	}
+	if _, exists := r.tools[alias]; exists {
+		return fmt.Errorf("tool alias %s conflicts with registered tool", alias)
+	}
+	r.aliases[alias] = canonical
+	return nil
+}
+
 // Get returns a registered tool by name.
 func (r *ToolRegistry) Get(name string) (Tool, bool) {
 	if r == nil {
 		return nil, false
+	}
+	if canonical, ok := r.aliases[name]; ok {
+		name = canonical
 	}
 	tool, ok := r.tools[name]
 	return tool, ok
@@ -73,6 +99,9 @@ func (t simpleTool) Execute(ctx context.Context, input map[string]interface{}, s
 	if result.Observation == "" && result.Error != "" {
 		result.Observation = result.Error
 	}
+	if result.ObservationData == nil {
+		result.ObservationData = result.Data
+	}
 	return result
 }
 
@@ -80,7 +109,20 @@ type RegistryOptions struct {
 	Snapshot    SnapshotFunc
 	Retriever   Retriever
 	Policy      *RemediationPolicy
+	Prometheus  PrometheusRangeClient
+	Loki        LokiQueryClient
 	ToolTimeout time.Duration
+	MCPProvider *MCPProvider
+}
+
+type PrometheusRangeClient interface {
+	Configured() bool
+	QueryRange(ctx context.Context, query string, start, end time.Time, step time.Duration) (*prometheus.QueryRangeResult, error)
+}
+
+type LokiQueryClient interface {
+	Configured() bool
+	QueryPodLogs(ctx context.Context, namespace, podName, containerName string, start, end time.Time) ([]loki.LogEntry, error)
 }
 
 // NewDefaultRegistry wires the MVP read-only tools used by the agent runtime.
@@ -89,12 +131,12 @@ func NewDefaultRegistry(opts RegistryOptions) (*ToolRegistry, error) {
 	tools := []Tool{
 		newSnapshotTool("k8s.get_pod", "Load pod snapshot and cache diagnostic context.", true, opts.Snapshot, podObservation),
 		newSnapshotTool("k8s.get_events", "Read pod Events from cached Kubernetes snapshot.", false, opts.Snapshot, eventsObservation),
-		newSnapshotTool("k8s.get_previous_logs", "Read previous/current pod logs from cached Kubernetes snapshot.", false, opts.Snapshot, logsObservation),
+		newSnapshotTool("k8s.get_logs", "Read previous/current pod logs from cached Kubernetes snapshot.", false, opts.Snapshot, logsObservation),
 		newSnapshotTool("k8s.get_topology", "Read workload, service, endpoint, and node topology.", false, opts.Snapshot, topologyObservation),
-		newSnapshotTool("k8s.get_pvc_status", "Read PVC status referenced by the pod.", false, opts.Snapshot, pvcObservation),
+		newSnapshotTool("k8s.get_pvc", "Read PVC status referenced by the pod.", false, opts.Snapshot, pvcObservation),
 		newRunbookSearchTool(opts.Retriever),
-		newPrometheusQueryTool(),
-		newLokiQueryTool(),
+		newPrometheusQueryTool(opts.Prometheus),
+		newLokiQueryTool(opts.Loki),
 		newRemediationGenerateTool(opts.Policy),
 		newRemediationDryRunTool(opts.Policy),
 	}
@@ -103,6 +145,26 @@ func NewDefaultRegistry(opts RegistryOptions) (*ToolRegistry, error) {
 			return nil, err
 		}
 	}
+	for alias, canonical := range map[string]string{
+		"k8s.get_previous_logs":     "k8s.get_logs",
+		"k8s.get_pvc_status":        "k8s.get_pvc",
+		"remediation.dry_run_patch": "remediation.dry_run",
+	} {
+		if err := registry.RegisterAlias(alias, canonical); err != nil {
+			return nil, err
+		}
+	}
+
+	// Register MCP tools from external MCP servers (e.g., Grafana, PostgreSQL).
+	if opts.MCPProvider != nil {
+		for _, tool := range opts.MCPProvider.Tools() {
+			if err := registry.Register(tool); err != nil {
+				// Skip MCP tools that conflict with built-in names.
+				continue
+			}
+		}
+	}
+
 	return registry, nil
 }
 
@@ -175,7 +237,7 @@ func eventsObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 
 func logsObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 	if ctx == nil {
-		return failedTool("k8s.get_previous_logs", "diagnostic context is empty")
+		return failedTool("k8s.get_logs", "diagnostic context is empty")
 	}
 	records := make([]diagnostic.EvidenceRecord, 0, len(ctx.Logs))
 	for _, logs := range ctx.Logs {
@@ -210,7 +272,7 @@ func topologyObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 
 func pvcObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 	if ctx == nil {
-		return failedTool("k8s.get_pvc_status", "diagnostic context is empty")
+		return failedTool("k8s.get_pvc", "diagnostic context is empty")
 	}
 	records := make([]diagnostic.EvidenceRecord, 0, len(ctx.PVCs))
 	for _, pvc := range ctx.PVCs {
@@ -272,51 +334,110 @@ func newRunbookSearchTool(retriever Retriever) Tool {
 	}
 }
 
-func newPrometheusQueryTool() Tool {
+func newPrometheusQueryTool(client PrometheusRangeClient) Tool {
 	return simpleTool{
 		meta: ToolMetadata{
 			Name:        "prometheus.query_range",
-			Description: "Record Prometheus metric query intent; analyzers perform concrete query enrichment.",
-			InputSchema: map[string]string{"query": "string", "start": "RFC3339", "end": "RFC3339"},
+			Description: "Query Prometheus range API and return structured metric evidence.",
+			InputSchema: map[string]string{"query": "string", "start": "RFC3339", "end": "RFC3339", "step_seconds": "int"},
 			RiskLevel:   "low",
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
 		},
 		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
-			_ = ctx
 			query := stringInput(input, "query")
 			if query == "" {
-				query = "container_memory_working_set_bytes or rule-selected metric"
+				return ToolResult{Success: false, Observation: "prometheus query is empty", Error: "prometheus query is empty", MissingEvidence: []string{"metrics query"}}
 			}
-			enabled := state != nil && state.Goal.IncludeMetrics
-			return ToolResult{Success: true, Observation: fmt.Sprintf("prometheus query planned enabled=%t query=%s", enabled, query), Data: input}
+			if client == nil || !client.Configured() {
+				return ToolResult{Success: false, Observation: "prometheus is not configured", Error: "prometheus is not configured", MissingEvidence: []string{"prometheus metrics"}}
+			}
+			start, end, err := rangeWindowInput(input, state)
+			if err != nil {
+				return failedTool("prometheus.query_range", err.Error())
+			}
+			step := durationSecondsInput(input, "step_seconds", 30*time.Second)
+			result, err := client.QueryRange(ctx, query, start, end, step)
+			if err != nil {
+				return ToolResult{Success: false, Observation: "prometheus query failed", Error: err.Error(), MissingEvidence: []string{"prometheus metrics"}, Data: map[string]interface{}{"query": query, "start": start, "end": end, "step": step.String()}}
+			}
+			samples := countPrometheusSamples(result)
+			warnings := append([]string{}, result.Warnings...)
+			missing := []string{}
+			if samples == 0 {
+				warnings = append(warnings, "prometheus returned no samples")
+				missing = append(missing, "prometheus samples")
+			}
+			return ToolResult{
+				Success:         true,
+				Observation:     fmt.Sprintf("prometheus query_range samples=%d query=%s", samples, query),
+				ObservationData: result,
+				Warnings:        warnings,
+				MissingEvidence: missing,
+				EvidenceRecords: []diagnostic.EvidenceRecord{{
+					SourceType: "prometheus",
+					Title:      "Prometheus query_range",
+					Content:    fmt.Sprintf("query=%s start=%s end=%s step=%s series=%d samples=%d", query, start.Format(time.RFC3339), end.Format(time.RFC3339), step.String(), len(result.Series), samples),
+					Severity:   severityForSampleCount(samples),
+					Raw:        result,
+					Timestamp:  time.Now(),
+				}},
+				Data: result,
+			}
 		},
 	}
 }
 
-func newLokiQueryTool() Tool {
+func newLokiQueryTool(client LokiQueryClient) Tool {
 	return simpleTool{
 		meta: ToolMetadata{
 			Name:        "loki.query_logs",
-			Description: "Read Loki-enriched logs already collected in the snapshot when configured.",
-			InputSchema: map[string]string{"namespace": "string", "pod_name": "string", "container_name": "string"},
+			Description: "Query Loki for pod log entries in a fault window.",
+			InputSchema: map[string]string{"namespace": "string", "pod_name": "string", "container_name": "string", "start": "RFC3339", "end": "RFC3339"},
 			RiskLevel:   "low",
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
 		},
 		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
-			_ = ctx
-			_ = input
-			if state == nil || state.DiagnosticContext == nil {
-				return ToolResult{Success: true, Observation: "loki logs unavailable before snapshot"}
+			namespace := firstNonEmpty(stringInput(input, "namespace"), goalNamespace(state))
+			podName := firstNonEmpty(stringInput(input, "pod_name"), goalPodName(state))
+			containerName := firstNonEmpty(stringInput(input, "container_name"), goalContainerName(state))
+			if namespace == "" || podName == "" {
+				return ToolResult{Success: false, Observation: "loki query requires namespace and pod_name", Error: "loki query requires namespace and pod_name", MissingEvidence: []string{"loki logs"}}
 			}
-			count := 0
-			for _, logs := range state.DiagnosticContext.Logs {
-				if strings.TrimSpace(logs.Loki) != "" {
-					count++
-				}
+			if client == nil || !client.Configured() {
+				return ToolResult{Success: false, Observation: "loki is not configured", Error: "loki is not configured", MissingEvidence: []string{"loki logs"}}
 			}
-			return ToolResult{Success: true, Observation: fmt.Sprintf("loki log windows available for %d containers", count), Data: state.DiagnosticContext.Logs}
+			start, end, err := rangeWindowInput(input, state)
+			if err != nil {
+				return failedTool("loki.query_logs", err.Error())
+			}
+			entries, err := client.QueryPodLogs(ctx, namespace, podName, containerName, start, end)
+			if err != nil {
+				return ToolResult{Success: false, Observation: "loki query failed", Error: err.Error(), MissingEvidence: []string{"loki logs"}, Data: map[string]interface{}{"namespace": namespace, "pod_name": podName, "container_name": containerName, "start": start, "end": end}}
+			}
+			warnings := []string{}
+			missing := []string{}
+			if len(entries) == 0 {
+				warnings = append(warnings, "loki returned no log entries")
+				missing = append(missing, "loki log entries")
+			}
+			return ToolResult{
+				Success:         true,
+				Observation:     fmt.Sprintf("loki log entries=%d namespace=%s pod=%s", len(entries), namespace, podName),
+				ObservationData: entries,
+				Warnings:        warnings,
+				MissingEvidence: missing,
+				EvidenceRecords: []diagnostic.EvidenceRecord{{
+					SourceType: "loki",
+					Title:      "Loki pod logs",
+					Content:    fmt.Sprintf("namespace=%s pod=%s container=%s window=%s..%s entries=%d", namespace, podName, containerName, start.Format(time.RFC3339), end.Format(time.RFC3339), len(entries)),
+					Severity:   severityForSampleCount(len(entries)),
+					Raw:        entries,
+					Timestamp:  time.Now(),
+				}},
+				Data: entries,
+			}
 		},
 	}
 }
@@ -353,7 +474,7 @@ func newRemediationGenerateTool(policy *RemediationPolicy) Tool {
 func newRemediationDryRunTool(policy *RemediationPolicy) Tool {
 	return simpleTool{
 		meta: ToolMetadata{
-			Name:        "remediation.dry_run_patch",
+			Name:        "remediation.dry_run",
 			Description: "Validate and preview a dry-run remediation command without shell execution.",
 			InputSchema: map[string]string{"command_preview": "string", "risk_level": "string"},
 			RiskLevel:   "medium",
@@ -387,6 +508,110 @@ func newRemediationDryRunTool(policy *RemediationPolicy) Tool {
 
 func failedTool(name, err string) ToolResult {
 	return ToolResult{ToolName: name, Success: false, Error: err, Observation: err}
+}
+
+func rangeWindowInput(input map[string]interface{}, state *ToolState) (time.Time, time.Time, error) {
+	end := time.Now()
+	start := end.Add(-10 * time.Minute)
+	if state != nil && state.DiagnosticContext != nil {
+		if !state.DiagnosticContext.LogWindowStart.IsZero() && !state.DiagnosticContext.LogWindowEnd.IsZero() {
+			start = state.DiagnosticContext.LogWindowStart
+			end = state.DiagnosticContext.LogWindowEnd
+		} else if !state.DiagnosticContext.FaultTime.IsZero() {
+			start = state.DiagnosticContext.FaultTime.Add(-5 * time.Minute)
+			end = state.DiagnosticContext.FaultTime.Add(5 * time.Minute)
+		}
+	} else if state != nil && state.Goal.AlertTime != nil && !state.Goal.AlertTime.IsZero() {
+		start = state.Goal.AlertTime.Add(-5 * time.Minute)
+		end = state.Goal.AlertTime.Add(5 * time.Minute)
+	}
+	if raw := stringInput(input, "start"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start: %w", err)
+		}
+		start = parsed
+	}
+	if raw := stringInput(input, "end"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end: %w", err)
+		}
+		end = parsed
+	}
+	if end.Before(start) {
+		return time.Time{}, time.Time{}, fmt.Errorf("end time is before start time")
+	}
+	return start, end, nil
+}
+
+func durationSecondsInput(input map[string]interface{}, key string, fallback time.Duration) time.Duration {
+	if input == nil {
+		return fallback
+	}
+	switch value := input[key].(type) {
+	case int:
+		if value > 0 {
+			return time.Duration(value) * time.Second
+		}
+	case int64:
+		if value > 0 {
+			return time.Duration(value) * time.Second
+		}
+	case float64:
+		if value > 0 {
+			return time.Duration(value) * time.Second
+		}
+	}
+	return fallback
+}
+
+func countPrometheusSamples(result *prometheus.QueryRangeResult) int {
+	if result == nil {
+		return 0
+	}
+	count := 0
+	for _, series := range result.Series {
+		count += len(series.Points)
+	}
+	return count
+}
+
+func severityForSampleCount(count int) string {
+	if count == 0 {
+		return "warning"
+	}
+	return "info"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func goalNamespace(state *ToolState) string {
+	if state == nil {
+		return ""
+	}
+	return state.Goal.Namespace
+}
+
+func goalPodName(state *ToolState) string {
+	if state == nil {
+		return ""
+	}
+	return state.Goal.PodName
+}
+
+func goalContainerName(state *ToolState) string {
+	if state == nil {
+		return ""
+	}
+	return state.Goal.ContainerName
 }
 
 func eventSeverity(reason, message string) string {

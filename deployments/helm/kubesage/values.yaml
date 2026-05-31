@@ -64,6 +64,9 @@ config:
     baseURL: https://api.deepseek.com
     apiKey: ""
     model: deepseek-chat
+  mcp:
+    enabled: false
+    servers: []
   loki:
     enabled: false
     baseURL: ""

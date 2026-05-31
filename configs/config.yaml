@@ -8,6 +8,11 @@ server:
 
 auth:
   mode: "bearer"
+  default_role: "operator"
+  viewer_tokens: []
+  operator_tokens: []
+  admin_tokens: []
+  allowed_namespaces: []
 
 mysql:
   dsn: ""
@@ -80,6 +85,18 @@ llm:
   retry_max_attempts: 2
   retry_initial_backoff_ms: 200
   retry_max_backoff_ms: 2000
+
+# MCP (Model Context Protocol) tools: connect to external MCP-compatible servers
+# to extend the agent's toolset (e.g., Grafana, PostgreSQL, custom tools).
+mcp:
+  enabled: false
+  servers: []
+  # Example:
+  # servers:
+  #   - name: "grafana"
+  #     command: "npx"
+  #     args: ["-y", "@grafana/mcp-server"]
+  #     timeout_seconds: 30
 
 loki:
   enabled: false

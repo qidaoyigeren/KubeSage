@@ -19,6 +19,7 @@ type Config struct {
 	Retention    RetentionConfig    `mapstructure:"retention"`
 	Prometheus   PrometheusConfig   `mapstructure:"prometheus"`
 	LLM          LLMConfig          `mapstructure:"llm"`
+	MCP          MCPConfig          `mapstructure:"mcp"`
 	Loki         LokiConfig         `mapstructure:"loki"`
 	Redis        RedisConfig        `mapstructure:"redis"`
 	OTel         OTelConfig         `mapstructure:"otel"`
@@ -38,7 +39,12 @@ type ServerConfig struct {
 }
 
 type AuthConfig struct {
-	Mode string `mapstructure:"mode"`
+	Mode              string   `mapstructure:"mode"`
+	DefaultRole       string   `mapstructure:"default_role"`
+	ViewerTokens      []string `mapstructure:"viewer_tokens"`
+	OperatorTokens    []string `mapstructure:"operator_tokens"`
+	AdminTokens       []string `mapstructure:"admin_tokens"`
+	AllowedNamespaces []string `mapstructure:"allowed_namespaces"`
 }
 
 type MySQLConfig struct {
@@ -118,6 +124,19 @@ type LLMConfig struct {
 	RetryMaxAttempts      int    `mapstructure:"retry_max_attempts"`
 	RetryInitialBackoffMS int    `mapstructure:"retry_initial_backoff_ms"`
 	RetryMaxBackoffMS     int    `mapstructure:"retry_max_backoff_ms"`
+}
+
+type MCPConfig struct {
+	Enabled bool               `mapstructure:"enabled"`
+	Servers []MCPServerConfig  `mapstructure:"servers"`
+}
+
+type MCPServerConfig struct {
+	Name    string `mapstructure:"name"`
+	Command string `mapstructure:"command"`
+	Args    []string `mapstructure:"args"`
+	Env     []string `mapstructure:"env"`
+	TimeoutSeconds int `mapstructure:"timeout_seconds"`
 }
 
 type LokiConfig struct {
@@ -275,6 +294,11 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("auth.mode must be bearer or kubernetes_tokenreview")
 	}
+	switch strings.ToLower(strings.TrimSpace(c.Auth.DefaultRole)) {
+	case "", "viewer", "operator", "admin":
+	default:
+		return fmt.Errorf("auth.default_role must be viewer, operator, or admin")
+	}
 	if c.Queue.Type != "" && !strings.EqualFold(c.Queue.Type, "redis_stream") {
 		return fmt.Errorf("queue.type must be empty or redis_stream")
 	}
@@ -324,6 +348,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.read_timeout_seconds", 15)
 	v.SetDefault("server.write_timeout_seconds", 30)
 	v.SetDefault("auth.mode", "bearer")
+	v.SetDefault("auth.default_role", "operator")
 	v.SetDefault("mysql.max_idle_conns", 10)
 	v.SetDefault("mysql.max_open_conns", 50)
 	v.SetDefault("mysql.conn_max_lifetime_seconds", 3600)
@@ -359,6 +384,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.retry_max_attempts", 2)
 	v.SetDefault("llm.retry_initial_backoff_ms", 200)
 	v.SetDefault("llm.retry_max_backoff_ms", 2000)
+	v.SetDefault("mcp.enabled", false)
 	v.SetDefault("loki.enabled", false)
 	v.SetDefault("loki.timeout_seconds", 10)
 	v.SetDefault("redis.enabled", false)

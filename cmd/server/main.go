@@ -23,6 +23,8 @@ import (
 	"kubesage/internal/repository"
 	"kubesage/internal/service"
 
+	"kubesage/internal/agent"
+
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
@@ -159,6 +161,14 @@ func main() {
 	if cfg.LLM.Enabled {
 		llmClient = llm.NewOpenAICompatibleClient(cfg.LLM)
 	}
+	mcpProvider, err := agent.NewMCPProvider(cfg.MCP)
+	if err != nil {
+		log.Warn("MCP provider init failed; agent tools will be limited to built-ins", zap.Error(err))
+		mcpProvider = nil
+	}
+	if mcpProvider != nil && mcpProvider.Count() > 0 {
+		log.Info("MCP provider initialized", zap.Int("tools", mcpProvider.Count()), zap.Strings("names", mcpProvider.ToolNames()))
+	}
 	var lokiClient *loki.Client
 	if cfg.Loki.Enabled {
 		lokiClient = loki.NewClient(cfg.Loki)
@@ -173,14 +183,16 @@ func main() {
 	}
 	prometheusClient := prometheus.NewClient(cfg.Prometheus)
 	operationsSvc := service.NewOperationsService(service.OperationsOptions{
-		FeedbackRepo:  feedbackRepo,
-		AuditRepo:     auditRepo,
-		DashboardRepo: dashboardRepo,
-		RunbookRepo:   runbookRepo,
-		RetentionRepo: retentionRepo,
-		AgentRepo:     agentRepo,
-		Indexer:       vectorIndexer,
-		RetentionDays: cfg.Retention.TaskDays,
+		FeedbackRepo:      feedbackRepo,
+		AuditRepo:         auditRepo,
+		DashboardRepo:     dashboardRepo,
+		RunbookRepo:       runbookRepo,
+		DeadLetterRepo:    deadLetterRepo,
+		RetentionRepo:     retentionRepo,
+		AgentRepo:         agentRepo,
+		Indexer:           vectorIndexer,
+		AllowedNamespaces: cfg.Auth.AllowedNamespaces,
+		RetentionDays:     cfg.Retention.TaskDays,
 	})
 	if err := operationsSvc.CleanupRetention(context.Background()); err != nil {
 		log.Warn("retention cleanup failed", zap.Error(err))
@@ -205,7 +217,9 @@ func main() {
 		RunbookRetriever: runbookRetriever,
 		RedisClient:      redisClient,
 		Notifier:         service.NewNotifier(cfg.Notification),
+		MCPProvider:      mcpProvider,
 	})
+	operationsSvc.SetDiagnosisStarter(diagnosisSvc)
 	if err := diagnosisSvc.StartQueueWorkers(appCtx); err != nil {
 		log.Fatal("start diagnosis queue worker failed", zap.Error(err))
 	}
@@ -219,6 +233,7 @@ func main() {
 		K8sClient:         k8sClient,
 		AuthToken:         cfg.Server.AuthToken,
 		AuthMode:          cfg.Auth.Mode,
+		Auth:              cfg.Auth,
 	})
 
 	server := &http.Server{
