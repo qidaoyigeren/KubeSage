@@ -1,0 +1,14 @@
+﻿apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-pending
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - name: pending
+    image: nginx
+    resources:
+      requests:
+        cpu: "100"
+        memory: "128Gi"

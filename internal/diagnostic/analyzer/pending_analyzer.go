@@ -35,6 +35,11 @@ func (a *PendingAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	if ctx.Pod == nil {
 		return false
 	}
+	for _, status := range append(ctx.Pod.Status.InitContainerStatuses, ctx.Pod.Status.ContainerStatuses...) {
+		if imagePullWaiting(status.State.Waiting) {
+			return false
+		}
+	}
 	if ctx.Pod.Status.Phase == corev1.PodPending {
 		return true
 	}

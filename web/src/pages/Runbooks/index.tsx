@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { Card, Table, Button, Modal, Form, Input, Select, Space, Tag, message, Popconfirm } from 'antd';
+import { Card, Table, Button, Modal, Form, Input, Select, Space, Tag, message } from 'antd';
 import { PlusOutlined, EditOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listRunbooks, createRunbook, updateRunbook } from '../../api/runbooks';
 import type { Runbook, RunbookRequest } from '../../api/runbooks';
+import { canAccessRole } from '../../api/auth';
+import { useCurrentUser } from '../../hooks/useCurrentUser';
 
 const faultTypes = [
   'OOMKilled',
@@ -21,6 +23,8 @@ const RunbooksPage = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRunbook, setEditingRunbook] = useState<Runbook | null>(null);
   const [form] = Form.useForm();
+  const { data: currentUser } = useCurrentUser();
+  const canEditRunbooks = canAccessRole(currentUser?.role, 'admin');
 
   const { data: runbooks, isLoading } = useQuery({
     queryKey: ['runbooks'],
@@ -123,11 +127,12 @@ const RunbooksPage = () => {
       title: 'Action',
       key: 'action',
       width: 100,
-      render: (_: unknown, record: Runbook) => (
-        <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-          Edit
-        </Button>
-      ),
+      render: (_: unknown, record: Runbook) =>
+        canEditRunbooks ? (
+          <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
+            Edit
+          </Button>
+        ) : null,
     },
   ];
 
@@ -141,9 +146,11 @@ const RunbooksPage = () => {
           </Space>
         }
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            New Runbook
-          </Button>
+          canEditRunbooks ? (
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+              New Runbook
+            </Button>
+          ) : null
         }
       >
         <Table

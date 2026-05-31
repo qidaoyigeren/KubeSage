@@ -90,6 +90,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	state := &ToolState{TaskID: opts.TaskID, Goal: opts.Goal}
 	planCtx, planSpan := observability.Tracer().Start(ctx, "agent.planner")
 	plan := r.planner.BuildInitialPlan(planCtx, opts.Goal, r.registry.Metadata())
+	span.AddEvent("agent.plan.completed", trace.WithAttributes(attribute.Int("agent.plan.steps", len(plan.Steps))))
 	planSpan.End()
 	recorder.record(planCtx, stepRecord{Stage: StagePlan, ToolName: plannerToolName(r.planner), Status: model.AgentStepStatusSuccess, Input: opts.Goal, Output: plan, Reason: plan.Summary})
 
@@ -126,21 +127,27 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 				status = model.AgentStepStatusFailed
 			}
 			toolStep := recorder.record(ctx, stepRecord{
-				Stage:    StageToolCall,
-				ToolName: step.ToolName,
-				Status:   status,
-				Input:    step.Input,
-				Output:   result,
-				Duration: time.Duration(result.DurationMS) * time.Millisecond,
-				Reason:   step.Reason,
+				Stage:              StageToolCall,
+				ToolName:           step.ToolName,
+				Status:             status,
+				Input:              step.Input,
+				Output:             result,
+				Duration:           time.Duration(result.DurationMS) * time.Millisecond,
+				Reason:             step.Reason,
+				ObservationSummary: result.Observation,
+				ParallelGroup:      step.ParallelGroup,
+				ToolLatencyMS:      result.DurationMS,
 			})
 			recorder.record(ctx, stepRecord{
-				ParentStepID: stepIDPtr(toolStep),
-				Stage:        StageObservation,
-				ToolName:     step.ToolName,
-				Status:       status,
-				Output:       map[string]interface{}{"observation": result.Observation, "error": result.Error},
-				Reason:       result.Observation,
+				ParentStepID:       stepIDPtr(toolStep),
+				Stage:              StageObservation,
+				ToolName:           step.ToolName,
+				Status:             status,
+				Output:             map[string]interface{}{"observation": result.Observation, "observation_data": result.ObservationData, "warnings": result.Warnings, "missing_evidence": result.MissingEvidence, "error": result.Error},
+				Reason:             result.Observation,
+				ObservationSummary: result.Observation,
+				ParallelGroup:      step.ParallelGroup,
+				ToolLatencyMS:      result.DurationMS,
 			})
 			stepsExecuted++
 			markStepComplete(&plan, step.ID)
@@ -153,6 +160,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		}
 		hypothesisCtx, hypothesisSpan := observability.Tracer().Start(ctx, "agent.hypothesis_update")
 		latestScores = r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, allEvidence)
+		span.AddEvent("agent.hypothesis.updated", trace.WithAttributes(attribute.Int("agent.hypothesis.count", len(latestScores))))
 		hypothesisSpan.End()
 		recorder.record(hypothesisCtx, stepRecord{
 			Stage:  StageReflection,
@@ -166,6 +174,10 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if rp, ok := r.planner.(ReflectivePlanner); ok {
 			reflection, reflectErr := rp.Reflect(ctx, plan, state, latestScores)
 			if reflectErr == nil {
+				span.AddEvent("agent.reflection.decision", trace.WithAttributes(
+					attribute.Bool("agent.reflection.should_continue", reflection.ShouldContinue),
+					attribute.Int("agent.reflection.new_steps", len(reflection.NewSteps)),
+				))
 				recorder.record(ctx, stepRecord{
 					Stage:  StageReflection,
 					Status: model.AgentStepStatusSuccess,
@@ -247,6 +259,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 
 	finalCtx, finalSpan := observability.Tracer().Start(ctx, "agent.hypothesis_update")
 	finalScores := r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, report.Evidences)
+	span.AddEvent("agent.hypothesis.finalized", trace.WithAttributes(attribute.Int("agent.hypothesis.count", len(finalScores))))
 	finalSpan.End()
 	hypothesisModels := r.hypotheses.ToModels(opts.TaskID, finalScores)
 	if err := r.store.CreateHypotheses(finalCtx, hypothesisModels); err != nil {
@@ -268,6 +281,11 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		Output: map[string]interface{}{"stop_reason": stopReason, "fault_type": report.FaultType},
 		Reason: "produced final agent report",
 	})
+	span.AddEvent("agent.runtime.completed", trace.WithAttributes(
+		attribute.String("agent.stop_reason", stopReason),
+		attribute.String("diagnosis.fault_type", report.FaultType),
+		attribute.Int("agent.steps_executed", stepsExecuted),
+	))
 
 	return &RunResult{
 		Report:           report,
@@ -307,7 +325,7 @@ func (r *Runtime) executePlanSteps(ctx context.Context, steps []*PlanStep, state
 					attribute.String("agent.parallel_group", step.ParallelGroup),
 				),
 			)
-			result := tool.Execute(toolCtx, step.Input, state)
+			result := executeToolWithDeadline(toolCtx, tool, step.Input, state)
 			if !result.Success {
 				toolSpan.RecordError(fmt.Errorf("%s", result.Error))
 				toolSpan.SetStatus(codes.Error, result.Error)
@@ -359,11 +377,11 @@ func (r *Runtime) executeTool(ctx context.Context, recorder *stepRecorder, name 
 	toolCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	spanName := "agent.tool"
-	if name == "remediation.generate_actions" || name == "remediation.dry_run_patch" {
+	if name == "remediation.generate_actions" || name == "remediation.dry_run" || name == "remediation.dry_run_patch" {
 		spanName = "agent.remediation_policy"
 	}
 	toolCtx, span := observability.Tracer().Start(toolCtx, spanName, trace.WithAttributes(attribute.String("agent.tool", name)))
-	result := tool.Execute(toolCtx, input, state)
+	result := executeToolWithDeadline(toolCtx, tool, input, state)
 	if !result.Success && result.Error != "" {
 		span.RecordError(fmt.Errorf("%s", result.Error))
 		span.SetStatus(codes.Error, result.Error)
@@ -375,23 +393,53 @@ func (r *Runtime) executeTool(ctx context.Context, recorder *stepRecorder, name 
 	}
 	observeToolMetrics(result)
 	toolStep := recorder.record(ctx, stepRecord{
-		Stage:    StageToolCall,
-		ToolName: name,
-		Status:   status,
-		Input:    input,
-		Output:   result,
-		Duration: time.Duration(result.DurationMS) * time.Millisecond,
-		Reason:   "executed agent tool",
+		Stage:              StageToolCall,
+		ToolName:           name,
+		Status:             status,
+		Input:              input,
+		Output:             result,
+		Duration:           time.Duration(result.DurationMS) * time.Millisecond,
+		Reason:             "executed agent tool",
+		ObservationSummary: result.Observation,
+		ToolLatencyMS:      result.DurationMS,
 	})
 	recorder.record(ctx, stepRecord{
-		ParentStepID: stepIDPtr(toolStep),
-		Stage:        StageObservation,
-		ToolName:     name,
-		Status:       status,
-		Output:       map[string]interface{}{"observation": result.Observation, "error": result.Error},
-		Reason:       result.Observation,
+		ParentStepID:       stepIDPtr(toolStep),
+		Stage:              StageObservation,
+		ToolName:           name,
+		Status:             status,
+		Output:             map[string]interface{}{"observation": result.Observation, "observation_data": result.ObservationData, "warnings": result.Warnings, "missing_evidence": result.MissingEvidence, "error": result.Error},
+		Reason:             result.Observation,
+		ObservationSummary: result.Observation,
+		ToolLatencyMS:      result.DurationMS,
 	})
 	return result
+}
+
+func executeToolWithDeadline(ctx context.Context, tool Tool, input map[string]interface{}, state *ToolState) ToolResult {
+	done := make(chan ToolResult, 1)
+	start := time.Now()
+	go func() {
+		done <- tool.Execute(ctx, input, state)
+	}()
+	select {
+	case result := <-done:
+		return result
+	case <-ctx.Done():
+		meta := tool.Metadata()
+		errText := "tool deadline exceeded"
+		if err := ctx.Err(); err != nil {
+			errText = err.Error()
+		}
+		return ToolResult{
+			ToolName:        meta.Name,
+			Success:         false,
+			Observation:     "tool timed out before producing an observation",
+			Error:           errText,
+			MissingEvidence: []string{meta.Name},
+			DurationMS:      time.Since(start).Milliseconds(),
+		}
+	}
 }
 
 func hasConfirmed(scores []HypothesisScore) bool {

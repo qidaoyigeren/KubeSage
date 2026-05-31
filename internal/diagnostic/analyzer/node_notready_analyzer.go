@@ -129,5 +129,12 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 		ConfidenceScore:  clampConfidence(confidence),
 		RootCauseSummary: summary,
 		Evidences:        evidence,
+		ImpactAnalysis:   "Pods on the NotReady node may stop receiving traffic or fail to reschedule until node health recovers.",
+		SuggestedActions: []string{
+			"Check node Ready condition, kubelet status, container runtime, and node network connectivity.",
+			"Inspect node pressure conditions and recent node events before moving workloads.",
+		},
+		RiskLevel:        "high",
+		NeedHumanConfirm: true,
 	}, nil
 }

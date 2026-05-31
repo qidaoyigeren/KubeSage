@@ -1,0 +1,36 @@
+{
+  "namespace": "eval",
+  "pod_name": "imagepull-tag-not-found",
+  "pod": {
+    "metadata": {"name": "imagepull-tag-not-found", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.example.com/app:missing",
+          "imagePullPolicy": "Always"
+        }
+      ]
+    },
+    "status": {
+      "phase": "Pending",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "restartCount": 0,
+          "state": {"waiting": {"reason": "ImagePullBackOff", "message": "Back-off pulling image registry.example.com/app:missing"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "imagepull-tag-not-found.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "Failed",
+      "message": "Failed to pull image registry.example.com/app:missing: manifest unknown: not found",
+      "lastTimestamp": "2026-05-31T11:00:00Z"
+    }
+  ],
+  "metrics_enabled": false
+}

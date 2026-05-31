@@ -1,0 +1,22 @@
+id: pending
+manifest: manifests/pending.yaml
+target:
+  pod_name: pending
+  container_name: app
+  wait_condition: phase=Pending
+  timeout_seconds: 120
+expected_fault_type: PodPending
+expected_root_cause_keywords:
+  - pending
+  - scheduling
+required_evidence:
+  - scheduling
+  - requests
+confidence_range:
+  min: 0.70
+  max: 1.0
+expected_actions:
+  - requests
+max_duration_seconds: 180
+setup: []
+teardown: []

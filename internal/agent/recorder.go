@@ -9,14 +9,17 @@ import (
 )
 
 type stepRecord struct {
-	ParentStepID *uint
-	Stage        string
-	ToolName     string
-	Status       string
-	Input        interface{}
-	Output       interface{}
-	Duration     time.Duration
-	Reason       string
+	ParentStepID       *uint
+	Stage              string
+	ToolName           string
+	Status             string
+	Input              interface{}
+	Output             interface{}
+	Duration           time.Duration
+	Reason             string
+	ObservationSummary string
+	ParallelGroup      string
+	ToolLatencyMS      int64
 }
 
 type stepRecorder struct {
@@ -36,18 +39,21 @@ func (r *stepRecorder) record(ctx context.Context, record stepRecord) *model.Age
 	}
 	r.nextIndex++
 	step := &model.AgentStep{
-		TaskID:           r.taskID,
-		ParentStepID:     record.ParentStepID,
-		TraceID:          r.traceID,
-		StepIndex:        r.nextIndex,
-		Stage:            record.Stage,
-		ToolName:         record.ToolName,
-		InputJSON:        jsonText(record.Input),
-		OutputJSON:       jsonText(record.Output),
-		Status:           record.Status,
-		DurationMS:       record.Duration.Milliseconds(),
-		ReasoningSummary: record.Reason,
-		CreatedAt:        time.Now(),
+		TaskID:             r.taskID,
+		ParentStepID:       record.ParentStepID,
+		TraceID:            r.traceID,
+		StepIndex:          r.nextIndex,
+		Stage:              record.Stage,
+		ToolName:           record.ToolName,
+		InputJSON:          jsonText(record.Input),
+		OutputJSON:         jsonText(record.Output),
+		Status:             record.Status,
+		DurationMS:         record.Duration.Milliseconds(),
+		ReasoningSummary:   record.Reason,
+		ObservationSummary: record.ObservationSummary,
+		ParallelGroup:      record.ParallelGroup,
+		ToolLatencyMS:      record.ToolLatencyMS,
+		CreatedAt:          time.Now(),
 	}
 	if r.store != nil {
 		_ = r.store.CreateStep(ctx, step)

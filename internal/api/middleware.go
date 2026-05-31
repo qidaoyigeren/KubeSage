@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"kubesage/internal/config"
 	"kubesage/internal/k8s"
 
 	"github.com/gin-gonic/gin"
@@ -21,17 +22,22 @@ const (
 const (
 	RoleViewer   = "viewer"
 	RoleOperator = "operator"
+	RoleAdmin    = "admin"
 )
 
-// bearerAuth protects API routes when server.auth_token is configured.
-// In bearer mode, all authenticated users are granted operator role.
-func bearerAuth(token string) gin.HandlerFunc {
+// bearerAuth protects API routes when bearer tokens are configured.
+// In legacy bearer mode, the single server token is granted operator role.
+func bearerAuth(token string, authCfgs ...config.AuthConfig) gin.HandlerFunc {
 	token = strings.TrimSpace(token)
+	authCfg := config.AuthConfig{DefaultRole: RoleOperator}
+	if len(authCfgs) > 0 {
+		authCfg = authCfgs[0]
+	}
+	hasConfiguredTokens := token != "" || hasRoleTokens(authCfg)
 	return func(c *gin.Context) {
-		if token == "" {
-			// No token configured — open access, grant operator role.
+		if !hasConfiguredTokens {
 			c.Set(contextActorKey, "anonymous")
-			SetActorRole(c, RoleOperator)
+			SetActorRole(c, defaultRole(authCfg))
 			c.Next()
 			return
 		}
@@ -41,27 +47,31 @@ func bearerAuth(token string) gin.HandlerFunc {
 			return
 		}
 		got := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		if got != token {
+		if got != token && !containsToken(authCfg.AdminTokens, got) && !containsToken(authCfg.OperatorTokens, got) && !containsToken(authCfg.ViewerTokens, got) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 401, "message": "unauthorized"})
 			return
 		}
 		c.Set(contextActorKey, "bearer-user")
 		c.Set(contextTokenKey, got)
-		SetActorRole(c, RoleOperator)
+		SetActorRole(c, roleForBearerToken(got, authCfg, RoleOperator))
 		c.Next()
 	}
 }
 
-func authMiddleware(mode, token string, client *k8s.Client) gin.HandlerFunc {
+func authMiddleware(mode, token string, client *k8s.Client, authCfgs ...config.AuthConfig) gin.HandlerFunc {
+	authCfg := config.AuthConfig{Mode: mode, DefaultRole: RoleOperator}
+	if len(authCfgs) > 0 {
+		authCfg = authCfgs[0]
+	}
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" || mode == "bearer" {
-		return bearerAuth(token)
+		return bearerAuth(token, authCfg)
 	}
 	if mode != "kubernetes_tokenreview" {
-		return bearerAuth(token)
+		return bearerAuth(token, authCfg)
 	}
 	if client == nil {
-		return bearerAuth(token)
+		return bearerAuth(token, authCfg)
 	}
 	return func(c *gin.Context) {
 		auth := strings.TrimSpace(c.GetHeader("Authorization"))
@@ -79,9 +89,7 @@ func authMiddleware(mode, token string, client *k8s.Client) gin.HandlerFunc {
 		}
 		c.Set(contextActorKey, user.Username)
 		c.Set(contextTokenKey, got)
-		// In kubernetes_tokenreview mode, grant operator role by default.
-		// Fine-grained RBAC is enforced at the handler level via AuthorizePodDiagnosis.
-		SetActorRole(c, RoleOperator)
+		SetActorRole(c, defaultRole(authCfg))
 		c.Next()
 	}
 }
@@ -114,14 +122,21 @@ func BearerToken(c *gin.Context) string {
 	return ""
 }
 
-// RequireOperator is a middleware that restricts access to operator-level users.
-// In bearer mode, all authenticated users are treated as operators.
-// In kubernetes_tokenreview mode, the role is determined by RBAC checks.
+// RequireOperator restricts access to operator-level users.
 func RequireOperator() gin.HandlerFunc {
+	return RequireRole(RoleOperator)
+}
+
+// RequireAdmin restricts access to admin-level users.
+func RequireAdmin() gin.HandlerFunc {
+	return RequireRole(RoleAdmin)
+}
+
+func RequireRole(required string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role := ActorRole(c)
-		if role != RoleOperator {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 403, "message": "operator role required"})
+		if roleRank(role) < roleRank(required) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 403, "message": required + " role required"})
 			return
 		}
 		c.Next()
@@ -146,6 +161,57 @@ func SetActorRole(c *gin.Context, role string) {
 	c.Set(contextActorRoleKey, role)
 }
 
+func roleForBearerToken(token string, cfg config.AuthConfig, fallback string) string {
+	switch {
+	case containsToken(cfg.AdminTokens, token):
+		return RoleAdmin
+	case containsToken(cfg.OperatorTokens, token):
+		return RoleOperator
+	case containsToken(cfg.ViewerTokens, token):
+		return RoleViewer
+	default:
+		if fallback != "" {
+			return fallback
+		}
+		return defaultRole(cfg)
+	}
+}
+
+func defaultRole(cfg config.AuthConfig) string {
+	switch strings.ToLower(strings.TrimSpace(cfg.DefaultRole)) {
+	case RoleViewer:
+		return RoleViewer
+	case RoleAdmin:
+		return RoleAdmin
+	default:
+		return RoleOperator
+	}
+}
+
+func containsToken(tokens []string, token string) bool {
+	for _, candidate := range tokens {
+		if strings.TrimSpace(candidate) != "" && strings.TrimSpace(candidate) == token {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRoleTokens(cfg config.AuthConfig) bool {
+	return len(cfg.AdminTokens) > 0 || len(cfg.OperatorTokens) > 0 || len(cfg.ViewerTokens) > 0
+}
+
+func roleRank(role string) int {
+	switch role {
+	case RoleAdmin:
+		return 3
+	case RoleOperator:
+		return 2
+	default:
+		return 1
+	}
+}
+
 // AuditRecorder is a minimal interface for recording audit events.
 type AuditRecorder interface {
 	RecordAudit(ctx context.Context, actor, action, namespace, resourceKind, resourceName string, taskID *uint, summary string, metadata interface{}) error
@@ -160,7 +226,6 @@ func auditMiddleware(recorder AuditRecorder, log *zap.Logger) gin.HandlerFunc {
 		actor := Actor(c)
 		status := c.Writer.Status()
 
-		// Skip health/metrics endpoints.
 		path := c.Request.URL.Path
 		if strings.HasPrefix(path, "/health") || strings.HasPrefix(path, "/readyz") ||
 			strings.HasPrefix(path, "/metrics") {

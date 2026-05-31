@@ -1,0 +1,22 @@
+id: oomkilled
+manifest: manifests/oomkilled.yaml
+target:
+  pod_name: oomkilled
+  container_name: app
+  wait_condition: last_termination_reason=OOMKilled
+  timeout_seconds: 120
+expected_fault_type: OOMKilled
+expected_root_cause_keywords:
+  - oomkilled
+  - memory
+required_evidence:
+  - oom
+  - memory
+confidence_range:
+  min: 0.72
+  max: 1.0
+expected_actions:
+  - memory
+max_duration_seconds: 180
+setup: []
+teardown: []

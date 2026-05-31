@@ -74,15 +74,53 @@ var (
 		},
 		[]string{"operation", "reason"},
 	)
+	llmGroundingDecisionTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_grounding_decision_total",
+			Help: "Total grounded LLM validation decisions.",
+		},
+		[]string{"decision"},
+	)
+	llmGroundingRisk = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "llm_grounding_hallucination_risk",
+			Help:    "Hallucination risk distribution for grounded LLM summaries.",
+			Buckets: []float64{0, 0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1},
+		},
+	)
+	llmGroundingUngroundedClaims = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "llm_grounding_ungrounded_claims",
+			Help:    "Number of ungrounded or invalid LLM claims per grounded summary.",
+			Buckets: prometheus.LinearBuckets(0, 1, 8),
+		},
+	)
+	llmGroundingFallbackTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llm_grounding_fallback_total",
+			Help: "Total grounded LLM fallbacks to the rule-only report.",
+		},
+		[]string{"reason"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(diagnosisTotal, diagnosisDuration, llmCallTotal, analyzerMatchTotal, agentStepTotal, agentToolDuration, agentHypothesisUpdatesTotal, remediationActionTotal, llmPlannerFallbackTotal)
+	prometheus.MustRegister(diagnosisTotal, diagnosisDuration, llmCallTotal, analyzerMatchTotal, agentStepTotal, agentToolDuration, agentHypothesisUpdatesTotal, remediationActionTotal, llmPlannerFallbackTotal, llmGroundingDecisionTotal, llmGroundingRisk, llmGroundingUngroundedClaims, llmGroundingFallbackTotal)
 }
 
 // IncLLMPlannerFallback records an LLM planner fallback event.
 func IncLLMPlannerFallback(operation, reason string) {
 	llmPlannerFallbackTotal.WithLabelValues(operation, reason).Inc()
+}
+
+func ObserveLLMGrounding(decision string, hallucinationRisk float64, ungroundedClaims int) {
+	llmGroundingDecisionTotal.WithLabelValues(decision).Inc()
+	llmGroundingRisk.Observe(hallucinationRisk)
+	llmGroundingUngroundedClaims.Observe(float64(ungroundedClaims))
+}
+
+func IncLLMGroundingFallback(reason string) {
+	llmGroundingFallbackTotal.WithLabelValues(reason).Inc()
 }
 
 // IncDiagnosisTotal records one completed diagnosis task.

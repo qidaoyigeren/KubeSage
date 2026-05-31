@@ -1,0 +1,47 @@
+{
+  "namespace": "eval",
+  "pod_name": "oom-java-heap",
+  "pod": {
+    "metadata": {"name": "oom-java-heap", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "api",
+          "image": "example.com/java-api:v4",
+          "resources": {
+            "requests": {"memory": "256Mi"},
+            "limits": {"memory": "512Mi"}
+          }
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "api",
+          "restartCount": 3,
+          "state": {"running": {"startedAt": "2026-05-31T01:01:00Z"}},
+          "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137, "finishedAt": "2026-05-31T01:00:00Z"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "oom-java-heap.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "OOMKilled",
+      "message": "Container api exited with OOMKilled",
+      "lastTimestamp": "2026-05-31T01:00:01Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "api",
+      "Previous": "java.lang.OutOfMemoryError: Java heap space",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": true
+}

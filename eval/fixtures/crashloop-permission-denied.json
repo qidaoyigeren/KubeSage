@@ -1,0 +1,44 @@
+{
+  "namespace": "eval",
+  "pod_name": "crashloop-permission-denied",
+  "pod": {
+    "metadata": {"name": "crashloop-permission-denied", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "job",
+          "image": "example.com/job:v1",
+          "command": ["/app/run.sh"]
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "job",
+          "restartCount": 3,
+          "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off restarting failed container"}},
+          "lastState": {"terminated": {"reason": "Error", "exitCode": 126, "finishedAt": "2026-05-31T06:00:00Z"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "crashloop-permission-denied.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container job",
+      "lastTimestamp": "2026-05-31T06:00:01Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "job",
+      "Previous": "permission denied: /app/run.sh",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": false
+}

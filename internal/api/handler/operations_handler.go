@@ -20,6 +20,8 @@ type OperationsReader interface {
 	UpdateRunbook(ctx context.Context, id uint, req service.RunbookRequest, actor string) (*model.Runbook, error)
 	ListRunbooks(ctx context.Context) ([]model.Runbook, error)
 	ListAuditLogs(ctx context.Context, page, pageSize int) ([]model.AuditLog, int64, error)
+	ListDeadLetters(ctx context.Context, page, pageSize int) ([]model.DiagnosisQueueDeadLetter, int64, error)
+	RetryDeadLetter(ctx context.Context, id uint, actor string) (*model.DiagnosisTask, error)
 	ListPendingApprovals(ctx context.Context) ([]model.RemediationExecution, error)
 	ApproveRemediation(ctx context.Context, executionID uint, actor string) error
 	RejectRemediation(ctx context.Context, executionID uint, actor, reason string) error
@@ -129,6 +131,38 @@ func (h *OperationsHandler) ListAuditLogs(c *gin.Context) {
 		"page":      page,
 		"page_size": pageSize,
 	}})
+}
+
+func (h *OperationsHandler) ListDeadLetters(c *gin.Context) {
+	page := parsePositiveInt(c.DefaultQuery("page", "1"), 1)
+	pageSize := parsePositiveInt(c.DefaultQuery("page_size", "20"), 20)
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	items, total, err := h.service.ListDeadLetters(c.Request.Context(), page, pageSize)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": gin.H{
+		"items":     items,
+		"total":     total,
+		"page":      page,
+		"page_size": pageSize,
+	}})
+}
+
+func (h *OperationsHandler) RetryDeadLetter(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	task, err := h.service.RetryDeadLetter(c.Request.Context(), id, actorName(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "dead letter retry scheduled", "data": task})
 }
 
 func (h *OperationsHandler) ListPendingApprovals(c *gin.Context) {

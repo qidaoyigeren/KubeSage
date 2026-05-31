@@ -135,6 +135,29 @@ func TestRuntimeCriticalToolFailureFailsTask(t *testing.T) {
 	}
 }
 
+func TestRuntimeToolDeadlineDoesNotHang(t *testing.T) {
+	store := &memoryStore{}
+	registry := NewToolRegistry()
+	if err := registry.Register(blockingTool{}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(RuntimeDeps{Store: store, Registry: registry, Analyzer: fakeAnalyzer{report: baseReport("OOMKilled")}, Policy: NewRemediationPolicy(true)})
+	start := time.Now()
+	result, err := runtime.Run(context.Background(), RuntimeOptions{TaskID: 1, MaxSteps: 1, ToolTimeout: 20 * time.Millisecond, Goal: Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled"}})
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("runtime did not respect tool deadline")
+	}
+	if err == nil {
+		t.Fatalf("expected critical timeout error")
+	}
+	if result == nil || result.StopReason != StopReasonCriticalToolFailed {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if !hasFailedTool(store.steps, "k8s.get_pod") {
+		t.Fatalf("expected failed timeout step")
+	}
+}
+
 func TestRuntimeRecoversPanic(t *testing.T) {
 	_, _, err := runRuntimeForTest(t, Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled"}, fakeRetriever{}, oomContext(), fakeAnalyzer{report: baseReport("OOMKilled"), panic: true}, 12)
 	if err == nil || !strings.Contains(err.Error(), "panic") {
@@ -262,6 +285,19 @@ func (confirmedTool) Execute(ctx context.Context, input map[string]interface{}, 
 			Timestamp:  time.Now(),
 		}},
 	}
+}
+
+type blockingTool struct{}
+
+func (blockingTool) Metadata() ToolMetadata {
+	return ToolMetadata{Name: "k8s.get_pod", Description: "blocking tool", RiskLevel: "low", ReadOnly: true, Critical: true}
+}
+
+func (blockingTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+	_ = ctx
+	_ = input
+	_ = state
+	select {}
 }
 
 func hasStepStage(steps []model.AgentStep, stage string) bool {

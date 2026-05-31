@@ -1,0 +1,44 @@
+{
+  "namespace": "eval",
+  "pod_name": "probe-readiness-404",
+  "pod": {
+    "metadata": {"name": "probe-readiness-404", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "web",
+          "image": "example.com/web:v1",
+          "readinessProbe": {
+            "httpGet": {"path": "/healthz", "port": 8080, "scheme": "HTTP"},
+            "initialDelaySeconds": 1,
+            "timeoutSeconds": 1,
+            "failureThreshold": 3
+          }
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {"name": "web", "restartCount": 0, "state": {"running": {"startedAt": "2026-05-31T13:00:00Z"}}}
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "probe-readiness-404.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "Unhealthy",
+      "message": "Readiness probe failed: HTTP probe failed with statuscode: 404",
+      "lastTimestamp": "2026-05-31T13:00:30Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "web",
+      "Current": "GET /healthz returned 404 health route not found",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": false
+}

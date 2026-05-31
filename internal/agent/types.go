@@ -154,6 +154,9 @@ type ToolResult struct {
 	ToolName        string                      `json:"tool_name"`
 	Success         bool                        `json:"success"`
 	Observation     string                      `json:"observation"`
+	ObservationData interface{}                 `json:"observation_data,omitempty"`
+	Warnings        []string                    `json:"warnings,omitempty"`
+	MissingEvidence []string                    `json:"missing_evidence,omitempty"`
 	EvidenceRecords []diagnostic.EvidenceRecord `json:"evidence_records,omitempty"`
 	Error           string                      `json:"error,omitempty"`
 	DurationMS      int64                       `json:"duration_ms"`
@@ -199,6 +202,9 @@ type ReportSnapshot struct {
 	AgentExecutionSummary string                         `json:"agent_execution_summary"`
 	Hypotheses            []model.Hypothesis             `json:"hypotheses"`
 	EvidenceChain         []EvidenceRef                  `json:"evidence_chain"`
+	RootCauseEvidenceRefs []string                       `json:"root_cause_evidence_refs"`
+	ConfidenceBreakdown   []ConfidenceComponent          `json:"confidence_breakdown"`
+	MissingEvidence       []string                       `json:"missing_evidence"`
 	RunbookGuidance       []RunbookHit                   `json:"runbook_guidance"`
 	LLMEnhancedSummary    interface{}                    `json:"llm_enhanced_summary,omitempty"`
 	RemediationActions    []diagnostic.RemediationAction `json:"remediation_actions"`
@@ -213,4 +219,12 @@ type EvidenceRef struct {
 	SourceType string `json:"source_type"`
 	Title      string `json:"title"`
 	Severity   string `json:"severity"`
+}
+
+type ConfidenceComponent struct {
+	Source       string   `json:"source"`
+	Weight       float64  `json:"weight"`
+	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+	Missing      bool     `json:"missing"`
+	Reason       string   `json:"reason"`
 }

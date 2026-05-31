@@ -33,21 +33,31 @@ type OperationsService struct {
 	audit         *repository.AuditRepository
 	dashboard     *repository.DashboardRepository
 	runbooks      *repository.RunbookRepository
+	deadLetters   *repository.DeadLetterRepository
 	retention     *repository.RetentionRepository
 	agentRepo     *repository.AgentRepository
+	diagnosis     DiagnosisStarter
 	indexer       rag.Indexer
+	allowedNS     []string
 	retentionDays int
 }
 
+type DiagnosisStarter interface {
+	StartPodDiagnosis(ctx context.Context, req PodDiagnosisRequest) (*model.DiagnosisTask, error)
+}
+
 type OperationsOptions struct {
-	FeedbackRepo  *repository.FeedbackRepository
-	AuditRepo     *repository.AuditRepository
-	DashboardRepo *repository.DashboardRepository
-	RunbookRepo   *repository.RunbookRepository
-	RetentionRepo *repository.RetentionRepository
-	AgentRepo     *repository.AgentRepository
-	Indexer       rag.Indexer
-	RetentionDays int
+	FeedbackRepo      *repository.FeedbackRepository
+	AuditRepo         *repository.AuditRepository
+	DashboardRepo     *repository.DashboardRepository
+	RunbookRepo       *repository.RunbookRepository
+	DeadLetterRepo    *repository.DeadLetterRepository
+	RetentionRepo     *repository.RetentionRepository
+	AgentRepo         *repository.AgentRepository
+	Diagnosis         DiagnosisStarter
+	Indexer           rag.Indexer
+	AllowedNamespaces []string
+	RetentionDays     int
 }
 
 func NewOperationsService(opts OperationsOptions) *OperationsService {
@@ -56,10 +66,19 @@ func NewOperationsService(opts OperationsOptions) *OperationsService {
 		audit:         opts.AuditRepo,
 		dashboard:     opts.DashboardRepo,
 		runbooks:      opts.RunbookRepo,
+		deadLetters:   opts.DeadLetterRepo,
 		retention:     opts.RetentionRepo,
 		agentRepo:     opts.AgentRepo,
+		diagnosis:     opts.Diagnosis,
 		indexer:       opts.Indexer,
+		allowedNS:     opts.AllowedNamespaces,
 		retentionDays: opts.RetentionDays,
+	}
+}
+
+func (s *OperationsService) SetDiagnosisStarter(starter DiagnosisStarter) {
+	if s != nil {
+		s.diagnosis = starter
 	}
 }
 
@@ -166,6 +185,46 @@ func (s *OperationsService) ListAuditLogs(ctx context.Context, page, pageSize in
 		return nil, 0, fmt.Errorf("audit service is not configured")
 	}
 	return s.audit.List(ctx, page, pageSize)
+}
+
+// ListDeadLetters returns paginated failed queue messages.
+func (s *OperationsService) ListDeadLetters(ctx context.Context, page, pageSize int) ([]model.DiagnosisQueueDeadLetter, int64, error) {
+	if s == nil || s.deadLetters == nil {
+		return nil, 0, fmt.Errorf("dead letter service is not configured")
+	}
+	return s.deadLetters.List(ctx, page, pageSize)
+}
+
+// RetryDeadLetter starts a fresh diagnosis from the stored dead-letter payload.
+func (s *OperationsService) RetryDeadLetter(ctx context.Context, id uint, actor string) (*model.DiagnosisTask, error) {
+	if s == nil || s.deadLetters == nil || s.diagnosis == nil {
+		return nil, fmt.Errorf("dead letter retry is not configured")
+	}
+	entry, err := s.deadLetters.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	var payload queuedDiagnosis
+	if err := json.Unmarshal([]byte(entry.PayloadJSON), &payload); err != nil {
+		return nil, fmt.Errorf("decode dead letter payload: %w", err)
+	}
+	if payload.Request.Namespace == "" || payload.Request.PodName == "" {
+		return nil, fmt.Errorf("dead letter payload is missing diagnosis target")
+	}
+	if !namespaceAllowed(s.allowedNS, payload.Request.Namespace) {
+		return nil, fmt.Errorf("namespace %s is not allowed by auth.allowed_namespaces", payload.Request.Namespace)
+	}
+	task, err := s.diagnosis.StartPodDiagnosis(ctx, payload.Request)
+	if err != nil {
+		return nil, err
+	}
+	_ = s.RecordAudit(ctx, actor, "dead_letter.retry", payload.Request.Namespace, "diagnosis_queue_dead_letter", fmt.Sprintf("%d", id), &task.ID, "retry scheduled", map[string]interface{}{
+		"source_task_id": entry.TaskID,
+		"new_task_id":    task.ID,
+		"message_id":     entry.MessageID,
+		"attempts":       entry.Attempts,
+	})
+	return task, nil
 }
 
 // ListPendingApprovals returns remediation executions pending approval.

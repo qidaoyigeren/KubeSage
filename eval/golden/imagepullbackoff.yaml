@@ -1,0 +1,22 @@
+id: imagepullbackoff
+manifest: manifests/imagepullbackoff.yaml
+target:
+  pod_name: imagepullbackoff
+  container_name: app
+  wait_condition: waiting_reason=ImagePullBackOff
+  timeout_seconds: 120
+expected_fault_type: ImagePullBackOff
+expected_root_cause_keywords:
+  - image
+  - pull
+required_evidence:
+  - image
+  - pull
+confidence_range:
+  min: 0.70
+  max: 1.0
+expected_actions:
+  - registry
+max_duration_seconds: 180
+setup: []
+teardown: []

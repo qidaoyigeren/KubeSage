@@ -1,0 +1,43 @@
+{
+  "namespace": "eval",
+  "pod_name": "crashloop-panic",
+  "pod": {
+    "metadata": {"name": "crashloop-panic", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "example.com/app:panic"
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "restartCount": 7,
+          "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off restarting failed container"}},
+          "lastState": {"terminated": {"reason": "Error", "exitCode": 2, "finishedAt": "2026-05-31T07:00:00Z"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "crashloop-panic.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container app",
+      "lastTimestamp": "2026-05-31T07:00:01Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "app",
+      "Previous": "panic: nil pointer dereference\nfatal startup failure",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": false
+}

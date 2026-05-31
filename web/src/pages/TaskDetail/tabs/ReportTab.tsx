@@ -1,4 +1,4 @@
-import { Card, Descriptions, Typography, Alert, Space, Divider, List, Tag, Button, message, Modal, Form, Input, Select } from 'antd';
+import { Card, Descriptions, Typography, Alert, Space, Divider, List, Tag, Button, message, Modal, Form, Input, Select, Progress } from 'antd';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 import {
@@ -150,6 +150,82 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       {snapshot?.stop_reason && (
         <Card className="report-section-card" title="Agent Stop Reason" bordered={false}>
           <Tag color="blue" style={{ fontSize: 13, padding: '2px 12px' }}>{snapshot.stop_reason}</Tag>
+        </Card>
+      )}
+
+      {snapshot?.root_cause_evidence_refs && snapshot.root_cause_evidence_refs.length > 0 && (
+        <Card className="report-section-card" title="Root Cause Evidence" bordered={false}>
+          <Space size={[6, 6]} wrap>
+            {snapshot.root_cause_evidence_refs.map((ref) => (
+              <Tag key={ref} color="red" style={{ borderRadius: 4 }}>{ref}</Tag>
+            ))}
+          </Space>
+        </Card>
+      )}
+
+      {snapshot?.confidence_breakdown && snapshot.confidence_breakdown.length > 0 && (
+        <Card className="report-section-card" title="Confidence Breakdown" bordered={false}>
+          <Space direction="vertical" size="small" style={{ width: '100%' }}>
+            {snapshot.confidence_breakdown.map((item) => (
+              <div
+                key={item.source}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '140px 140px 1fr',
+                  gap: 12,
+                  alignItems: 'center',
+                  padding: '8px 0',
+                  borderBottom: '1px solid #f0f0f0',
+                }}
+              >
+                <Space>
+                  <Text strong>{item.source}</Text>
+                  {item.missing && <Tag color="default">missing</Tag>}
+                </Space>
+                <Progress
+                  percent={Math.round((item.weight || 0) * 100)}
+                  size="small"
+                  status={item.missing ? 'normal' : 'active'}
+                  showInfo
+                />
+                <Space size={[4, 4]} wrap>
+                  {(item.evidence_refs || []).map((ref) => (
+                    <Tag key={ref} color="geekblue" style={{ borderRadius: 4 }}>{ref}</Tag>
+                  ))}
+                  <Text type="secondary" style={{ fontSize: 12 }}>{item.reason}</Text>
+                </Space>
+              </div>
+            ))}
+          </Space>
+        </Card>
+      )}
+
+      {snapshot?.missing_evidence && snapshot.missing_evidence.length > 0 && (
+        <Card className="report-section-card" title="Missing Evidence" bordered={false}>
+          <Space size={[6, 6]} wrap>
+            {snapshot.missing_evidence.map((item) => (
+              <Tag key={item} color="orange" style={{ borderRadius: 4 }}>{item}</Tag>
+            ))}
+          </Space>
+        </Card>
+      )}
+
+      {snapshot?.evidence_chain && snapshot.evidence_chain.length > 0 && (
+        <Card className="report-section-card" title="Evidence Chain" bordered={false}>
+          <List
+            size="small"
+            dataSource={snapshot.evidence_chain}
+            renderItem={(item) => (
+              <List.Item>
+                <Space size="small" wrap>
+                  <Tag color="blue" style={{ borderRadius: 4 }}>{item.ref}</Tag>
+                  <Tag style={{ borderRadius: 4 }}>{item.source_type}</Tag>
+                  <RiskLevelTag level={item.severity === 'critical' ? 'high' : item.severity === 'warning' ? 'medium' : 'low'} />
+                  <Text>{item.title}</Text>
+                </Space>
+              </List.Item>
+            )}
+          />
         </Card>
       )}
 

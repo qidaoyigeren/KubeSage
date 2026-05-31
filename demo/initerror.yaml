@@ -1,0 +1,14 @@
+﻿apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-initerror
+  namespace: default
+spec:
+  restartPolicy: Never
+  initContainers:
+  - name: fail
+    image: busybox
+    command: ["sh", "-c", "exit 1"]
+  containers:
+  - name: app
+    image: nginx

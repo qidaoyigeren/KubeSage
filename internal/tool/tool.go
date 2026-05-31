@@ -1,3 +1,7 @@
+// Package tool contains the deprecated pre-runtime tool sketch.
+//
+// The production Agent tool layer now lives in internal/agent.ToolRegistry so
+// every tool has structured observations, evidence, timeouts, and audit steps.
 package tool
 
 import "context"

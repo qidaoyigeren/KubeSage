@@ -42,7 +42,7 @@ func verificationForAction(action diagnostic.RemediationAction) VerificationPlan
 		plan.SuccessCondition = "Readiness/liveness probe failures decrease or disappear."
 	case "check_configmap_secret":
 		plan.WhatToCheck = "Check CrashLoopBackOff events and previous logs after configuration correction."
-		plan.ToolToUse = "k8s.get_previous_logs"
+		plan.ToolToUse = "k8s.get_logs"
 		plan.SuccessCondition = "CrashLoopBackOff stops and startup logs no longer show config errors."
 	case "check_node_taint_toleration":
 		plan.WhatToCheck = "Check FailedScheduling events after node selector, affinity, or toleration review."
@@ -50,7 +50,7 @@ func verificationForAction(action diagnostic.RemediationAction) VerificationPlan
 		plan.SuccessCondition = "Scheduler no longer emits the original constraint failure."
 	case "view_previous_logs":
 		plan.WhatToCheck = "Confirm the suspected log signature matches the root-cause hypothesis."
-		plan.ToolToUse = "k8s.get_previous_logs"
+		plan.ToolToUse = "k8s.get_logs"
 		plan.SuccessCondition = "Observed log evidence supports or rejects the active hypothesis."
 	}
 	return plan

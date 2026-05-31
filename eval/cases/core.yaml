@@ -1,0 +1,241 @@
+cases:
+  - id: oom-limit-too-low
+    name: OOMKilled from low memory limit
+    fixture: ../fixtures/oom-limit-too-low.json
+    tags: [oomkilled, memory]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: OOMKilled
+      root_cause: OOMKilled exitCode 137 memory limit out of memory
+      key_evidences:
+        - reason=OOMKilled
+        - exitCode=137
+        - memoryLimit=128Mi
+        - out of memory
+      should_not_contain: [CrashLoopBackOff, ImagePullBackOff, NodeNotReady, DNS]
+      acceptable_remediations: [memory limit, previous logs]
+      confidence_min: 0.82
+
+  - id: oom-java-heap
+    name: OOMKilled from Java heap pressure
+    fixture: ../fixtures/oom-java-heap.json
+    tags: [oomkilled, java]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: OOMKilled
+      root_cause: OOMKilled Java heap memory limit exitCode 137
+      key_evidences:
+        - reason=OOMKilled
+        - Java heap space
+        - memoryLimit=512Mi
+      should_not_contain: [CrashLoopBackOff, ImagePullBackOff, FailedScheduling, DNS]
+      acceptable_remediations: [memory limit, previous logs]
+      confidence_min: 0.82
+
+  - id: oom-sudden-spike
+    name: OOMKilled with sudden memory spike
+    fixture: ../fixtures/oom-sudden-spike.json
+    tags: [oomkilled, metrics]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: OOMKilled
+      root_cause: OOMKilled sudden memory spike working set memory limit
+      key_evidences:
+        - reason=OOMKilled
+        - sudden_spike
+        - memory_working_set_bytes
+      should_not_contain: [CrashLoopBackOff, ImagePullBackOff, probe failed, registry]
+      acceptable_remediations: [memory limit, previous logs]
+      confidence_min: 0.86
+
+  - id: oom-no-metrics
+    name: OOMKilled without metrics source
+    fixture: ../fixtures/oom-no-metrics.json
+    tags: [oomkilled, no-metrics]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: OOMKilled
+      root_cause: OOMKilled exitCode 137 without Prometheus metrics
+      key_evidences:
+        - reason=OOMKilled
+        - exitCode=137
+        - memoryLimit=256Mi
+      should_not_contain: [CrashLoopBackOff, ImagePullBackOff, NodeNotReady, unauthorized]
+      acceptable_remediations: [memory limit, previous logs]
+      confidence_min: 0.82
+
+  - id: crashloop-missing-config
+    name: CrashLoopBackOff from missing config
+    fixture: ../fixtures/crashloop-missing-config.json
+    tags: [crashloopbackoff, config]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: CrashLoopBackOff
+      root_cause: CrashLoopBackOff restartCount exitCode 1 missing config
+      key_evidences:
+        - restartCount=5
+        - exitCode=1
+        - missing config
+      should_not_contain: [ImagePullBackOff, OOMKilled, NotReady]
+      acceptable_remediations: [previous logs, ConfigMaps]
+      confidence_min: 0.88
+
+  - id: crashloop-connection-refused
+    name: CrashLoopBackOff from dependency connection refused
+    fixture: ../fixtures/crashloop-connection-refused.json
+    tags: [crashloopbackoff, dependency]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: CrashLoopBackOff
+      root_cause: CrashLoopBackOff dependency connection refused startup failure
+      key_evidences:
+        - CrashLoopBackOff
+        - connection refused
+        - restartCount=4
+      should_not_contain: [ImagePullBackOff, OOMKilled, FailedScheduling]
+      acceptable_remediations: [previous logs, ConfigMaps]
+      confidence_min: 0.85
+
+  - id: crashloop-permission-denied
+    name: CrashLoopBackOff from permission denied
+    fixture: ../fixtures/crashloop-permission-denied.json
+    tags: [crashloopbackoff, permission]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: CrashLoopBackOff
+      root_cause: CrashLoopBackOff permission denied startup failure
+      key_evidences:
+        - permission denied
+        - restartCount=3
+        - exitCode=126
+      should_not_contain: [ImagePullBackOff, OOMKilled, PVC]
+      acceptable_remediations: [previous logs, ConfigMaps]
+      confidence_min: 0.85
+
+  - id: crashloop-panic
+    name: CrashLoopBackOff from application panic
+    fixture: ../fixtures/crashloop-panic.json
+    tags: [crashloopbackoff, panic]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: CrashLoopBackOff
+      root_cause: CrashLoopBackOff panic fatal startup failure
+      key_evidences:
+        - panic
+        - fatal
+        - restartCount=7
+      should_not_contain: [ImagePullBackOff, OOMKilled, FailedScheduling]
+      acceptable_remediations: [previous logs, ConfigMaps]
+      confidence_min: 0.85
+
+  - id: pending-insufficient-cpu
+    name: PodPending from insufficient CPU
+    fixture: ../fixtures/pending-insufficient-cpu.json
+    tags: [pending, scheduling, cpu]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: PodPending
+      root_cause: PodPending FailedScheduling insufficient cpu requests
+      key_evidences:
+        - FailedScheduling
+        - Insufficient cpu
+        - cpuRequest=4
+      should_not_contain: [ImagePullBackOff, OOMKilled, readiness]
+      acceptable_remediations: [requests, kubectl describe node]
+      confidence_min: 0.80
+
+  - id: pending-unbound-pvc
+    name: PodPending from unbound PVC
+    fixture: ../fixtures/pending-unbound-pvc.json
+    tags: [pending, pvc]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: PodPending
+      root_cause: PodPending unbound PersistentVolumeClaim PVC not Bound
+      key_evidences:
+        - unbound immediate PersistentVolumeClaims
+        - pvc=data phase=Pending
+        - storageClass=slow
+      should_not_contain: [ImagePullBackOff, OOMKilled, DNS]
+      acceptable_remediations: [PVC, kubectl describe node]
+      confidence_min: 0.83
+
+  - id: pending-untolerated-taint
+    name: PodPending from untolerated node taint
+    fixture: ../fixtures/pending-untolerated-taint.json
+    tags: [pending, taint]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: PodPending
+      root_cause: PodPending untolerated taint scheduling constraint
+      key_evidences:
+        - FailedScheduling
+        - untolerated taint
+        - tolerations=[]
+      should_not_contain: [ImagePullBackOff, OOMKilled, memory leak]
+      acceptable_remediations: [taints, tolerations]
+      confidence_min: 0.78
+
+  - id: imagepull-tag-not-found
+    name: ImagePullBackOff from missing tag
+    fixture: ../fixtures/imagepull-tag-not-found.json
+    tags: [imagepullbackoff, registry]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: ImagePullBackOff
+      root_cause: ImagePullBackOff image tag not found manifest unknown
+      key_evidences:
+        - ImagePullBackOff
+        - manifest unknown
+        - image=registry.example.com/app:missing
+      should_not_contain: [OOMKilled, CrashLoopBackOff, readiness]
+      acceptable_remediations: [image repository, imagePullSecrets]
+      confidence_min: 0.82
+
+  - id: imagepull-unauthorized
+    name: ImagePullBackOff from registry auth failure
+    fixture: ../fixtures/imagepull-unauthorized.json
+    tags: [imagepullbackoff, auth]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: ImagePullBackOff
+      root_cause: ImagePullBackOff unauthorized registry authentication imagePullSecret
+      key_evidences:
+        - unauthorized
+        - imagePullSecret=regcred
+        - registry authentication
+      should_not_contain: [OOMKilled, FailedScheduling, liveness]
+      acceptable_remediations: [registry credentials, imagePullSecrets]
+      confidence_min: 0.85
+
+  - id: probe-readiness-404
+    name: ProbeFailed from readiness 404
+    fixture: ../fixtures/probe-readiness-404.json
+    tags: [probe, readiness]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: ProbeFailed
+      root_cause: readiness probe failed 404 wrong health path
+      key_evidences:
+        - Unhealthy
+        - readiness probe failed
+        - 404
+      should_not_contain: [ImagePullBackOff, OOMKilled, unauthorized]
+      acceptable_remediations: [probe path, initialDelaySeconds]
+      confidence_min: 0.84
+
+  - id: probe-liveness-timeout
+    name: ProbeFailed from liveness timeout
+    fixture: ../fixtures/probe-liveness-timeout.json
+    tags: [probe, liveness]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: ProbeFailed
+      root_cause: liveness probe failed timeout health endpoint
+      key_evidences:
+        - Unhealthy
+        - liveness probe failed
+        - timeout
+      should_not_contain: [ImagePullBackOff, OOMKilled, manifest unknown]
+      acceptable_remediations: [timeoutSeconds, initialDelaySeconds]
+      confidence_min: 0.84

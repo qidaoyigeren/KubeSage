@@ -21,6 +21,26 @@ func TestParseEnhancedSummary(t *testing.T) {
 	}
 }
 
+func TestParseGroundedSummary(t *testing.T) {
+	summary, err := parseGroundedSummary(`{
+		"root_cause_confirmation": {
+			"agreement_level": "full_agree",
+			"summary": "Rule diagnosis is supported.",
+			"evidence_refs": ["ev-0"]
+		},
+		"evidence_chain": [
+			{"claim": "OOMKilled exit code 137", "evidence_refs": ["ev-0"]}
+		],
+		"additional_observations": []
+	}`)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if summary.RootCauseConfirmation.AgreementLevel != "full_agree" || len(summary.EvidenceChain) != 1 {
+		t.Fatalf("unexpected grounded summary: %#v", summary)
+	}
+}
+
 // TestSanitizeEnhancedSummaryRemovesDangerousActions verifies command-like
 // destructive suggestions are not surfaced.
 func TestSanitizeEnhancedSummaryRemovesDangerousActions(t *testing.T) {

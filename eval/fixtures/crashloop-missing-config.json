@@ -1,0 +1,44 @@
+{
+  "namespace": "eval",
+  "pod_name": "crashloop-missing-config",
+  "pod": {
+    "metadata": {"name": "crashloop-missing-config", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "example.com/app:v2",
+          "env": [{"name": "CONFIG_PATH", "value": "/etc/app/config.yaml"}]
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "restartCount": 5,
+          "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off restarting failed container"}},
+          "lastState": {"terminated": {"reason": "Error", "exitCode": 1, "finishedAt": "2026-05-31T04:00:00Z"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "crashloop-missing-config.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container app in pod crashloop-missing-config",
+      "lastTimestamp": "2026-05-31T04:00:01Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "app",
+      "Previous": "fatal: missing config file /etc/app/config.yaml",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": false
+}

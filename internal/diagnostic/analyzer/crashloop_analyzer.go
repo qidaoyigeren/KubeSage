@@ -36,6 +36,9 @@ func (a *CrashLoopBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool
 		return false
 	}
 	for _, status := range ctx.Pod.Status.ContainerStatuses {
+		if oomLikeTermination(status.LastTerminationState.Terminated) {
+			continue
+		}
 		if status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
 			return true
 		}
@@ -44,6 +47,13 @@ func (a *CrashLoopBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool
 		}
 	}
 	return false
+}
+
+func oomLikeTermination(terminated *corev1.ContainerStateTerminated) bool {
+	if terminated == nil {
+		return false
+	}
+	return terminated.ExitCode == 137 || strings.EqualFold(terminated.Reason, "OOMKilled")
 }
 
 // Analyze collects status, event, and log evidence for CrashLoopBackOff.

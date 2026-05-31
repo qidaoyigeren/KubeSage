@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"kubesage/internal/model"
@@ -82,6 +83,40 @@ func (r *DiagnosisRepository) List(ctx context.Context, page, pageSize int) ([]m
 		return nil, 0, err
 	}
 	return tasks, total, nil
+}
+
+func (r *DiagnosisRepository) ListByNamespaces(ctx context.Context, page, pageSize int, namespaces []string) ([]model.DiagnosisTask, int64, error) {
+	namespaces = normalizedNamespaces(namespaces)
+	if len(namespaces) == 0 {
+		return r.List(ctx, page, pageSize)
+	}
+	var total int64
+	var tasks []model.DiagnosisTask
+	query := r.db.WithContext(ctx).Model(&model.DiagnosisTask{}).Where("namespace IN ?", namespaces)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&tasks).Error; err != nil {
+		return nil, 0, err
+	}
+	return tasks, total, nil
+}
+
+func normalizedNamespaces(namespaces []string) []string {
+	out := make([]string, 0, len(namespaces))
+	seen := map[string]struct{}{}
+	for _, namespace := range namespaces {
+		namespace = strings.TrimSpace(namespace)
+		if namespace == "" || namespace == "*" {
+			return nil
+		}
+		if _, ok := seen[namespace]; ok {
+			continue
+		}
+		seen[namespace] = struct{}{}
+		out = append(out, namespace)
+	}
+	return out
 }
 
 // Create inserts a diagnosis report.

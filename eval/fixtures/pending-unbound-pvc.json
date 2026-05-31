@@ -1,0 +1,46 @@
+{
+  "namespace": "eval",
+  "pod_name": "pending-unbound-pvc",
+  "pod": {
+    "metadata": {"name": "pending-unbound-pvc", "namespace": "eval"},
+    "spec": {
+      "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": "data"}}],
+      "containers": [
+        {
+          "name": "db",
+          "image": "example.com/db:v1",
+          "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+          "resources": {"requests": {"cpu": "100m", "memory": "256Mi"}}
+        }
+      ]
+    },
+    "status": {
+      "phase": "Pending",
+      "conditions": [
+        {"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": "pod has unbound immediate PersistentVolumeClaims"}
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "pending-unbound-pvc.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "FailedScheduling",
+      "message": "0/2 nodes are available: pod has unbound immediate PersistentVolumeClaims.",
+      "lastTimestamp": "2026-05-31T09:00:00Z"
+    }
+  ],
+  "pvcs": [
+    {
+      "name": "data",
+      "phase": "Pending",
+      "storage_class": "slow",
+      "volume_binding_mode": "Immediate",
+      "capacity": "10Gi"
+    }
+  ],
+  "node_snapshots": [
+    {"name": "worker-a", "ready": true, "allocatable_cpu": "2", "allocatable_memory": "4Gi"}
+  ],
+  "metrics_enabled": false
+}

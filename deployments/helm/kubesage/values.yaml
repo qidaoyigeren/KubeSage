@@ -64,6 +64,12 @@ config:
     baseURL: https://api.deepseek.com
     apiKey: ""
     model: deepseek-chat
+    grounding:
+      enabled: true
+      semanticMinOverlap: 0.3
+      passRiskThreshold: 0.2
+      warningRiskThreshold: 0.3
+      rejectRiskThreshold: 0.4
   mcp:
     enabled: false
     servers: []

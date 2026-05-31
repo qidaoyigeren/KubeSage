@@ -1,0 +1,36 @@
+{
+  "namespace": "eval",
+  "pod_name": "pending-insufficient-cpu",
+  "pod": {
+    "metadata": {"name": "pending-insufficient-cpu", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "cpu-hog",
+          "image": "example.com/cpu:v1",
+          "resources": {"requests": {"cpu": "4", "memory": "256Mi"}}
+        }
+      ]
+    },
+    "status": {
+      "phase": "Pending",
+      "conditions": [
+        {"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": "0/2 nodes are available: 2 Insufficient cpu."}
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "pending-insufficient-cpu.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "FailedScheduling",
+      "message": "0/2 nodes are available: 2 Insufficient cpu.",
+      "lastTimestamp": "2026-05-31T08:00:00Z"
+    }
+  ],
+  "node_snapshots": [
+    {"name": "worker-a", "ready": true, "allocatable_cpu": "2", "allocatable_memory": "4Gi"},
+    {"name": "worker-b", "ready": true, "allocatable_cpu": "2", "allocatable_memory": "4Gi"}
+  ],
+  "metrics_enabled": false
+}

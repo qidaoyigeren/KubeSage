@@ -1,0 +1,22 @@
+id: probefailed
+manifest: manifests/probefailed.yaml
+target:
+  pod_name: probefailed
+  container_name: app
+  wait_condition: event_reason=Unhealthy
+  timeout_seconds: 180
+expected_fault_type: ProbeFailed
+expected_root_cause_keywords:
+  - probe
+  - readiness
+required_evidence:
+  - unhealthy
+  - probe
+confidence_range:
+  min: 0.72
+  max: 1.0
+expected_actions:
+  - probe
+max_duration_seconds: 220
+setup: []
+teardown: []

@@ -117,26 +117,35 @@ type PrometheusConfig struct {
 }
 
 type LLMConfig struct {
-	Enabled               bool   `mapstructure:"enabled"`
-	BaseURL               string `mapstructure:"base_url"`
-	APIKey                string `mapstructure:"api_key"`
-	Model                 string `mapstructure:"model"`
-	RetryMaxAttempts      int    `mapstructure:"retry_max_attempts"`
-	RetryInitialBackoffMS int    `mapstructure:"retry_initial_backoff_ms"`
-	RetryMaxBackoffMS     int    `mapstructure:"retry_max_backoff_ms"`
+	Enabled               bool               `mapstructure:"enabled"`
+	BaseURL               string             `mapstructure:"base_url"`
+	APIKey                string             `mapstructure:"api_key"`
+	Model                 string             `mapstructure:"model"`
+	RetryMaxAttempts      int                `mapstructure:"retry_max_attempts"`
+	RetryInitialBackoffMS int                `mapstructure:"retry_initial_backoff_ms"`
+	RetryMaxBackoffMS     int                `mapstructure:"retry_max_backoff_ms"`
+	Grounding             LLMGroundingConfig `mapstructure:"grounding"`
+}
+
+type LLMGroundingConfig struct {
+	Enabled              bool    `mapstructure:"enabled"`
+	SemanticMinOverlap   float64 `mapstructure:"semantic_min_overlap"`
+	PassRiskThreshold    float64 `mapstructure:"pass_risk_threshold"`
+	WarningRiskThreshold float64 `mapstructure:"warning_risk_threshold"`
+	RejectRiskThreshold  float64 `mapstructure:"reject_risk_threshold"`
 }
 
 type MCPConfig struct {
-	Enabled bool               `mapstructure:"enabled"`
-	Servers []MCPServerConfig  `mapstructure:"servers"`
+	Enabled bool              `mapstructure:"enabled"`
+	Servers []MCPServerConfig `mapstructure:"servers"`
 }
 
 type MCPServerConfig struct {
-	Name    string `mapstructure:"name"`
-	Command string `mapstructure:"command"`
-	Args    []string `mapstructure:"args"`
-	Env     []string `mapstructure:"env"`
-	TimeoutSeconds int `mapstructure:"timeout_seconds"`
+	Name           string   `mapstructure:"name"`
+	Command        string   `mapstructure:"command"`
+	Args           []string `mapstructure:"args"`
+	Env            []string `mapstructure:"env"`
+	TimeoutSeconds int      `mapstructure:"timeout_seconds"`
 }
 
 type LokiConfig struct {
@@ -321,6 +330,17 @@ func (c Config) Validate() error {
 			return fmt.Errorf("llm.api_key is required when llm.enabled is true")
 		}
 	}
+	if c.LLM.Grounding.SemanticMinOverlap < 0 || c.LLM.Grounding.SemanticMinOverlap > 1 {
+		return fmt.Errorf("llm.grounding.semantic_min_overlap must be between 0 and 1")
+	}
+	if c.LLM.Grounding.PassRiskThreshold < 0 || c.LLM.Grounding.PassRiskThreshold > 1 ||
+		c.LLM.Grounding.WarningRiskThreshold < 0 || c.LLM.Grounding.WarningRiskThreshold > 1 ||
+		c.LLM.Grounding.RejectRiskThreshold < 0 || c.LLM.Grounding.RejectRiskThreshold > 1 {
+		return fmt.Errorf("llm.grounding risk thresholds must be between 0 and 1")
+	}
+	if c.LLM.Grounding.WarningRiskThreshold > c.LLM.Grounding.RejectRiskThreshold {
+		return fmt.Errorf("llm.grounding.warning_risk_threshold cannot exceed reject_risk_threshold")
+	}
 	// When RAG uses qdrant, require qdrant base_url and embedding api_key.
 	if strings.EqualFold(c.RAG.VectorStore, "qdrant") {
 		if strings.TrimSpace(c.RAG.Qdrant.BaseURL) == "" {
@@ -384,6 +404,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.retry_max_attempts", 2)
 	v.SetDefault("llm.retry_initial_backoff_ms", 200)
 	v.SetDefault("llm.retry_max_backoff_ms", 2000)
+	v.SetDefault("llm.grounding.enabled", true)
+	v.SetDefault("llm.grounding.semantic_min_overlap", 0.3)
+	v.SetDefault("llm.grounding.pass_risk_threshold", 0.2)
+	v.SetDefault("llm.grounding.warning_risk_threshold", 0.3)
+	v.SetDefault("llm.grounding.reject_risk_threshold", 0.4)
 	v.SetDefault("mcp.enabled", false)
 	v.SetDefault("loki.enabled", false)
 	v.SetDefault("loki.timeout_seconds", 10)

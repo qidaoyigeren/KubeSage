@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,11 +13,15 @@ import (
 // sections stored on diagnosis_reports.agent_report_snapshot.
 func BuildReportSnapshot(report *diagnostic.Report, hypotheses []model.Hypothesis, hits []RunbookHit, executions []model.RemediationExecution, verification []VerificationPlan, stopReason string) ReportSnapshot {
 	summary := executionSummary(report, hypotheses, stopReason)
+	chain := evidenceChain(report)
 	return ReportSnapshot{
 		RuleBasedResult:       reportValue(report, func(r *diagnostic.Report) interface{} { return r.RuleBasedResult }),
 		AgentExecutionSummary: summary,
 		Hypotheses:            hypotheses,
-		EvidenceChain:         evidenceChain(report),
+		EvidenceChain:         chain,
+		RootCauseEvidenceRefs: rootCauseEvidenceRefs(report, chain),
+		ConfidenceBreakdown:   confidenceBreakdown(report, chain),
+		MissingEvidence:       missingEvidence(report, hypotheses, chain),
 		RunbookGuidance:       hits,
 		LLMEnhancedSummary:    reportValue(report, func(r *diagnostic.Report) interface{} { return r.LLMEnhancedSummary }),
 		RemediationActions:    reportActions(report),
@@ -54,11 +59,144 @@ func evidenceChain(report *diagnostic.Report) []EvidenceRef {
 	result := make([]EvidenceRef, 0, len(report.Evidences))
 	for i, record := range report.Evidences {
 		result = append(result, EvidenceRef{
-			Ref:        evidenceRef(record, i),
+			Ref:        fmt.Sprintf("E%d", i+1),
 			SourceType: record.SourceType,
 			Title:      record.Title,
 			Severity:   record.Severity,
 		})
+	}
+	return result
+}
+
+func rootCauseEvidenceRefs(report *diagnostic.Report, chain []EvidenceRef) []string {
+	if report == nil {
+		return nil
+	}
+	refs := []string{}
+	for i, record := range report.Evidences {
+		if i >= len(chain) {
+			break
+		}
+		text := strings.ToLower(record.SourceType + " " + record.Title + " " + record.Content + " " + record.Severity)
+		if record.Severity == "critical" || record.Severity == "warning" || evidenceMentionsFault(text, report.FaultType) {
+			refs = append(refs, chain[i].Ref)
+		}
+		if len(refs) >= 6 {
+			break
+		}
+	}
+	return refs
+}
+
+func confidenceBreakdown(report *diagnostic.Report, chain []EvidenceRef) []ConfidenceComponent {
+	if report == nil {
+		return nil
+	}
+	sourceGroups := []struct {
+		name    string
+		weight  float64
+		sources []string
+		reason  string
+	}{
+		{name: "pod_status", weight: 0.30, sources: []string{"k8s_pod", "k8s_pod_status"}, reason: "Pod status, container state, restart count, requests, and limits."},
+		{name: "events", weight: 0.20, sources: []string{"k8s_event"}, reason: "Kubernetes Events near the fault window."},
+		{name: "logs", weight: 0.15, sources: []string{"k8s_log", "k8s_key_log", "loki"}, reason: "Container logs and centralized log entries."},
+		{name: "metrics", weight: 0.15, sources: []string{"prometheus", "prometheus_trend"}, reason: "Prometheus samples and trend evidence."},
+		{name: "topology", weight: 0.10, sources: []string{"k8s_topology", "k8s_pvc", "k8s_node", "correlation_evidence"}, reason: "Workload, PVC, node, and blast-radius context."},
+		{name: "runbook", weight: 0.05, sources: []string{"runbook"}, reason: "Runbook guidance matched to the suspected fault."},
+	}
+	components := make([]ConfidenceComponent, 0, len(sourceGroups))
+	for _, group := range sourceGroups {
+		refs := refsForSources(report, chain, group.sources)
+		component := ConfidenceComponent{
+			Source:       group.name,
+			Weight:       group.weight,
+			EvidenceRefs: refs,
+			Missing:      len(refs) == 0,
+			Reason:       group.reason,
+		}
+		if component.Missing {
+			component.Weight = 0
+			component.Reason = "Missing " + group.reason
+		}
+		components = append(components, component)
+	}
+	return components
+}
+
+func missingEvidence(report *diagnostic.Report, hypotheses []model.Hypothesis, chain []EvidenceRef) []string {
+	items := []string{}
+	for _, component := range confidenceBreakdown(report, chain) {
+		if component.Missing {
+			items = append(items, component.Source)
+		}
+	}
+	for _, hypothesis := range hypotheses {
+		items = append(items, jsonTextItems(hypothesis.MissingEvidence)...)
+	}
+	if report != nil && strings.EqualFold(report.FaultType, "OOMKilled") && len(refsForSources(report, chain, []string{"prometheus", "prometheus_trend"})) == 0 {
+		items = append(items, "prometheus metrics for memory near limit")
+	}
+	return appendUniqueStrings(items)
+}
+
+func refsForSources(report *diagnostic.Report, chain []EvidenceRef, sources []string) []string {
+	if report == nil {
+		return nil
+	}
+	sourceSet := map[string]struct{}{}
+	for _, source := range sources {
+		sourceSet[source] = struct{}{}
+	}
+	refs := []string{}
+	for i, record := range report.Evidences {
+		if i >= len(chain) {
+			break
+		}
+		if _, ok := sourceSet[record.SourceType]; ok {
+			refs = append(refs, chain[i].Ref)
+		}
+	}
+	return refs
+}
+
+func evidenceMentionsFault(text, faultType string) bool {
+	normalizedText := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(text))
+	for _, part := range strings.Split(strings.ToLower(faultType), ",") {
+		part = strings.TrimSpace(part)
+		part = strings.NewReplacer("_", "", "-", "", " ", "").Replace(part)
+		if part != "" && strings.Contains(normalizedText, part) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonTextItems(value model.JSONText) []string {
+	text := strings.TrimSpace(string(value))
+	if text == "" || text == "null" {
+		return nil
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(text), &items); err == nil {
+		return items
+	}
+	return []string{text}
+}
+
+func appendUniqueStrings(items []string) []string {
+	seen := map[string]struct{}{}
+	result := []string{}
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		result = append(result, item)
 	}
 	return result
 }

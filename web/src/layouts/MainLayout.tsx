@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Button, Modal, Input, Space, Typography, Badge, Tooltip } from 'antd';
+import { Layout, Menu, Button, Modal, Input, Space, Typography, Badge, Tooltip, Tag } from 'antd';
 import {
   DashboardOutlined,
   UnorderedListOutlined,
@@ -12,18 +12,30 @@ import {
   FileTextOutlined,
   FileProtectOutlined,
   SafetyOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons';
 import { setAuthModalHandler } from '../api/client';
+import type { UserRole } from '../api/auth';
+import { canAccessRole } from '../api/auth';
+import { useCurrentUser } from '../hooks/useCurrentUser';
 
 const { Header, Sider, Content } = Layout;
 
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务列表' },
-  { key: '/diagnose', icon: <MedicineBoxOutlined />, label: '新建诊断' },
-  { key: '/runbooks', icon: <FileTextOutlined />, label: 'Runbook 管理' },
-  { key: '/approvals', icon: <SafetyOutlined />, label: '审批中心' },
-  { key: '/audit-logs', icon: <FileProtectOutlined />, label: '审计日志' },
+type NavItem = {
+  key: string;
+  icon: JSX.Element;
+  label: string;
+  minRole: UserRole;
+};
+
+const navItems: NavItem[] = [
+  { key: '/', icon: <DashboardOutlined />, label: '仪表盘', minRole: 'viewer' },
+  { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务列表', minRole: 'viewer' },
+  { key: '/diagnose', icon: <MedicineBoxOutlined />, label: '新建诊断', minRole: 'operator' },
+  { key: '/runbooks', icon: <FileTextOutlined />, label: 'Runbook', minRole: 'viewer' },
+  { key: '/approvals', icon: <SafetyOutlined />, label: '审批中心', minRole: 'operator' },
+  { key: '/dead-letters', icon: <DatabaseOutlined />, label: 'Dead Letter', minRole: 'operator' },
+  { key: '/audit-logs', icon: <FileProtectOutlined />, label: '审计日志', minRole: 'admin' },
 ];
 
 const MainLayout = () => {
@@ -32,6 +44,7 @@ const MainLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
   const [tokenModalOpen, setTokenModalOpen] = useState(false);
   const [tokenInput, setTokenInput] = useState('');
+  const { data: currentUser } = useCurrentUser();
 
   useEffect(() => {
     setAuthModalHandler(() => setTokenModalOpen(true));
@@ -46,12 +59,15 @@ const MainLayout = () => {
   };
 
   const currentToken = localStorage.getItem('kubesage_token') || '';
+  const currentRole = currentUser?.role || 'viewer';
+  const visibleItems = navItems
+    .filter((item) => canAccessRole(currentRole, item.minRole))
+    .map(({ key, icon, label }) => ({ key, icon, label }));
 
   const selectedKey = location.pathname.startsWith('/tasks/')
     ? '/tasks'
     : location.pathname;
-
-  const pageTitle = menuItems.find((m) => m.key === selectedKey)?.label || 'KubeSage';
+  const pageTitle = navItems.find((m) => m.key === selectedKey)?.label || 'KubeSage';
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -78,7 +94,7 @@ const MainLayout = () => {
         <Menu
           mode="inline"
           selectedKeys={[selectedKey]}
-          items={menuItems}
+          items={visibleItems}
           onClick={({ key }) => navigate(key)}
           style={{ borderRight: 'none', marginTop: 8 }}
         />
@@ -93,11 +109,8 @@ const MainLayout = () => {
               textAlign: 'center',
             }}
           >
-            <Typography.Text
-              type="secondary"
-              style={{ fontSize: 11, lineHeight: 1.6 }}
-            >
-              K8s Pod 智能诊断平台
+            <Typography.Text type="secondary" style={{ fontSize: 11, lineHeight: 1.6 }}>
+              Kubernetes RCA 与修复审批平台
             </Typography.Text>
           </div>
         )}
@@ -106,23 +119,32 @@ const MainLayout = () => {
         <Header className="app-header">
           <span className="page-title">{pageTitle}</span>
           <Space size="middle">
+            <Tag color={currentRole === 'admin' ? 'purple' : currentRole === 'operator' ? 'blue' : 'default'}>
+              {currentRole}
+            </Tag>
             {currentToken ? (
-              <Tooltip title="Token 已配置，点击修改">
-                <Badge status="success" text={
-                  <Typography.Text style={{ fontSize: 13 }}>
-                    <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
-                    已认证
-                  </Typography.Text>
-                } />
+              <Tooltip title="Token 已配置，点击按钮可修改">
+                <Badge
+                  status="success"
+                  text={
+                    <Typography.Text style={{ fontSize: 13 }}>
+                      <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+                      已认证
+                    </Typography.Text>
+                  }
+                />
               </Tooltip>
             ) : (
-              <Tooltip title="未配置 Token，点击配置">
-                <Badge status="warning" text={
-                  <Typography.Text type="warning" style={{ fontSize: 13 }}>
-                    <LockOutlined style={{ marginRight: 4 }} />
-                    未认证
-                  </Typography.Text>
-                } />
+              <Tooltip title="未配置 Token，点击按钮配置">
+                <Badge
+                  status="warning"
+                  text={
+                    <Typography.Text type="warning" style={{ fontSize: 13 }}>
+                      <LockOutlined style={{ marginRight: 4 }} />
+                      未认证
+                    </Typography.Text>
+                  }
+                />
               </Tooltip>
             )}
             <Button
@@ -166,7 +188,7 @@ const MainLayout = () => {
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Typography.Text type="secondary">
-            输入后端 API 的 Bearer Token。Token 存储在浏览器本地，不会发送到第三方。
+            输入后端 API 的 Bearer Token。Token 只保存在浏览器本地，不会发送到第三方服务。
           </Typography.Text>
           <Input.Password
             placeholder="请输入 Token"

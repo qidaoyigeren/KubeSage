@@ -1,0 +1,36 @@
+{
+  "namespace": "eval",
+  "pod_name": "pending-untolerated-taint",
+  "pod": {
+    "metadata": {"name": "pending-untolerated-taint", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "example.com/app:v1",
+          "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}}
+        }
+      ],
+      "tolerations": []
+    },
+    "status": {
+      "phase": "Pending",
+      "conditions": [
+        {"type": "PodScheduled", "status": "False", "reason": "Unschedulable", "message": "1 node had untolerated taint {dedicated=batch: NoSchedule}"}
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "pending-untolerated-taint.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "FailedScheduling",
+      "message": "0/1 nodes are available: 1 node(s) had untolerated taint {dedicated=batch: NoSchedule}.",
+      "lastTimestamp": "2026-05-31T10:00:00Z"
+    }
+  ],
+  "node_snapshots": [
+    {"name": "worker-batch", "ready": true, "allocatable_cpu": "8", "allocatable_memory": "16Gi"}
+  ],
+  "metrics_enabled": false
+}

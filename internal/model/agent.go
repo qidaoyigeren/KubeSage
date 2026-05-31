@@ -21,19 +21,22 @@ const (
 
 // AgentStep records one auditable step in an agent diagnosis run.
 type AgentStep struct {
-	ID               uint      `json:"id" gorm:"primaryKey"`
-	TaskID           uint      `json:"task_id" gorm:"index;not null"`
-	ParentStepID     *uint     `json:"parent_step_id,omitempty" gorm:"index"`
-	TraceID          string    `json:"trace_id" gorm:"size:64;index"`
-	StepIndex        int       `json:"step_index" gorm:"index;not null"`
-	Stage            string    `json:"stage" gorm:"size:32;index;not null"`
-	ToolName         string    `json:"tool_name,omitempty" gorm:"size:128;index"`
-	InputJSON        JSONText  `json:"input_json,omitempty" gorm:"type:longtext"`
-	OutputJSON       JSONText  `json:"output_json,omitempty" gorm:"type:longtext"`
-	Status           string    `json:"status" gorm:"size:32;index;not null"`
-	DurationMS       int64     `json:"duration_ms"`
-	ReasoningSummary string    `json:"reasoning_summary" gorm:"type:text"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                 uint      `json:"id" gorm:"primaryKey"`
+	TaskID             uint      `json:"task_id" gorm:"index;not null"`
+	ParentStepID       *uint     `json:"parent_step_id,omitempty" gorm:"index"`
+	TraceID            string    `json:"trace_id" gorm:"size:64;index"`
+	StepIndex          int       `json:"step_index" gorm:"index;not null"`
+	Stage              string    `json:"stage" gorm:"size:32;index;not null"`
+	ToolName           string    `json:"tool_name,omitempty" gorm:"size:128;index"`
+	InputJSON          JSONText  `json:"input_json,omitempty" gorm:"type:longtext"`
+	OutputJSON         JSONText  `json:"output_json,omitempty" gorm:"type:longtext"`
+	Status             string    `json:"status" gorm:"size:32;index;not null"`
+	DurationMS         int64     `json:"duration_ms"`
+	ReasoningSummary   string    `json:"reasoning_summary" gorm:"type:text"`
+	ObservationSummary string    `json:"observation_summary" gorm:"type:text"`
+	ParallelGroup      string    `json:"parallel_group,omitempty" gorm:"size:128;index"`
+	ToolLatencyMS      int64     `json:"tool_latency_ms"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // Hypothesis stores a candidate root cause and the evidence references used to

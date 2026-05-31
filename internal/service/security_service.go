@@ -24,7 +24,13 @@ func NewKubernetesAuthorizer(cfg config.AuthConfig, client *k8s.Client) *Kuberne
 }
 
 func (a *KubernetesAuthorizer) AuthorizePodDiagnosis(ctx context.Context, token, namespace, podName string) error {
-	if a == nil || !strings.EqualFold(a.cfg.Mode, "kubernetes_tokenreview") {
+	if a == nil {
+		return nil
+	}
+	if !namespaceAllowed(a.cfg.AllowedNamespaces, namespace) {
+		return fmt.Errorf("namespace %s is not allowed by auth.allowed_namespaces", namespace)
+	}
+	if !strings.EqualFold(a.cfg.Mode, "kubernetes_tokenreview") {
 		return nil
 	}
 	if a.client == nil {
@@ -50,4 +56,17 @@ func (a *KubernetesAuthorizer) AuthorizePodDiagnosis(ctx context.Context, token,
 		return fmt.Errorf("%s", reason)
 	}
 	return nil
+}
+
+func namespaceAllowed(allowed []string, namespace string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, item := range allowed {
+		item = strings.TrimSpace(item)
+		if item == "*" || item == namespace {
+			return true
+		}
+	}
+	return false
 }

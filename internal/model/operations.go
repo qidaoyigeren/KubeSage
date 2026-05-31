@@ -7,6 +7,8 @@ const (
 	FeedbackRatingNotUseful = "not_useful"
 )
 
+func (DiagnosisFeedback) TableName() string { return "diagnosis_feedback" }
+
 type DiagnosisFeedback struct {
 	ID                     uint      `json:"id" gorm:"primaryKey"`
 	TaskID                 uint      `json:"task_id" gorm:"index;not null"`

@@ -147,6 +147,60 @@ func (c *OpenAICompatibleClient) GenerateDiagnosisSummary(ctx context.Context, p
 	return summary, nil
 }
 
+func (c *OpenAICompatibleClient) GenerateGroundedSummary(ctx context.Context, prompt GroundedPrompt) (*GroundedSummary, error) {
+	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
+		return nil, fmt.Errorf("llm client is not configured")
+	}
+	start := time.Now()
+	endpoint, err := c.chatCompletionsURL()
+	if err != nil {
+		return nil, err
+	}
+	payload := chatCompletionRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: prompt.System},
+			{Role: "user", Content: prompt.User},
+		},
+		Temperature:    0.1,
+		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("llm grounded request failed: %s: %s", resp.Status, string(respBody))
+	}
+	var raw chatCompletionResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return nil, err
+	}
+	if raw.Error != nil {
+		return nil, fmt.Errorf("llm grounded response error: %s: %s", raw.Error.Type, raw.Error.Message)
+	}
+	if len(raw.Choices) == 0 {
+		return nil, fmt.Errorf("llm grounded response has no choices")
+	}
+	c.captureUsage(raw.Usage, time.Since(start))
+	return parseGroundedSummary(raw.Choices[0].Message.Content)
+}
+
 func (c *OpenAICompatibleClient) LastUsage() UsageRecord {
 	if c == nil {
 		return UsageRecord{}
@@ -517,6 +571,22 @@ func parseEnhancedSummary(content string) (*EnhancedSummary, error) {
 	}
 	if summary.RootCauseSummary == "" {
 		return nil, fmt.Errorf("llm response missing root_cause_summary")
+	}
+	return &summary, nil
+}
+
+func parseGroundedSummary(content string) (*GroundedSummary, error) {
+	content = strings.TrimSpace(content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	content = strings.TrimSpace(content)
+	var summary GroundedSummary
+	if err := json.Unmarshal([]byte(content), &summary); err != nil {
+		return nil, err
+	}
+	if summary.RootCauseConfirmation.AgreementLevel == "" {
+		return nil, fmt.Errorf("llm response missing root_cause_confirmation.agreement_level")
 	}
 	return &summary, nil
 }

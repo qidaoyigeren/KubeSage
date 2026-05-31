@@ -11,6 +11,8 @@ import {
   BarChartOutlined,
   LikeOutlined,
   ClockCircleOutlined,
+  ApiOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -21,6 +23,8 @@ import StatusTag from '../../components/StatusTag';
 import ConfidenceBar from '../../components/ConfidenceBar';
 import { formatTime, formatTaskDuration } from '../../utils/format';
 import type { DashboardBucket, DashboardTrendPoint, DiagnosisTask } from '../../api/types';
+import { canAccessRole } from '../../api/auth';
+import { useCurrentUser } from '../../hooks/useCurrentUser';
 
 const percent = (value?: number) => `${Math.round((value || 0) * 100)}%`;
 
@@ -37,6 +41,8 @@ const Dashboard = () => {
     queryFn: () => getDashboardTrends(14),
   });
   const diagnose = useDiagnose();
+  const { data: currentUser } = useCurrentUser();
+  const canDiagnose = canAccessRole(currentUser?.role, 'operator');
 
   const tasks = data?.items || [];
   const fallbackStats = {
@@ -155,7 +161,7 @@ const Dashboard = () => {
         </Row>
 
         <Row gutter={[16, 16]}>
-          <Col xs={24} lg={8}>
+          <Col xs={24} lg={6}>
             <Card title={<MetricTitle icon={<LikeOutlined />} text="Feedback Accuracy" />} bordered={false}>
               <Progress percent={Math.round((summary?.feedback_accuracy_rate || 0) * 100)} />
               <Space>
@@ -164,27 +170,43 @@ const Dashboard = () => {
               </Space>
             </Card>
           </Col>
-          <Col xs={24} lg={8}>
-            <Card title={<MetricTitle icon={<ClockCircleOutlined />} text="Mean Diagnosis Time" />} bordered={false}>
-              <Statistic value={summary?.average_duration_seconds || 0} precision={1} suffix="s" />
+          <Col xs={24} lg={6}>
+            <Card title={<MetricTitle icon={<ClockCircleOutlined />} text="Diagnosis Latency" />} bordered={false}>
+              <Statistic value={summary?.average_duration_seconds || 0} precision={1} suffix="s avg" />
+              <Typography.Text type="secondary">
+                P95 {Number(summary?.p95_duration_seconds || 0).toFixed(1)}s
+              </Typography.Text>
             </Card>
           </Col>
-          <Col xs={24} lg={8}>
-            <Card title={<MetricTitle icon={<BarChartOutlined />} text="LLM Planner Calls" />} bordered={false}>
+          <Col xs={24} lg={6}>
+            <Card title={<MetricTitle icon={<ApiOutlined />} text="Tool Health" />} bordered={false}>
+              <Progress
+                percent={Math.round((summary?.tool_failure_rate || 0) * 100)}
+                status={(summary?.tool_failure_rate || 0) > 0 ? 'exception' : 'success'}
+              />
+              <Space wrap>
+                <Tag color="blue">Calls {summary?.tool_calls || 0}</Tag>
+                <Tag color={(summary?.tool_failures || 0) > 0 ? 'red' : 'green'}>Failures {summary?.tool_failures || 0}</Tag>
+                <Tag icon={<DatabaseOutlined />} color={(summary?.dead_letters || 0) > 0 ? 'volcano' : 'default'}>DLQ {summary?.dead_letters || 0}</Tag>
+              </Space>
+            </Card>
+          </Col>
+          <Col xs={24} lg={6}>
+            <Card title={<MetricTitle icon={<BarChartOutlined />} text="LLM Health" />} bordered={false}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <Space wrap>
-                {Object.entries(summary?.llm_calls || {}).length > 0 ? (
-                  Object.entries(summary?.llm_calls || {}).map(([status, count]) => (
-                    <Tag key={status} color={status === 'success' ? 'green' : 'orange'}>
-                      {status}: {count}
-                    </Tag>
-                  ))
-                ) : (
-                  <Typography.Text type="secondary">No planner calls yet</Typography.Text>
-                )}
+                  {Object.entries(summary?.llm_calls || {}).length > 0 ? (
+                    Object.entries(summary?.llm_calls || {}).map(([status, count]) => (
+                      <Tag key={status} color={status === 'success' ? 'green' : 'orange'}>
+                        {status}: {count}
+                      </Tag>
+                    ))
+                  ) : (
+                    <Typography.Text type="secondary">No planner calls yet</Typography.Text>
+                  )}
                 </Space>
                 <Typography.Text type="secondary">
-                  Tokens {summary?.llm_total_tokens || 0} · Avg latency {Math.round(summary?.llm_average_latency_ms || 0)}ms · Cost ${Number(summary?.llm_estimated_cost || 0).toFixed(4)}
+                  Fail {percent(summary?.llm_failure_rate)} / Tokens {summary?.llm_total_tokens || 0} / Avg {Math.round(summary?.llm_average_latency_ms || 0)}ms / Cost ${Number(summary?.llm_estimated_cost || 0).toFixed(4)}
                 </Typography.Text>
               </Space>
             </Card>
@@ -203,29 +225,31 @@ const Dashboard = () => {
           </Col>
         </Row>
 
-        <Card
-          className="quick-diagnose-card"
-          title={
-            <Space>
-              <RocketOutlined style={{ color: '#1677ff' }} />
-              <span>Quick Diagnosis</span>
-            </Space>
-          }
-        >
-          <Form layout="inline" onFinish={handleQuickDiagnose} style={{ flexWrap: 'wrap', gap: 8 }}>
-            <Form.Item name="namespace" rules={[{ required: true, message: 'Namespace is required' }]}>
-              <Input placeholder="Namespace" style={{ width: 180 }} />
-            </Form.Item>
-            <Form.Item name="pod_name" rules={[{ required: true, message: 'Pod name is required' }]}>
-              <Input placeholder="Pod name" style={{ width: 280 }} />
-            </Form.Item>
-            <Form.Item>
-              <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={diagnose.isPending}>
-                Start
-              </Button>
-            </Form.Item>
-          </Form>
-        </Card>
+        {canDiagnose && (
+          <Card
+            className="quick-diagnose-card"
+            title={
+              <Space>
+                <RocketOutlined style={{ color: '#1677ff' }} />
+                <span>Quick Diagnosis</span>
+              </Space>
+            }
+          >
+            <Form layout="inline" onFinish={handleQuickDiagnose} style={{ flexWrap: 'wrap', gap: 8 }}>
+              <Form.Item name="namespace" rules={[{ required: true, message: 'Namespace is required' }]}>
+                <Input placeholder="Namespace" style={{ width: 180 }} />
+              </Form.Item>
+              <Form.Item name="pod_name" rules={[{ required: true, message: 'Pod name is required' }]}>
+                <Input placeholder="Pod name" style={{ width: 280 }} />
+              </Form.Item>
+              <Form.Item>
+                <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={diagnose.isPending}>
+                  Start
+                </Button>
+              </Form.Item>
+            </Form>
+          </Card>
+        )}
 
         <Card
           className="task-list-card"
@@ -259,9 +283,11 @@ const Dashboard = () => {
             />
           ) : (
             <Empty description="No diagnosis tasks yet" style={{ padding: '40px 0' }}>
-              <Button type="primary" onClick={() => navigate('/diagnose')}>
-                Create first diagnosis
-              </Button>
+              {canDiagnose && (
+                <Button type="primary" onClick={() => navigate('/diagnose')}>
+                  Create first diagnosis
+                </Button>
+              )}
             </Empty>
           )}
         </Card>
@@ -301,7 +327,7 @@ const TrendCard = ({ trends }: { trends: DashboardTrendPoint[] }) => (
         trends.slice(0, 8).map((item) => (
           <div key={`${item.date}-${item.fault_type}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <Typography.Text ellipsis>
-              {item.date} · {item.fault_type || 'unknown'}
+              {item.date} / {item.fault_type || 'unknown'}
             </Typography.Text>
             <Tag>{item.count}</Tag>
           </div>

@@ -1,0 +1,22 @@
+id: crashloopbackoff
+manifest: manifests/crashloopbackoff.yaml
+target:
+  pod_name: crashloopbackoff
+  container_name: app
+  wait_condition: event_reason=BackOff
+  timeout_seconds: 120
+expected_fault_type: CrashLoopBackOff
+expected_root_cause_keywords:
+  - crashloop
+  - startup
+required_evidence:
+  - restart
+  - backoff
+confidence_range:
+  min: 0.75
+  max: 1.0
+expected_actions:
+  - logs
+max_duration_seconds: 180
+setup: []
+teardown: []

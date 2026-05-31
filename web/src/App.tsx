@@ -7,6 +7,7 @@ import Diagnose from './pages/Diagnose';
 import Runbooks from './pages/Runbooks';
 import AuditLogs from './pages/AuditLogs';
 import Approvals from './pages/Approvals';
+import DeadLetters from './pages/DeadLetters';
 
 const App = () => (
   <Routes>
@@ -18,6 +19,7 @@ const App = () => (
       <Route path="/runbooks" element={<Runbooks />} />
       <Route path="/audit-logs" element={<AuditLogs />} />
       <Route path="/approvals" element={<Approvals />} />
+      <Route path="/dead-letters" element={<DeadLetters />} />
     </Route>
   </Routes>
 );

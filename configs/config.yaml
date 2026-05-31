@@ -85,6 +85,12 @@ llm:
   retry_max_attempts: 2
   retry_initial_backoff_ms: 200
   retry_max_backoff_ms: 2000
+  grounding:
+    enabled: true
+    semantic_min_overlap: 0.3
+    pass_risk_threshold: 0.2
+    warning_risk_threshold: 0.3
+    reject_risk_threshold: 0.4
 
 # MCP (Model Context Protocol) tools: connect to external MCP-compatible servers
 # to extend the agent's toolset (e.g., Grafana, PostgreSQL, custom tools).

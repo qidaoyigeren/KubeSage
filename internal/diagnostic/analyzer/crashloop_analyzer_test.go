@@ -68,6 +68,24 @@ func TestCrashLoopAnalyzer_Match(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "OOMKilled termination belongs to OOM analyzer",
+			ctx: &diagnostic.DiagnosticContext{
+				Pod: &corev1.Pod{
+					Status: corev1.PodStatus{
+						ContainerStatuses: []corev1.ContainerStatus{
+							{
+								RestartCount: 2,
+								LastTerminationState: corev1.ContainerState{
+									Terminated: &corev1.ContainerStateTerminated{Reason: "OOMKilled", ExitCode: 137},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: false,
+		},
 	}
 	a := NewCrashLoopBackOffAnalyzer()
 	for _, tt := range tests {

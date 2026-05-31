@@ -13,6 +13,7 @@ import (
 )
 
 type promptEvidence struct {
+	EvidenceID string `json:"evidence_id,omitempty"`
 	SourceType string `json:"source_type"`
 	Title      string `json:"title"`
 	Content    string `json:"content"`
@@ -38,6 +39,14 @@ type promptPayload struct {
 	OutputRequirements map[string]string      `json:"output_requirements"`
 }
 
+type groundedPromptPayload struct {
+	PodBasicInfo       map[string]interface{} `json:"pod_basic_info"`
+	RuleDiagnosis      RuleBasedResult        `json:"rule_diagnosis"`
+	Evidences          []GroundingEvidence    `json:"evidence_list"`
+	RunbookHits        []rag.Hit              `json:"runbook_retrieval_results"`
+	OutputRequirements map[string]interface{} `json:"output_requirements"`
+}
+
 // BuildPrompt converts the rule report and live diagnostic context into the
 // strict JSON prompt expected by the LLM.
 func BuildPrompt(ctx *diagnostic.DiagnosticContext, ruleResult RuleBasedResult, evidences []diagnostic.EvidenceRecord, runbookHits []rag.Hit) Prompt {
@@ -60,6 +69,49 @@ func BuildPrompt(ctx *diagnostic.DiagnosticContext, ruleResult RuleBasedResult, 
 	return Prompt{
 		System: systemPrompt(),
 		User:   string(bytes),
+	}
+}
+
+func BuildGroundedPrompt(ctx *diagnostic.DiagnosticContext, ruleResult RuleBasedResult, evidences []diagnostic.EvidenceRecord, runbookHits []rag.Hit) GroundedPrompt {
+	groundingEvidence := groundingEvidences(evidences)
+	payload := groundedPromptPayload{
+		PodBasicInfo:  podBasicInfo(ctx),
+		RuleDiagnosis: ruleResult,
+		Evidences:     groundingEvidence,
+		RunbookHits:   runbookHits,
+		OutputRequirements: map[string]interface{}{
+			"format": "Return JSON only.",
+			"schema": map[string]interface{}{
+				"root_cause_confirmation": map[string]interface{}{
+					"agreement_level": "full_agree | partial_agree | disagree",
+					"summary":         "short explanation that does not change rule_diagnosis",
+					"evidence_refs":   []string{"ev-0"},
+				},
+				"evidence_chain": []map[string]interface{}{{
+					"claim":         "one factual claim grounded in supplied evidence",
+					"evidence_refs": []string{"ev-0"},
+				}},
+				"additional_observations": []map[string]interface{}{{
+					"text":          "optional observation that is not used as root-cause proof",
+					"evidence_refs": []string{},
+				}},
+			},
+			"rules": []string{
+				"Treat rule_diagnosis as read-only. Do not rewrite fault_type, root_cause_summary, confidence_score, risk_level, or suggested_actions.",
+				"Every evidence_chain claim must cite one or more evidence_id values from evidence_list.",
+				"Do not invent causes, owners, dependencies, metrics, commands, or remediation steps that are absent from evidence_list.",
+				"Put weak or uncited thoughts only in additional_observations, never in evidence_chain.",
+			},
+		},
+	}
+	bytes, _ := json.MarshalIndent(payload, "", "  ")
+	return GroundedPrompt{
+		Prompt: Prompt{
+			System: groundedSystemPrompt(),
+			User:   string(bytes),
+		},
+		RuleDiagnosis: ruleResult,
+		Evidences:     groundingEvidence,
 	}
 }
 
@@ -90,6 +142,17 @@ func systemPrompt() string {
 		"Never claim that you executed or will execute operations.",
 		"Do not output dangerous commands such as delete, patch, replace, scale, or apply as actions.",
 		"Return strict JSON only with fields: root_cause_summary, confidence_score, evidence_reasoning, suggested_actions, risk_level, need_human_confirm.",
+	}, "\n")
+}
+
+func groundedSystemPrompt() string {
+	return strings.Join([]string{
+		"You are KubeSage's grounded Kubernetes RCA report reviewer.",
+		"You must not change rule_diagnosis. It is the authoritative diagnosis produced by deterministic analyzers.",
+		"Your job is only to confirm whether the supplied evidence supports that diagnosis and explain the evidence chain.",
+		"Every factual claim in evidence_chain must cite at least one evidence_id from evidence_list.",
+		"Do not add new remediation actions, commands, causal relationships, dependencies, metrics, or impact claims unless they appear in cited evidence.",
+		"Return strict JSON only with fields: root_cause_confirmation, evidence_chain, additional_observations.",
 	}, "\n")
 }
 
@@ -153,6 +216,23 @@ func promptEvidences(records []diagnostic.EvidenceRecord, sourceType string) []p
 			continue
 		}
 		result = append(result, promptEvidence{
+			SourceType: record.SourceType,
+			Title:      record.Title,
+			Content:    truncate(record.Content, 1200),
+			Severity:   record.Severity,
+		})
+		if len(result) >= 30 {
+			return result
+		}
+	}
+	return result
+}
+
+func groundingEvidences(records []diagnostic.EvidenceRecord) []GroundingEvidence {
+	result := make([]GroundingEvidence, 0, len(records))
+	for i, record := range records {
+		result = append(result, GroundingEvidence{
+			ID:         fmt.Sprintf("ev-%d", i),
 			SourceType: record.SourceType,
 			Title:      record.Title,
 			Content:    truncate(record.Content, 1200),

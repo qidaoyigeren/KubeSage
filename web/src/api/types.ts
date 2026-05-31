@@ -43,6 +43,9 @@ export interface AgentStep {
   status: AgentStepStatus;
   duration_ms: number;
   reasoning_summary: string;
+  observation_summary?: string;
+  parallel_group?: string;
+  tool_latency_ms?: number;
   created_at: string;
 }
 
@@ -97,6 +100,15 @@ export interface AgentReportSnapshot {
   agent_execution_summary?: string;
   hypotheses?: Hypothesis[];
   evidence_chain?: { ref: string; source_type: string; title: string; severity: string }[];
+  root_cause_evidence_refs?: string[];
+  confidence_breakdown?: {
+    source: string;
+    weight: number;
+    evidence_refs?: string[];
+    missing: boolean;
+    reason: string;
+  }[];
+  missing_evidence?: string[];
   runbook_guidance?: { title: string; content: string; score: number; recommended_tools?: string[]; stop_conditions?: string[] }[];
   llm_enhanced_summary?: string;
   remediation_actions?: RemediationAction[];
@@ -180,15 +192,22 @@ export interface DashboardSummary {
   failed_tasks: number;
   success_rate: number;
   average_duration_seconds: number;
+  p95_duration_seconds: number;
   feedback_useful: number;
   feedback_not_useful: number;
   feedback_accuracy_rate: number;
   top_root_causes: DashboardBucket[] | null;
   analyzer_hit_rates: DashboardBucket[] | null;
+  tool_calls: number;
+  tool_failures: number;
+  tool_failure_rate: number;
   llm_calls: Record<string, number>;
+  llm_failure_rate: number;
   llm_total_tokens: number;
   llm_average_latency_ms: number;
   llm_estimated_cost: number;
+  llm_average_token_cost: number;
+  dead_letters: number;
 }
 
 export interface DashboardTrendPoint {

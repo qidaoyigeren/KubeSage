@@ -72,6 +72,12 @@ data:
       retry_max_attempts: 2
       retry_initial_backoff_ms: 200
       retry_max_backoff_ms: 2000
+      grounding:
+        enabled: {{ .Values.config.llm.grounding.enabled }}
+        semantic_min_overlap: {{ .Values.config.llm.grounding.semanticMinOverlap }}
+        pass_risk_threshold: {{ .Values.config.llm.grounding.passRiskThreshold }}
+        warning_risk_threshold: {{ .Values.config.llm.grounding.warningRiskThreshold }}
+        reject_risk_threshold: {{ .Values.config.llm.grounding.rejectRiskThreshold }}
     loki:
       enabled: {{ .Values.config.loki.enabled }}
       base_url: {{ .Values.config.loki.baseURL | quote }}

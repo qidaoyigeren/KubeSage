@@ -1,0 +1,47 @@
+{
+  "namespace": "eval",
+  "pod_name": "oom-limit-too-low",
+  "pod": {
+    "metadata": {"name": "oom-limit-too-low", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "example.com/app:v1",
+          "resources": {
+            "requests": {"memory": "64Mi"},
+            "limits": {"memory": "128Mi"}
+          }
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "restartCount": 2,
+          "state": {"running": {"startedAt": "2026-05-31T00:01:00Z"}},
+          "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137, "finishedAt": "2026-05-31T00:00:00Z"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "oom-limit-too-low.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "OOMKilled",
+      "message": "Container app was OOMKilled after exceeding memory limit",
+      "lastTimestamp": "2026-05-31T00:00:01Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "app",
+      "Previous": "fatal: out of memory while allocating request buffer; memory limit reached",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": true
+}

@@ -20,6 +20,7 @@ func (p *RulePlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []T
 	available := map[string]bool{}
 	for _, tool := range tools {
 		available[tool.Name] = true
+		available[canonicalToolName(tool.Name)] = true
 	}
 	fault := normalizeFault(goal.ExpectedFault)
 	steps := []PlanStep{}
@@ -45,32 +46,31 @@ func (p *RulePlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []T
 
 	switch fault {
 	case "oomkilled":
-		add("k8s.get_previous_logs", "inspect logs around the OOM restart", false, baseInput)
+		add("k8s.get_logs", "inspect logs around the OOM restart", false, baseInput)
 		add("prometheus.query_range", "inspect memory working set near the failure window", false, map[string]interface{}{"query": "container_memory_working_set_bytes"})
 		add("loki.query_logs", "check centralized logs for OOM-adjacent messages", false, baseInput)
 		add("k8s.get_topology", "check workload and node pressure context", false, baseInput)
 	case "crashloopbackoff":
-		add("k8s.get_previous_logs", "classify startup failure or runtime crash from previous logs", false, baseInput)
+		add("k8s.get_logs", "classify startup failure or runtime crash from previous logs", false, baseInput)
 		add("loki.query_logs", "check centralized logs for dependency or config errors", false, baseInput)
 		add("k8s.get_events", "inspect BackOff and failure events", false, baseInput)
 		add("k8s.get_topology", "check workload impact and peer pod health", false, baseInput)
 	case "probefailed":
 		add("k8s.get_events", "inspect readiness and liveness probe events", false, baseInput)
-		add("k8s.get_previous_logs", "inspect application health endpoint logs", false, baseInput)
+		add("k8s.get_logs", "inspect application health endpoint logs", false, baseInput)
 		add("loki.query_logs", "check centralized logs around probe failures", false, baseInput)
 		add("k8s.get_topology", "check service endpoints and impact", false, baseInput)
 	case "pending", "podpending":
 		add("k8s.get_events", "inspect scheduler failure events", false, baseInput)
-		add("k8s.get_pvc_status", "check PVC binding state directly", false, baseInput)
+		add("k8s.get_pvc", "check PVC binding state directly", false, baseInput)
 		add("k8s.get_topology", "inspect scheduling and node context", false, baseInput)
 	case "nodenotready":
 		add("k8s.get_topology", "inspect node health and pressure conditions", true, baseInput)
 		add("k8s.get_events", "collect node-related events", false, baseInput)
-		add("k8s.get_previous_logs", "check for node-related log messages", false, baseInput)
 	default:
 		add("k8s.get_events", "collect general pod events", false, baseInput)
-		add("k8s.get_previous_logs", "collect general container logs", false, baseInput)
-		add("k8s.get_pvc_status", "check storage constraints when present", false, baseInput)
+		add("k8s.get_logs", "collect general container logs", false, baseInput)
+		add("k8s.get_pvc", "check storage constraints when present", false, baseInput)
 		add("k8s.get_topology", "collect workload impact context", false, baseInput)
 	}
 
@@ -111,11 +111,11 @@ func (p *RulePlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, 
 		for _, missing := range hypothesis.MissingEvidence {
 			switch {
 			case strings.Contains(missing, "logs"):
-				appendIfMissing(plan, "k8s.get_previous_logs", "added after hypothesis requested log evidence", state)
+				appendIfMissing(plan, "k8s.get_logs", "added after hypothesis requested log evidence", state)
 			case strings.Contains(missing, "events"):
 				appendIfMissing(plan, "k8s.get_events", "added after hypothesis requested event evidence", state)
 			case strings.Contains(missing, "pvc"):
-				appendIfMissing(plan, "k8s.get_pvc_status", "added after hypothesis requested pvc evidence", state)
+				appendIfMissing(plan, "k8s.get_pvc", "added after hypothesis requested pvc evidence", state)
 			case strings.Contains(missing, "metric"), strings.Contains(missing, "memory"):
 				appendIfMissing(plan, "prometheus.query_range", "added after hypothesis requested metric evidence", state)
 			}
@@ -242,6 +242,8 @@ func expectedObservations(fault string) []string {
 		return []string{"probe config", "Unhealthy events", "health endpoint logs", "service endpoint impact"}
 	case "pending", "podpending":
 		return []string{"FailedScheduling events", "PVC phase", "node constraints", "taints and selectors"}
+	case "nodenotready":
+		return []string{"node readiness condition", "node events", "affected pod topology"}
 	default:
 		return []string{"pod state", "events", "logs", "topology"}
 	}
@@ -258,9 +260,22 @@ func normalizeFault(fault string) string {
 func applyDefaultParallelGroups(steps []PlanStep) {
 	for i := range steps {
 		switch steps[i].ToolName {
-		case "k8s.get_events", "k8s.get_previous_logs", "k8s.get_topology", "k8s.get_pvc_status", "prometheus.query_range", "loki.query_logs":
+		case "k8s.get_events", "k8s.get_logs", "k8s.get_topology", "k8s.get_pvc", "prometheus.query_range", "loki.query_logs":
 			steps[i].ParallelGroup = "evidence-snapshot"
 		}
+	}
+}
+
+func canonicalToolName(name string) string {
+	switch name {
+	case "k8s.get_previous_logs":
+		return "k8s.get_logs"
+	case "k8s.get_pvc_status":
+		return "k8s.get_pvc"
+	case "remediation.dry_run_patch":
+		return "remediation.dry_run"
+	default:
+		return name
 	}
 }
 

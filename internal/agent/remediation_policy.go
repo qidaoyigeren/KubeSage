@@ -102,6 +102,9 @@ func (p *RemediationPolicy) ValidateDryRunPreview(taskID uint, commandPreview, r
 	} else if risk == "high" {
 		status = model.RemediationExecutionStatusProposed
 		output = "high-risk actions are proposal-only in MVP"
+	} else if readOnlyKubectlCommand(commandPreview) {
+		status = model.RemediationExecutionStatusDryRunSuccess
+		output = "read-only command preview accepted; shell execution was not performed"
 	} else if risk == "medium" && !strings.Contains(commandPreview, "--dry-run=server") {
 		status = model.RemediationExecutionStatusPendingApproval
 		output = "medium-risk command requires human approval and server dry-run preview"
@@ -127,7 +130,7 @@ func lowRiskExecutionStatus(enabled bool, command string) string {
 	if !enabled {
 		return model.RemediationExecutionStatusProposed
 	}
-	if strings.Contains(command, "--dry-run=server") {
+	if strings.Contains(command, "--dry-run=server") || readOnlyKubectlCommand(command) {
 		return model.RemediationExecutionStatusDryRunSuccess
 	}
 	return model.RemediationExecutionStatusProposed
@@ -135,6 +138,9 @@ func lowRiskExecutionStatus(enabled bool, command string) string {
 
 func dryRunPreviewOutput(status, command string) string {
 	if status == model.RemediationExecutionStatusDryRunSuccess {
+		if readOnlyKubectlCommand(command) && !strings.Contains(command, "--dry-run=server") {
+			return fmt.Sprintf("read-only command preview accepted; shell execution was not performed: %s", command)
+		}
 		return fmt.Sprintf("policy validation passed for dry-run preview: %s", command)
 	}
 	return ""
@@ -163,6 +169,19 @@ func ensureActionID(action diagnostic.RemediationAction, index int) string {
 func forbiddenCommand(command string) bool {
 	for _, pattern := range forbiddenCommandPatterns {
 		if pattern.MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
+func readOnlyKubectlCommand(command string) bool {
+	command = strings.ToLower(strings.TrimSpace(command))
+	if !strings.HasPrefix(command, "kubectl ") {
+		return false
+	}
+	for _, verb := range []string{" get ", " describe ", " logs ", " top ", " auth can-i "} {
+		if strings.Contains(" "+command+" ", verb) {
 			return true
 		}
 	}

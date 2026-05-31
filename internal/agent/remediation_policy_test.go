@@ -23,7 +23,7 @@ func TestRemediationPolicyRiskStates(t *testing.T) {
 	for _, execution := range executions {
 		statuses[execution.ActionID] = execution.Status
 	}
-	if statuses["read_logs-1"] != model.RemediationExecutionStatusProposed {
+	if statuses["read_logs-1"] != model.RemediationExecutionStatusDryRunSuccess {
 		t.Fatalf("unexpected low-risk status: %s", statuses["read_logs-1"])
 	}
 	if statuses["patch_probe-2"] != model.RemediationExecutionStatusPendingApproval {

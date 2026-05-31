@@ -594,6 +594,10 @@ func (s *DiagnosisService) enhanceReportWithLLM(ctx context.Context, taskID uint
 	if s.llmClient == nil {
 		return
 	}
+	if s.llmGroundingEnabled() {
+		s.enhanceReportWithGroundedLLM(ctx, taskID, diagCtx, report, runbookHits, ruleResult)
+		return
+	}
 	prompt := llm.BuildPrompt(diagCtx, ruleResult, report.Evidences, runbookHits)
 	var summary *llm.EnhancedSummary
 	start := time.Now()
@@ -625,6 +629,76 @@ func (s *DiagnosisService) enhanceReportWithLLM(ctx context.Context, taskID uint
 	}
 	observability.IncLLMCallTotal("success")
 	report.LLMEnhancedSummary = summary
+}
+
+func (s *DiagnosisService) enhanceReportWithGroundedLLM(ctx context.Context, taskID uint, diagCtx *diagnostic.DiagnosticContext, report *diagnostic.Report, runbookHits []rag.Hit, ruleResult llm.RuleBasedResult) {
+	generator, ok := s.llmClient.(llm.GroundedSummaryGenerator)
+	if !ok {
+		observability.IncLLMGroundingFallback("unsupported_client")
+		appendLLMWarning(report, "Grounded LLM enhancement unavailable", "LLM client does not implement grounded summary generation; kept rule-based report.", nil)
+		return
+	}
+	prompt := llm.BuildGroundedPrompt(diagCtx, ruleResult, report.Evidences, runbookHits)
+	var grounded *llm.GroundedSummary
+	start := time.Now()
+	ctx, span := observability.Tracer().Start(ctx, "diagnosis.llm_grounded")
+	err := resilience.Do(ctx, s.llmRetryConfig(), func() error {
+		var err error
+		grounded, err = generator.GenerateGroundedSummary(ctx, prompt)
+		return err
+	})
+	s.recordLLMUsage(ctx, taskID)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
+	observability.ObserveDiagnosisStage("llm_grounded", time.Since(start))
+	if err != nil {
+		observability.IncLLMCallTotal("failed")
+		observability.IncLLMGroundingFallback("llm_error")
+		if s.log != nil {
+			s.log.Warn("grounded llm enhancement failed; keep rule-based report", zap.Error(err))
+		}
+		appendLLMWarning(report, "Grounded LLM enhancement failed", err.Error(), map[string]string{"error": err.Error()})
+		return
+	}
+	observability.IncLLMCallTotal("success")
+	validation := llm.NewEvidenceValidatorFromConfig(prompt.Evidences, s.cfg.LLM.Grounding).Validate(grounded)
+	observability.ObserveLLMGrounding(validation.Decision, validation.HallucinationRisk, validation.UngroundedClaims)
+	if validation.Decision == llm.GroundingDecisionRejected {
+		observability.IncLLMGroundingFallback("hallucination_risk")
+		appendLLMWarning(report, "Grounded LLM rejected", fmt.Sprintf("hallucination_risk=%.2f; kept rule-based report", validation.HallucinationRisk), validation)
+		return
+	}
+	if validation.Decision == llm.GroundingDecisionDegraded {
+		appendLLMWarning(report, "Grounded LLM quality warning", fmt.Sprintf("hallucination_risk=%.2f; ungrounded_claims=%d", validation.HallucinationRisk, validation.UngroundedClaims), validation)
+	}
+	if validation.Summary == nil {
+		observability.IncLLMGroundingFallback("empty_validated_summary")
+		appendLLMWarning(report, "Grounded LLM rejected", "validated summary is empty; kept rule-based report", validation)
+		return
+	}
+	summary := validation.Summary.ToEnhancedSummary(ruleResult)
+	report.LLMEnhancedSummary = summary
+}
+
+func (s *DiagnosisService) llmGroundingEnabled() bool {
+	return s != nil && s.cfg != nil && s.cfg.LLM.Grounding.Enabled
+}
+
+func appendLLMWarning(report *diagnostic.Report, title, content string, raw interface{}) {
+	if report == nil {
+		return
+	}
+	report.Evidences = append(report.Evidences, diagnostic.EvidenceRecord{
+		SourceType: "llm",
+		Title:      title,
+		Content:    content,
+		Severity:   "warning",
+		Raw:        raw,
+		Timestamp:  time.Now(),
+	})
 }
 
 func (s *DiagnosisService) recordLLMUsage(ctx context.Context, taskID uint) {

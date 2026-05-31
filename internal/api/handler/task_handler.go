@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"kubesage/internal/model"
 
@@ -11,13 +12,18 @@ import (
 )
 
 type TaskHandler struct {
-	service   TaskReader
-	canceller TaskCanceller
+	service           TaskReader
+	canceller         TaskCanceller
+	allowedNamespaces []string
 }
 
 type TaskReader interface {
 	GetTask(ctx context.Context, id uint) (*model.DiagnosisTask, error)
 	ListTasks(ctx context.Context, page, pageSize int) ([]model.DiagnosisTask, int64, error)
+}
+
+type NamespaceTaskReader interface {
+	ListTasksByNamespaces(ctx context.Context, page, pageSize int, namespaces []string) ([]model.DiagnosisTask, int64, error)
 }
 
 type TaskCanceller interface {
@@ -33,6 +39,10 @@ func NewTaskHandler(service TaskReader, canceller ...TaskCanceller) *TaskHandler
 	return h
 }
 
+func (h *TaskHandler) SetAllowedNamespaces(namespaces []string) {
+	h.allowedNamespaces = namespaces
+}
+
 // GetTask loads one diagnosis task and its report/evidence by task ID.
 func (h *TaskHandler) GetTask(c *gin.Context) {
 	id64, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -43,6 +53,10 @@ func (h *TaskHandler) GetTask(c *gin.Context) {
 	task, err := h.service.GetTask(c.Request.Context(), uint(id64))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": err.Error()})
+		return
+	}
+	if !namespaceAllowed(task.Namespace, h.allowedNamespaces) {
+		c.JSON(http.StatusForbidden, gin.H{"code": 403, "message": "namespace is not allowed"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": task})
@@ -56,7 +70,7 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 		pageSize = 100
 	}
 
-	tasks, total, err := h.service.ListTasks(c.Request.Context(), page, pageSize)
+	tasks, total, err := h.listTasks(c.Request.Context(), page, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
 		return
@@ -67,6 +81,50 @@ func (h *TaskHandler) ListTasks(c *gin.Context) {
 		"page":      page,
 		"page_size": pageSize,
 	}})
+}
+
+func (h *TaskHandler) listTasks(ctx context.Context, page, pageSize int) ([]model.DiagnosisTask, int64, error) {
+	if namespaceWildcard(h.allowedNamespaces) {
+		return h.service.ListTasks(ctx, page, pageSize)
+	}
+	if reader, ok := h.service.(NamespaceTaskReader); ok {
+		return reader.ListTasksByNamespaces(ctx, page, pageSize, h.allowedNamespaces)
+	}
+	tasks, _, err := h.service.ListTasks(ctx, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	filtered := make([]model.DiagnosisTask, 0, len(tasks))
+	for _, task := range tasks {
+		if namespaceAllowed(task.Namespace, h.allowedNamespaces) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered, int64(len(filtered)), nil
+}
+
+func namespaceWildcard(allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, namespace := range allowed {
+		if strings.TrimSpace(namespace) == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func namespaceAllowed(namespace string, allowed []string) bool {
+	if namespaceWildcard(allowed) {
+		return true
+	}
+	for _, item := range allowed {
+		if strings.TrimSpace(item) == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // parsePositiveInt parses a positive integer query parameter with a fallback.

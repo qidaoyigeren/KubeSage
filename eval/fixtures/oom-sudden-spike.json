@@ -1,0 +1,62 @@
+{
+  "namespace": "eval",
+  "pod_name": "oom-sudden-spike",
+  "pod": {
+    "metadata": {"name": "oom-sudden-spike", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "worker",
+          "image": "example.com/worker:v2",
+          "resources": {
+            "requests": {"memory": "128Mi"},
+            "limits": {"memory": "256Mi"}
+          }
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "worker",
+          "restartCount": 1,
+          "state": {"running": {"startedAt": "2026-05-31T02:01:00Z"}},
+          "lastState": {"terminated": {"reason": "OOMKilled", "exitCode": 137, "finishedAt": "2026-05-31T02:00:00Z"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "oom-sudden-spike.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "OOMKilled",
+      "message": "Container worker was OOMKilled after a sudden memory spike",
+      "lastTimestamp": "2026-05-31T02:00:01Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "worker",
+      "Previous": "batch import caused heap allocation spike and oom",
+      "precise": true
+    }
+  ],
+  "metric_trends": [
+    {
+      "profile": "pod",
+      "metric": "container_memory_working_set_bytes",
+      "window": "1h",
+      "classification": "sudden_spike",
+      "sample_count": 8,
+      "first_value": 67108864,
+      "last_value": 260046848,
+      "min_value": 67108864,
+      "max_value": 260046848,
+      "avg_value": 180000000,
+      "growth_ratio": 3.8
+    }
+  ],
+  "metrics_enabled": true
+}

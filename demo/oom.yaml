@@ -1,0 +1,14 @@
+﻿apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-oom
+  namespace: default
+spec:
+  restartPolicy: Never
+  containers:
+  - name: oom
+    image: busybox
+    command: ["sh", "-c", "x=''; while true; do x=$x$(head -c 10000 /dev/urandom | base64); done"]
+    resources:
+      limits:
+        memory: "10Mi"

@@ -8,6 +8,12 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /me:
+    get:
+      summary: Return authenticated actor, role, and namespace allowlist
+      responses:
+        '200':
+          description: Current user context
   /diagnose/pod:
     post:
       summary: Start a Pod diagnosis
@@ -106,6 +112,62 @@ paths:
       responses:
         '200':
           description: Updated runbook
+  /audit-logs:
+    get:
+      summary: List audit log entries
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated audit logs
+  /dead-letters:
+    get:
+      summary: List diagnosis queue dead letters
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+      responses:
+        '200':
+          description: Paginated dead-letter entries
+  /dead-letters/{id}/retry:
+    post:
+      summary: Retry a diagnosis dead-letter payload as a fresh task
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Newly scheduled diagnosis task
+  /remediation/pending:
+    get:
+      summary: List remediation executions waiting for approval
+      responses:
+        '200':
+          description: Pending remediation executions
+  /remediation/{id}/approve:
+    post:
+      summary: Approve a pending remediation execution
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Approval accepted
+  /remediation/{id}/reject:
+    post:
+      summary: Reject a pending remediation execution
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Rejection accepted
 components:
   securitySchemes:
     bearerAuth:

@@ -8,6 +8,7 @@ import (
 
 	"kubesage/internal/alertmanager"
 	"kubesage/internal/api/handler"
+	"kubesage/internal/config"
 	"kubesage/internal/k8s"
 	"kubesage/internal/service"
 
@@ -25,6 +26,7 @@ type RouterOptions struct {
 	K8sClient         *k8s.Client
 	AuthToken         string
 	AuthMode          string
+	Auth              config.AuthConfig
 }
 
 // NewRouter wires all HTTP routes and their handlers into a Gin engine.
@@ -38,6 +40,7 @@ func NewRouter(opts RouterOptions) *gin.Engine {
 	healthHandler := handler.NewHealthHandler(opts.DB, opts.K8sClient)
 	diagnoseHandler := handler.NewDiagnoseHandler(opts.DiagnosisService, opts.Authorizer, opts.OperationsService)
 	taskHandler := handler.NewTaskHandler(opts.DiagnosisService, opts.DiagnosisService)
+	taskHandler.SetAllowedNamespaces(opts.Auth.AllowedNamespaces)
 	operationsHandler := handler.NewOperationsHandler(opts.OperationsService)
 	alertHandler := alertmanager.NewWebhookHandler(opts.DiagnosisService, opts.Logger)
 
@@ -48,10 +51,21 @@ func NewRouter(opts RouterOptions) *gin.Engine {
 	router.StaticFile("/openapi.yaml", "./docs/openapi.yaml")
 
 	v1 := router.Group("/api/v1")
-	v1.Use(authMiddleware(opts.AuthMode, opts.AuthToken, opts.K8sClient))
+	authCfg := opts.Auth
+	if authCfg.Mode == "" {
+		authCfg.Mode = opts.AuthMode
+	}
+	v1.Use(authMiddleware(authCfg.Mode, opts.AuthToken, opts.K8sClient, authCfg))
 	v1.Use(auditMiddleware(opts.OperationsService, opts.Logger))
 	{
-		v1.POST("/diagnose/pod", diagnoseHandler.DiagnosePod)
+		v1.GET("/me", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"code": 0, "message": "success", "data": gin.H{
+				"actor":              Actor(c),
+				"role":               ActorRole(c),
+				"allowed_namespaces": authCfg.AllowedNamespaces,
+			}})
+		})
+		v1.POST("/diagnose/pod", RequireOperator(), diagnoseHandler.DiagnosePod)
 		v1.GET("/diagnose/tasks/:id", taskHandler.GetTask)
 		v1.GET("/diagnose/tasks", taskHandler.ListTasks)
 		v1.POST("/diagnose/tasks/:id/cancel", RequireOperator(), taskHandler.CancelTask)
@@ -59,10 +73,12 @@ func NewRouter(opts RouterOptions) *gin.Engine {
 		v1.GET("/dashboard/summary", operationsHandler.DashboardSummary)
 		v1.GET("/dashboard/trends", operationsHandler.DashboardTrends)
 		v1.GET("/runbooks", operationsHandler.ListRunbooks)
-		v1.POST("/runbooks", RequireOperator(), operationsHandler.CreateRunbook)
-		v1.PUT("/runbooks/:id", RequireOperator(), operationsHandler.UpdateRunbook)
-		v1.GET("/audit-logs", operationsHandler.ListAuditLogs)
-		v1.GET("/remediation/pending", operationsHandler.ListPendingApprovals)
+		v1.POST("/runbooks", RequireAdmin(), operationsHandler.CreateRunbook)
+		v1.PUT("/runbooks/:id", RequireAdmin(), operationsHandler.UpdateRunbook)
+		v1.GET("/audit-logs", RequireAdmin(), operationsHandler.ListAuditLogs)
+		v1.GET("/dead-letters", RequireOperator(), operationsHandler.ListDeadLetters)
+		v1.POST("/dead-letters/:id/retry", RequireOperator(), operationsHandler.RetryDeadLetter)
+		v1.GET("/remediation/pending", RequireOperator(), operationsHandler.ListPendingApprovals)
 		v1.POST("/remediation/:id/approve", RequireOperator(), operationsHandler.ApproveRemediation)
 		v1.POST("/remediation/:id/reject", RequireOperator(), operationsHandler.RejectRemediation)
 		v1.POST("/alertmanager/webhook", alertHandler.Handle)

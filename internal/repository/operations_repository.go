@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"kubesage/internal/model"
@@ -152,6 +153,37 @@ func (r *DeadLetterRepository) Create(ctx context.Context, entry *model.Diagnosi
 	return r.db.WithContext(ctx).Create(entry).Error
 }
 
+func (r *DeadLetterRepository) List(ctx context.Context, page, pageSize int) ([]model.DiagnosisQueueDeadLetter, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+	var total int64
+	var entries []model.DiagnosisQueueDeadLetter
+	base := r.db.WithContext(ctx).Model(&model.DiagnosisQueueDeadLetter{})
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := base.Order("created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&entries).Error
+	return entries, total, err
+}
+
+func (r *DeadLetterRepository) Get(ctx context.Context, id uint) (*model.DiagnosisQueueDeadLetter, error) {
+	var entry model.DiagnosisQueueDeadLetter
+	if err := r.db.WithContext(ctx).First(&entry, id).Error; err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+func (r *DeadLetterRepository) CountSince(ctx context.Context, since time.Time) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.DiagnosisQueueDeadLetter{}).Where("created_at >= ?", since).Count(&count).Error
+	return count, err
+}
+
 func (r *LLMUsageRepository) Create(ctx context.Context, entry *model.LLMUsageRecord) error {
 	return r.db.WithContext(ctx).Create(entry).Error
 }
@@ -163,15 +195,22 @@ type DashboardSummary struct {
 	FailedTasks            int64             `json:"failed_tasks"`
 	SuccessRate            float64           `json:"success_rate"`
 	AverageDurationSeconds float64           `json:"average_duration_seconds"`
+	P95DurationSeconds     float64           `json:"p95_duration_seconds"`
 	FeedbackUseful         int64             `json:"feedback_useful"`
 	FeedbackNotUseful      int64             `json:"feedback_not_useful"`
 	FeedbackAccuracyRate   float64           `json:"feedback_accuracy_rate"`
 	TopRootCauses          []DashboardBucket `json:"top_root_causes"`
 	AnalyzerHitRates       []DashboardBucket `json:"analyzer_hit_rates"`
+	ToolCalls              int64             `json:"tool_calls"`
+	ToolFailures           int64             `json:"tool_failures"`
+	ToolFailureRate        float64           `json:"tool_failure_rate"`
 	LLMCalls               map[string]int64  `json:"llm_calls"`
+	LLMFailureRate         float64           `json:"llm_failure_rate"`
 	LLMTotalTokens         int64             `json:"llm_total_tokens"`
 	LLMAverageLatencyMS    float64           `json:"llm_average_latency_ms"`
 	LLMEstimatedCost       float64           `json:"llm_estimated_cost"`
+	LLMAverageTokenCost    float64           `json:"llm_average_token_cost"`
+	DeadLetters            int64             `json:"dead_letters"`
 }
 
 type DashboardBucket struct {
@@ -213,6 +252,19 @@ func (r *DashboardRepository) Summary(ctx context.Context, since time.Time) (*Da
 		return nil, err
 	}
 	summary.AverageDurationSeconds = avg.Average
+	type durationRow struct{ Duration float64 }
+	var durationRows []durationRow
+	if err := r.db.WithContext(ctx).Raw(
+		"SELECT TIMESTAMPDIFF(MICROSECOND, created_at, finished_at) / 1000000 AS duration FROM diagnosis_tasks WHERE created_at >= ? AND finished_at IS NOT NULL ORDER BY duration ASC",
+		since,
+	).Scan(&durationRows).Error; err != nil {
+		return nil, err
+	}
+	durations := make([]float64, 0, len(durationRows))
+	for _, row := range durationRows {
+		durations = append(durations, row.Duration)
+	}
+	summary.P95DurationSeconds = percentile(durations, 0.95)
 	if err := r.db.WithContext(ctx).Model(&model.DiagnosisFeedback{}).Where("created_at >= ? AND rating = ?", since, model.FeedbackRatingUseful).Count(&summary.FeedbackUseful).Error; err != nil {
 		return nil, err
 	}
@@ -238,6 +290,21 @@ func (r *DashboardRepository) Summary(ctx context.Context, since time.Time) (*Da
 		return nil, err
 	}
 	summary.AnalyzerHitRates = analyzerRows
+	type countRow struct {
+		Total  int64
+		Failed int64
+	}
+	var toolCounts countRow
+	if err := r.db.WithContext(ctx).Raw(
+		"SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS failed FROM agent_steps WHERE created_at >= ? AND stage = 'tool_call'",
+		model.AgentStepStatusFailed,
+		since,
+	).Scan(&toolCounts).Error; err != nil {
+		return nil, err
+	}
+	summary.ToolCalls = toolCounts.Total
+	summary.ToolFailures = toolCounts.Failed
+	summary.ToolFailureRate = ratio(toolCounts.Failed, toolCounts.Total)
 	type llmRow struct {
 		Status string
 		Count  int64
@@ -249,17 +316,24 @@ func (r *DashboardRepository) Summary(ctx context.Context, since time.Time) (*Da
 	).Scan(&llmRows).Error; err != nil {
 		return nil, err
 	}
+	var llmTotal, llmFailed int64
 	for _, row := range llmRows {
 		summary.LLMCalls[row.Status] = row.Count
+		llmTotal += row.Count
+		if row.Status == model.AgentStepStatusFailed {
+			llmFailed += row.Count
+		}
 	}
+	summary.LLMFailureRate = ratio(llmFailed, llmTotal)
 	type llmUsageRow struct {
 		TotalTokens int64
 		AvgLatency  float64
 		Cost        float64
+		Count       int64
 	}
 	var usage llmUsageRow
 	if err := r.db.WithContext(ctx).Raw(
-		"SELECT COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(AVG(latency_ms), 0) AS avg_latency, COALESCE(SUM(estimated_cost), 0) AS cost FROM llm_usage_records WHERE created_at >= ?",
+		"SELECT COALESCE(SUM(total_tokens), 0) AS total_tokens, COALESCE(AVG(latency_ms), 0) AS avg_latency, COALESCE(SUM(estimated_cost), 0) AS cost, COUNT(*) AS count FROM llm_usage_records WHERE created_at >= ?",
 		since,
 	).Scan(&usage).Error; err != nil {
 		return nil, err
@@ -267,7 +341,40 @@ func (r *DashboardRepository) Summary(ctx context.Context, since time.Time) (*Da
 	summary.LLMTotalTokens = usage.TotalTokens
 	summary.LLMAverageLatencyMS = usage.AvgLatency
 	summary.LLMEstimatedCost = usage.Cost
+	if usage.Count > 0 {
+		summary.LLMAverageTokenCost = usage.Cost / float64(usage.Count)
+	}
+	if err := r.db.WithContext(ctx).Model(&model.DiagnosisQueueDeadLetter{}).Where("created_at >= ?", since).Count(&summary.DeadLetters).Error; err != nil {
+		return nil, err
+	}
 	return summary, nil
+}
+
+func percentile(values []float64, quantile float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	if quantile <= 0 {
+		return values[0]
+	}
+	if quantile >= 1 {
+		return values[len(values)-1]
+	}
+	index := int(math.Ceil(quantile*float64(len(values)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(values) {
+		index = len(values) - 1
+	}
+	return values[index]
+}
+
+func ratio(part, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(part) / float64(total)
 }
 
 func (r *DashboardRepository) Trends(ctx context.Context, since time.Time) ([]DashboardTrendPoint, error) {

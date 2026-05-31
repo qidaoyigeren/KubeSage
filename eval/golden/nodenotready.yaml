@@ -1,0 +1,25 @@
+id: nodenotready
+manifest: manifests/nodenotready.yaml
+target:
+  pod_name: nodenotready
+  container_name: app
+  wait_condition: node_ready=false
+  timeout_seconds: 180
+expected_fault_type: NodeNotReady
+expected_root_cause_keywords:
+  - node
+  - notready
+required_evidence:
+  - node
+  - notready
+confidence_range:
+  min: 0.80
+  max: 1.0
+expected_actions:
+  - node
+max_duration_seconds: 240
+setup:
+  - "{kubectl} {kubeconfig_arg} -n {namespace} wait --for=condition=Ready pod/nodenotready --timeout=120s"
+  - "docker pause kubesage-eval-worker"
+teardown:
+  - "docker unpause kubesage-eval-worker"

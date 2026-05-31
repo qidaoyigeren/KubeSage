@@ -26,6 +26,10 @@ tmp/
 
 # Coverage
 coverage.out
+eval-results.json
+eval-summary.md
+eval-results.md
+eval-comparison.md
 
 # Frontend dependencies and build output
 web/node_modules/

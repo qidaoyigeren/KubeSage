@@ -1,0 +1,44 @@
+{
+  "namespace": "eval",
+  "pod_name": "crashloop-connection-refused",
+  "pod": {
+    "metadata": {"name": "crashloop-connection-refused", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "api",
+          "image": "example.com/api:v8",
+          "env": [{"name": "DATABASE_URL", "value": "postgres://db:5432/app"}]
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "api",
+          "restartCount": 4,
+          "state": {"waiting": {"reason": "CrashLoopBackOff", "message": "back-off restarting failed container"}},
+          "lastState": {"terminated": {"reason": "Error", "exitCode": 1, "finishedAt": "2026-05-31T05:00:00Z"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "crashloop-connection-refused.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container api",
+      "lastTimestamp": "2026-05-31T05:00:01Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "api",
+      "Previous": "fatal: database connection refused during startup",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": false
+}

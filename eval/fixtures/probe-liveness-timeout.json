@@ -1,0 +1,44 @@
+{
+  "namespace": "eval",
+  "pod_name": "probe-liveness-timeout",
+  "pod": {
+    "metadata": {"name": "probe-liveness-timeout", "namespace": "eval"},
+    "spec": {
+      "containers": [
+        {
+          "name": "api",
+          "image": "example.com/api:slow",
+          "livenessProbe": {
+            "httpGet": {"path": "/live", "port": 8080, "scheme": "HTTP"},
+            "initialDelaySeconds": 2,
+            "timeoutSeconds": 1,
+            "failureThreshold": 3
+          }
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {"name": "api", "restartCount": 1, "state": {"running": {"startedAt": "2026-05-31T14:00:00Z"}}}
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "probe-liveness-timeout.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "Unhealthy",
+      "message": "Liveness probe failed: Get http://10.1.1.9:8080/live: timeout",
+      "lastTimestamp": "2026-05-31T14:00:30Z"
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "api",
+      "Current": "health endpoint timeout after dependency latency spike",
+      "precise": true
+    }
+  ],
+  "metrics_enabled": false
+}

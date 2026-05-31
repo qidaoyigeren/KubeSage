@@ -1,0 +1,37 @@
+{
+  "namespace": "eval",
+  "pod_name": "imagepull-unauthorized",
+  "pod": {
+    "metadata": {"name": "imagepull-unauthorized", "namespace": "eval"},
+    "spec": {
+      "imagePullSecrets": [{"name": "regcred"}],
+      "containers": [
+        {
+          "name": "app",
+          "image": "private.registry.example.com/app:v1",
+          "imagePullPolicy": "Always"
+        }
+      ]
+    },
+    "status": {
+      "phase": "Pending",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "restartCount": 0,
+          "state": {"waiting": {"reason": "ErrImagePull", "message": "unauthorized: authentication required"}}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "imagepull-unauthorized.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "Failed",
+      "message": "Failed to pull image private.registry.example.com/app:v1: unauthorized: authentication required",
+      "lastTimestamp": "2026-05-31T12:00:00Z"
+    }
+  ],
+  "metrics_enabled": false
+}
