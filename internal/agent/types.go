@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"kubesage/internal/diagnostic"
@@ -164,6 +165,7 @@ type ToolResult struct {
 }
 
 type ToolState struct {
+	mu                 sync.Mutex
 	TaskID             uint
 	Goal               Goal
 	DiagnosticContext  *diagnostic.DiagnosticContext
@@ -171,6 +173,7 @@ type ToolState struct {
 	RunbookHits        []RunbookHit
 	RemediationActions []diagnostic.RemediationAction
 	Executions         []model.RemediationExecution
+	CompletedTools     map[string]bool
 }
 
 type Tool interface {
