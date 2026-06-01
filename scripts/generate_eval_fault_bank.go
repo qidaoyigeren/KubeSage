@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,9 +159,34 @@ func main() {
 	if err := writeDemoManifests(cases); err != nil {
 		fatalf("write demo manifests: %v", err)
 	}
+	coreCases, err := loadGeneratedCasesFromSuite(filepath.Join("eval", "cases", "core.yaml"))
+	if err != nil {
+		fatalf("load core cases for demo manifests: %v", err)
+	}
+	evalSuiteCases := append(append([]generatedCase{}, coreCases...), cases...)
+	if err := writeEvalSuiteDemoManifests(evalSuiteCases); err != nil {
+		fatalf("write eval-suite demo manifests: %v", err)
+	}
 
 	fmt.Printf("generated %d fault-bank cases in %s and %s\n", len(outCases), fixtureDir, casePath)
 	fmt.Printf("generated kubectl demo manifests in %s\n", filepath.Join("demo", "fault-bank"))
+	fmt.Printf("generated %d eval-suite kubectl demo manifests in %s\n", len(evalSuiteCases), filepath.Join("demo", "eval-suite"))
+}
+
+func loadGeneratedCasesFromSuite(casePath string) ([]generatedCase, error) {
+	cases, err := eval.LoadCases(casePath)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]generatedCase, 0, len(cases))
+	for _, item := range cases {
+		ctx, err := eval.ReadFixture(item.Fixture, context.Background())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, generatedCase{Case: item, Ctx: ctx})
+	}
+	return out, nil
 }
 
 func buildFaultBank() []generatedCase {
@@ -1123,7 +1149,14 @@ func httpProbe(path string, port, initialDelay, timeout, failureThreshold int32)
 }
 
 func writeDemoManifests(cases []generatedCase) error {
-	demoDir := filepath.Join("demo", "fault-bank")
+	return writeDemoManifestsAt(filepath.Join("demo", "fault-bank"), cases, demoReadme(len(cases)))
+}
+
+func writeEvalSuiteDemoManifests(cases []generatedCase) error {
+	return writeDemoManifestsAt(filepath.Join("demo", "eval-suite"), cases, evalSuiteDemoReadme(len(cases)))
+}
+
+func writeDemoManifestsAt(demoDir string, cases []generatedCase, readme string) error {
 	if err := os.MkdirAll(demoDir, 0o755); err != nil {
 		return err
 	}
@@ -1146,7 +1179,7 @@ func writeDemoManifests(cases []generatedCase) error {
 	if err := os.WriteFile(filepath.Join(demoDir, "kustomization.yaml"), []byte(demoKustomization()), 0o644); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(demoDir, "README.md"), []byte(demoReadme(len(cases))), 0o644)
+	return os.WriteFile(filepath.Join(demoDir, "README.md"), []byte(readme), 0o644)
 }
 
 func writeYAMLDocuments(path string, docs []interface{}) error {
@@ -1258,6 +1291,47 @@ kubectl get pods -n %s -l kubesage.io/fault-bank=true
 `, caseCount, faultBankNamespace, faultBankNamespace, faultBankNamespace)
 }
 
+func evalSuiteDemoReadme(caseCount int) string {
+	return fmt.Sprintf(`# KubeSage Eval Suite Demo
+
+This directory contains %d generated Kubernetes demo scenarios that mirror the full offline eval suite:
+
+- eval/cases/core.yaml
+- eval/cases/fault-bank.yaml
+
+Apply:
+
+`+"```bash"+`
+kubectl apply -k demo/eval-suite
+`+"```"+`
+
+Watch:
+
+`+"```bash"+`
+kubectl get pods -n %s -w
+kubectl get events -n %s --sort-by=.lastTimestamp
+`+"```"+`
+
+Delete:
+
+`+"```bash"+`
+kubectl delete -k demo/eval-suite --ignore-not-found
+`+"```"+`
+
+Notes:
+
+- This is the live-cluster companion for the default 55-case offline suite.
+- NodeNotReady cases remain placeholders; exact NodeNotReady reproduction requires node-level fault injection in a disposable cluster.
+- Several scenarios intentionally use invalid images, impossible requests, failing probes, and tight resource limits. Apply this only to a dev or disposable cluster.
+
+List scenario pods:
+
+`+"```bash"+`
+kubectl get pods -n %s -l kubesage.io/fault-bank=true
+`+"```"+`
+`, caseCount, faultBankNamespace, faultBankNamespace, faultBankNamespace)
+}
+
 func demoResources(item generatedCase) []interface{} {
 	faultType := item.Case.GoldenAnswer.ExpectedFaultType
 	resources := []interface{}{}
@@ -1348,9 +1422,10 @@ func pendingDemoResources(item generatedCase) []interface{} {
 	}
 	resources := []interface{}{}
 	if len(item.Ctx.PVCs) > 0 {
-		resources = append(resources, pvcManifest(item, item.Ctx.PVCs[0]))
+		claimName := pvcDemoName(item, item.Ctx.PVCs[0])
+		resources = append(resources, pvcManifest(item, item.Ctx.PVCs[0], claimName))
 		containerMap["volumeMounts"] = []map[string]interface{}{{"name": "data", "mountPath": "/data"}}
-		podSpec["volumes"] = []map[string]interface{}{{"name": "data", "persistentVolumeClaim": map[string]string{"claimName": item.Ctx.PVCs[0].Name}}}
+		podSpec["volumes"] = []map[string]interface{}{{"name": "data", "persistentVolumeClaim": map[string]string{"claimName": claimName}}}
 	}
 	resources = append(resources, podManifest(item, []map[string]interface{}{containerMap}, podSpec))
 	return resources
@@ -1495,16 +1570,19 @@ func podManifest(item generatedCase, containers []map[string]interface{}, specEx
 	}
 }
 
-func pvcManifest(item generatedCase, pvc diagnostic.PVCBrief) map[string]interface{} {
+func pvcManifest(item generatedCase, pvc diagnostic.PVCBrief, name string) map[string]interface{} {
 	capacity := pvc.Capacity
 	if capacity == "" {
 		capacity = "1Gi"
+	}
+	if name == "" {
+		name = pvcDemoName(item, pvc)
 	}
 	return map[string]interface{}{
 		"apiVersion": "v1",
 		"kind":       "PersistentVolumeClaim",
 		"metadata": map[string]interface{}{
-			"name":      pvc.Name,
+			"name":      name,
 			"namespace": faultBankNamespace,
 			"labels":    demoLabels(item),
 		},
@@ -1516,6 +1594,14 @@ func pvcManifest(item generatedCase, pvc diagnostic.PVCBrief) map[string]interfa
 			},
 		},
 	}
+}
+
+func pvcDemoName(item generatedCase, pvc diagnostic.PVCBrief) string {
+	name := pvc.Name
+	if name == "" {
+		name = "data"
+	}
+	return sanitizeEventName(item.Case.ID + "-" + name)
 }
 
 func eventDemoResources(item generatedCase) []interface{} {
@@ -1561,10 +1647,14 @@ func demoLabels(item generatedCase) map[string]string {
 }
 
 func demoAnnotations(item generatedCase) map[string]string {
+	sourcePath := item.Case.SourcePath
+	if sourcePath == "" {
+		sourcePath = filepath.Join("eval", "cases", "fault-bank.yaml")
+	}
 	return map[string]string{
 		"kubesage.io/expected-fault": item.Case.GoldenAnswer.ExpectedFaultType,
 		"kubesage.io/root-cause":     item.Case.GoldenAnswer.RootCause,
-		"kubesage.io/offline-case":   filepath.ToSlash(filepath.Join("eval", "cases", "fault-bank.yaml")),
+		"kubesage.io/offline-case":   filepath.ToSlash(sourcePath),
 	}
 }
 

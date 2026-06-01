@@ -23,6 +23,509 @@ kind: Pod
 metadata:
     annotations:
         kubesage.io/expected-fault: OOMKilled
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
+    labels:
+        app: oom-limit-too-low
+        kubesage.io/case-id: oom-limit-too-low
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: oom-limit-too-low
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              import time
+              print("fatal: out of memory while allocating request buffer; memory limit reached", flush=True)
+              buf=[]
+              while True:
+                  buf.append(bytearray(8*1024*1024))
+                  time.sleep(0.05)
+          image: python:3.12-alpine
+          name: app
+          resources:
+            limits:
+                memory: 128Mi
+            requests:
+                memory: 64Mi
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: OOMKilled
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: OOMKilled Java heap memory limit exitCode 137
+    labels:
+        app: oom-java-heap
+        kubesage.io/case-id: oom-java-heap
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: oom-java-heap
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              import time
+              print("java.lang.OutOfMemoryError: Java heap space", flush=True)
+              buf=[]
+              while True:
+                  buf.append(bytearray(8*1024*1024))
+                  time.sleep(0.05)
+          image: python:3.12-alpine
+          name: app
+          resources:
+            limits:
+                memory: 512Mi
+            requests:
+                memory: 256Mi
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: OOMKilled
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: OOMKilled sudden memory spike working set memory limit
+    labels:
+        app: oom-sudden-spike
+        kubesage.io/case-id: oom-sudden-spike
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: oom-sudden-spike
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              import time
+              print("batch import caused heap allocation spike and oom", flush=True)
+              buf=[]
+              while True:
+                  buf.append(bytearray(8*1024*1024))
+                  time.sleep(0.05)
+          image: python:3.12-alpine
+          name: app
+          resources:
+            limits:
+                memory: 256Mi
+            requests:
+                memory: 128Mi
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: OOMKilled
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: OOMKilled exitCode 137 without Prometheus metrics
+    labels:
+        app: oom-no-metrics
+        kubesage.io/case-id: oom-no-metrics
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: oom-no-metrics
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              import time
+              print("process killed after memory limit was exceeded", flush=True)
+              buf=[]
+              while True:
+                  buf.append(bytearray(8*1024*1024))
+                  time.sleep(0.05)
+          image: python:3.12-alpine
+          name: app
+          resources:
+            limits:
+                memory: 256Mi
+            requests:
+                memory: 128Mi
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: CrashLoopBackOff
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: CrashLoopBackOff restartCount exitCode 1 missing config
+    labels:
+        app: crashloop-missing-config
+        kubesage.io/case-id: crashloop-missing-config
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: crashloopbackoff
+    name: crashloop-missing-config
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - 'printf ''%s\n'' ''fatal: missing config file /etc/app/config.yaml''; exit 1'
+          image: busybox:1.36
+          name: app
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: CrashLoopBackOff
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: CrashLoopBackOff dependency connection refused startup failure
+    labels:
+        app: crashloop-connection-refused
+        kubesage.io/case-id: crashloop-connection-refused
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: crashloopbackoff
+    name: crashloop-connection-refused
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - 'printf ''%s\n'' ''fatal: database connection refused during startup''; exit 1'
+          image: busybox:1.36
+          name: app
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: CrashLoopBackOff
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: CrashLoopBackOff permission denied startup failure
+    labels:
+        app: crashloop-permission-denied
+        kubesage.io/case-id: crashloop-permission-denied
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: crashloopbackoff
+    name: crashloop-permission-denied
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - 'printf ''%s\n'' ''permission denied: /app/run.sh''; exit 126'
+          image: busybox:1.36
+          name: app
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: CrashLoopBackOff
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: CrashLoopBackOff panic fatal startup failure
+    labels:
+        app: crashloop-panic
+        kubesage.io/case-id: crashloop-panic
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: crashloopbackoff
+    name: crashloop-panic
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - 'printf ''%s\n'' ''panic: nil pointer dereference''; exit 2'
+          image: busybox:1.36
+          name: app
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: PodPending
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: PodPending FailedScheduling insufficient cpu requests
+    labels:
+        app: pending-insufficient-cpu
+        kubesage.io/case-id: pending-insufficient-cpu
+        kubesage.io/demo-surface: scheduler
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: podpending
+    name: pending-insufficient-cpu
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - sleep 3600
+          image: busybox:1.36
+          name: app
+          resources:
+            requests:
+                cpu: "100"
+                memory: 256Mi
+    restartPolicy: Never
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+    labels:
+        app: pending-unbound-pvc
+        kubesage.io/case-id: pending-unbound-pvc
+        kubesage.io/demo-surface: scheduler
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: podpending
+    name: pending-unbound-pvc-data
+    namespace: eval-bank
+spec:
+    accessModes:
+        - ReadWriteOnce
+    resources:
+        requests:
+            storage: 10Gi
+    storageClassName: kubesage-fault-bank-no-provisioner
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: PodPending
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: PodPending unbound PersistentVolumeClaim PVC not Bound
+    labels:
+        app: pending-unbound-pvc
+        kubesage.io/case-id: pending-unbound-pvc
+        kubesage.io/demo-surface: scheduler
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: podpending
+    name: pending-unbound-pvc
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - sleep 3600
+          image: busybox:1.36
+          name: app
+          resources:
+            requests:
+                cpu: 100m
+                memory: 256Mi
+          volumeMounts:
+            - mountPath: /data
+              name: data
+    restartPolicy: Never
+    volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pending-unbound-pvc-data
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: PodPending
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: PodPending untolerated taint scheduling constraint
+    labels:
+        app: pending-untolerated-taint
+        kubesage.io/case-id: pending-untolerated-taint
+        kubesage.io/demo-surface: scheduler
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: podpending
+    name: pending-untolerated-taint
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - sleep 3600
+          image: busybox:1.36
+          name: app
+          resources:
+            requests:
+                cpu: 100m
+                memory: 128Mi
+    nodeSelector:
+        kubesage.dev/tainted-pool: "true"
+    restartPolicy: Never
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: ImagePullBackOff
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: ImagePullBackOff image tag not found manifest unknown
+    labels:
+        app: imagepull-tag-not-found
+        kubesage.io/case-id: imagepull-tag-not-found
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: imagepullbackoff
+    name: imagepull-tag-not-found
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - sleep 3600
+          image: registry.example.com/app:missing
+          name: app
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: ImagePullBackOff
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: ImagePullBackOff unauthorized registry authentication imagePullSecret
+    labels:
+        app: imagepull-unauthorized
+        kubesage.io/case-id: imagepull-unauthorized
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: imagepullbackoff
+    name: imagepull-unauthorized
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - sleep 3600
+          image: private.registry.example.com/app:v1
+          name: app
+    imagePullSecrets:
+        - name: regcred
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: ProbeFailed
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: readiness probe failed 404 wrong health path
+    labels:
+        app: probe-readiness-404
+        kubesage.io/case-id: probe-readiness-404
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: probefailed
+    name: probe-readiness-404
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              from http.server import BaseHTTPRequestHandler, HTTPServer
+              class H(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      print("GET /healthz returned 404 health route not found", flush=True)
+                      self.send_response(404)
+                      self.end_headers()
+                      self.wfile.write(b'not found')
+              HTTPServer(('0.0.0.0', 8080), H).serve_forever()
+          image: python:3.12-alpine
+          name: app
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+                path: /healthz
+                port: 8080
+                scheme: HTTP
+            initialDelaySeconds: 1
+            periodSeconds: 0
+            timeoutSeconds: 1
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: ProbeFailed
+        kubesage.io/offline-case: eval/cases/core.yaml
+        kubesage.io/root-cause: liveness probe failed timeout health endpoint
+    labels:
+        app: probe-liveness-timeout
+        kubesage.io/case-id: probe-liveness-timeout
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: probefailed
+    name: probe-liveness-timeout
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              import time
+              from http.server import BaseHTTPRequestHandler, HTTPServer
+              class H(BaseHTTPRequestHandler):
+                  def do_GET(self):
+                      print("health endpoint timeout after dependency latency spike", flush=True)
+                      time.sleep(10)
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(b'ok')
+              HTTPServer(('0.0.0.0', 8080), H).serve_forever()
+          image: python:3.12-alpine
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+                path: /live
+                port: 8080
+                scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 0
+            timeoutSeconds: 1
+          name: app
+          ports:
+            - containerPort: 8080
+              name: http
+    restartPolicy: Always
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: OOMKilled
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
     labels:
