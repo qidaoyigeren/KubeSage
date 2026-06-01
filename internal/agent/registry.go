@@ -183,19 +183,48 @@ func newSnapshotTool(name, description string, critical bool, snapshot SnapshotF
 			if state == nil {
 				return failedTool(name, "tool state is nil")
 			}
-			if state.DiagnosticContext == nil {
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			if state.DiagnosticContext == nil || shouldRefreshSnapshotForTool(name, state) {
 				if snapshot == nil {
 					return failedTool(name, "snapshot collector is not configured")
 				}
-				diagCtx, err := snapshot(ctx, state.Goal)
+				goal := snapshotGoalForTool(name, state.Goal)
+				diagCtx, err := snapshot(ctx, goal)
 				if err != nil {
 					return ToolResult{ToolName: name, Success: false, Error: err.Error(), Observation: "快照采集失败"}
 				}
 				state.DiagnosticContext = diagCtx
+				state.Goal = goal
 			}
 			return observe(state.DiagnosticContext)
 		},
 	}
+}
+
+func shouldRefreshSnapshotForTool(name string, state *ToolState) bool {
+	if state == nil || state.DiagnosticContext == nil {
+		return false
+	}
+	switch canonicalToolName(name) {
+	case "k8s.get_events":
+		return len(state.DiagnosticContext.Events) == 0 && !state.Goal.IncludeEvents
+	case "k8s.get_logs":
+		return len(state.DiagnosticContext.Logs) == 0 && !state.Goal.IncludeLogs
+	default:
+		return false
+	}
+}
+
+func snapshotGoalForTool(name string, goal Goal) Goal {
+	switch canonicalToolName(name) {
+	case "k8s.get_events":
+		goal.IncludeEvents = true
+	case "k8s.get_logs":
+		goal.IncludeEvents = true
+		goal.IncludeLogs = true
+	}
+	return goal
 }
 
 func podObservation(ctx *diagnostic.DiagnosticContext) ToolResult {

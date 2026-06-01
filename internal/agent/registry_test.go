@@ -12,6 +12,8 @@ import (
 	"kubesage/internal/diagnostic"
 	"kubesage/internal/loki"
 	"kubesage/internal/prometheus"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestToolRegistryRegisterAndLookup(t *testing.T) {
@@ -83,6 +85,53 @@ func TestDefaultRegistryCriticalAndNonCriticalMetadata(t *testing.T) {
 	}
 	if runbookTool.Metadata().Critical {
 		t.Fatalf("runbook.search must be non-critical")
+	}
+}
+
+func TestSnapshotEvidenceToolsRefreshEmptyPodOnlyCache(t *testing.T) {
+	calls := 0
+	registry, err := NewDefaultRegistry(RegistryOptions{
+		Snapshot: func(ctx context.Context, goal Goal) (*diagnostic.DiagnosticContext, error) {
+			_ = ctx
+			calls++
+			diagCtx := probeNotReadyContext()
+			if !goal.IncludeEvents {
+				diagCtx.Events = nil
+			}
+			if !goal.IncludeLogs {
+				diagCtx.Logs = nil
+			}
+			return diagCtx, nil
+		},
+		Policy: NewRemediationPolicy(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &ToolState{Goal: Goal{Namespace: "default", PodName: "api-0", IncludeMetrics: true}}
+	podTool, _ := registry.Get("k8s.get_pod")
+	if result := podTool.Execute(context.Background(), nil, state); !result.Success {
+		t.Fatalf("get_pod failed: %s", result.Error)
+	}
+	if len(state.DiagnosticContext.Events) != 0 {
+		t.Fatalf("expected pod-only cache without events")
+	}
+	eventTool, _ := registry.Get("k8s.get_events")
+	result := eventTool.Execute(context.Background(), nil, state)
+	if !result.Success {
+		t.Fatalf("get_events failed: %s", result.Error)
+	}
+	if calls < 2 {
+		t.Fatalf("expected get_events to refresh the snapshot, calls=%d", calls)
+	}
+	if len(result.EvidenceRecords) != 1 || result.EvidenceRecords[0].SourceType != "k8s_event" {
+		t.Fatalf("expected refreshed event evidence, got %#v", result.EvidenceRecords)
+	}
+	if result.EvidenceRecords[0].Raw.(corev1.Event).Reason != "Unhealthy" {
+		t.Fatalf("expected refreshed Unhealthy event, got %#v", result.EvidenceRecords[0].Raw)
+	}
+	if !state.Goal.IncludeEvents {
+		t.Fatalf("expected refreshed goal to include events")
 	}
 }
 
