@@ -110,6 +110,9 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		}
 		steps := nextPlanSteps(&plan)
 		if len(steps) == 0 {
+			if enforceProbeEvidenceFallback(&plan, state) {
+				continue
+			}
 			stopReason = StopReasonPlanComplete
 			break
 		}
@@ -151,6 +154,9 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			})
 			stepsExecuted++
 			markStepComplete(&plan, step.ID)
+			if result.Success {
+				markToolComplete(state, step.ToolName)
+			}
 			if len(result.EvidenceRecords) > 0 {
 				allEvidence = append(allEvidence, result.EvidenceRecords...)
 			}
@@ -185,17 +191,25 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 					Output: reflection,
 					Reason: reflection.Reason,
 				})
+				// Append any new steps suggested by LLM reflection.
+				if reflection.ShouldContinue {
+					for _, newStep := range reflection.NewSteps {
+						if redundantReflectionStep(&plan, state, newStep) {
+							continue
+						}
+						if newStep.ID == "" {
+							newStep.ID = "reflect-" + newStep.ToolName
+						}
+						newStep.AppendedBy = "llm_reflection"
+						plan.Steps = append(plan.Steps, newStep)
+					}
+				}
+				if enforceProbeEvidenceFallback(&plan, state) {
+					continue
+				}
 				if !reflection.ShouldContinue {
 					stopReason = stopReasonLLMReflectionComplete
 					break
-				}
-				// Append any new steps suggested by LLM reflection.
-				for _, newStep := range reflection.NewSteps {
-					if newStep.ID == "" {
-						newStep.ID = "reflect-" + newStep.ToolName
-					}
-					newStep.AppendedBy = "llm_reflection"
-					plan.Steps = append(plan.Steps, newStep)
 				}
 			}
 		}
@@ -203,7 +217,13 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if stopReason != "" {
 			break
 		}
+		if enforceProbeEvidenceFallback(&plan, state) {
+			continue
+		}
 		if hasConfirmed(latestScores) {
+			if enforceProbeEvidenceFallback(&plan, state) {
+				continue
+			}
 			stopReason = StopReasonConfirmedHypothesis
 			break
 		}
@@ -212,7 +232,11 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 				r.planner.AdjustPlan(&plan, state, execution.Result, latestScores)
 			}
 		}
+		dropCompletedSnapshotSteps(&plan, state)
 		if nextPlanStep(&plan) == nil {
+			if enforceProbeEvidenceFallback(&plan, state) {
+				continue
+			}
 			stopReason = StopReasonNoEffectiveTool
 			break
 		}

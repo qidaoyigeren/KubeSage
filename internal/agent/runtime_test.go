@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 type memoryStore struct {
@@ -191,6 +192,80 @@ func TestRuntimeConfirmedHypothesisEarlyStop(t *testing.T) {
 	}
 }
 
+func TestRuntimeForcesProbeEvidenceBeforeReflectionStop(t *testing.T) {
+	store := &memoryStore{}
+	registry, err := NewDefaultRegistry(RegistryOptions{
+		Snapshot: func(ctx context.Context, goal Goal) (*diagnostic.DiagnosticContext, error) {
+			_ = ctx
+			return probeNotReadyContext(), nil
+		},
+		Policy: NewRemediationPolicy(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(RuntimeDeps{
+		Store:    store,
+		Registry: registry,
+		Analyzer: fakeAnalyzer{report: baseReport("ProbeFailed")},
+		Policy:   NewRemediationPolicy(true),
+		Planner:  stopAfterPodPlanner{},
+	})
+	result, err := runtime.Run(context.Background(), RuntimeOptions{
+		TaskID:      1,
+		MaxSteps:    12,
+		ToolTimeout: time.Second,
+		Goal:        Goal{Namespace: "default", PodName: "api-0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Report.FaultType != "ProbeFailed" {
+		t.Fatalf("unexpected fault type: %s", result.Report.FaultType)
+	}
+	for _, tool := range []string{"k8s.get_events", "k8s.get_logs"} {
+		if !hasSuccessfulTool(store.steps, tool) {
+			t.Fatalf("expected forced %s before analyzer, got %#v", tool, store.steps)
+		}
+	}
+}
+
+func TestRuntimePrioritizesMissingProbeLogsOverReflectiveEventLoop(t *testing.T) {
+	store := &memoryStore{}
+	registry, err := NewDefaultRegistry(RegistryOptions{
+		Snapshot: func(ctx context.Context, goal Goal) (*diagnostic.DiagnosticContext, error) {
+			_ = ctx
+			return probeNotReadyContext(), nil
+		},
+		Policy: NewRemediationPolicy(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(RuntimeDeps{
+		Store:    store,
+		Registry: registry,
+		Analyzer: fakeAnalyzer{report: baseReport("ProbeFailed")},
+		Policy:   NewRemediationPolicy(true),
+		Planner:  eventLoopPlanner{},
+	})
+	_, err = runtime.Run(context.Background(), RuntimeOptions{
+		TaskID:      1,
+		MaxSteps:    6,
+		ToolTimeout: time.Second,
+		Goal:        Goal{Namespace: "default", PodName: "api-0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSuccessfulTool(store.steps, "k8s.get_logs") {
+		t.Fatalf("expected missing probe logs to run before repeated event follow-ups, got %#v", store.steps)
+	}
+	if countSuccessfulTool(store.steps, "k8s.get_events") != 1 {
+		t.Fatalf("expected redundant event follow-ups to be skipped, got %#v", store.steps)
+	}
+}
+
 func runRuntimeForTest(t *testing.T, goal Goal, retriever Retriever, diagCtx *diagnostic.DiagnosticContext, analyzer Analyzer, maxSteps int) (*memoryStore, *RunResult, error) {
 	t.Helper()
 	store := &memoryStore{}
@@ -242,6 +317,38 @@ func crashLoopContext() *diagnostic.DiagnosticContext {
 		Pod:       testPod("Error"),
 		Logs:      []diagnostic.ContainerLogs{{ContainerName: "app", Previous: "config file missing connection refused"}},
 		Events:    []corev1.Event{{Reason: "BackOff", Message: "Back-off restarting failed container"}},
+	}
+}
+
+func probeNotReadyContext() *diagnostic.DiagnosticContext {
+	return &diagnostic.DiagnosticContext{
+		Namespace: "default",
+		PodName:   "api-0",
+		Pod: &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-0", Namespace: "default"},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Name: "app",
+				ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt(8080)},
+				}},
+			}}},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionFalse,
+				}},
+				ContainerStatuses: []corev1.ContainerStatus{{
+					Name:  "app",
+					Ready: false,
+				}},
+			},
+		},
+		Events: []corev1.Event{{
+			Reason:  "Unhealthy",
+			Message: "Readiness probe failed: HTTP probe failed with statuscode: 404",
+		}},
+		Logs: []diagnostic.ContainerLogs{{ContainerName: "app", Current: "GET /healthz returned 404"}},
 	}
 }
 
@@ -300,6 +407,64 @@ func (blockingTool) Execute(ctx context.Context, input map[string]interface{}, s
 	select {}
 }
 
+type stopAfterPodPlanner struct{}
+
+func (stopAfterPodPlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan {
+	_ = ctx
+	_ = tools
+	return Plan{Steps: []PlanStep{{
+		ID:       "pod",
+		ToolName: "k8s.get_pod",
+		Input:    map[string]interface{}{"namespace": goal.Namespace, "pod_name": goal.PodName},
+		Critical: true,
+		Reason:   "minimal LLM plan",
+	}}}
+}
+
+func (stopAfterPodPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, hypotheses []HypothesisScore) {
+	_ = plan
+	_ = state
+	_ = last
+	_ = hypotheses
+}
+
+func (stopAfterPodPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, hypotheses []HypothesisScore) (ReflectionResult, error) {
+	_ = ctx
+	_ = plan
+	_ = state
+	_ = hypotheses
+	return ReflectionResult{ShouldContinue: false, Reason: "LLM thinks pod snapshot is enough"}, nil
+}
+
+type eventLoopPlanner struct{}
+
+func (eventLoopPlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan {
+	return stopAfterPodPlanner{}.BuildInitialPlan(ctx, goal, tools)
+}
+
+func (eventLoopPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, hypotheses []HypothesisScore) {
+	_ = plan
+	_ = state
+	_ = last
+	_ = hypotheses
+}
+
+func (eventLoopPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, hypotheses []HypothesisScore) (ReflectionResult, error) {
+	_ = ctx
+	_ = plan
+	_ = state
+	_ = hypotheses
+	return ReflectionResult{
+		ShouldContinue: true,
+		Reason:         "keep collecting events",
+		NewSteps: []PlanStep{{
+			ID:       "reflect-events",
+			ToolName: "k8s.get_events",
+			Reason:   "extra event check",
+		}},
+	}, nil
+}
+
 func hasStepStage(steps []model.AgentStep, stage string) bool {
 	for _, step := range steps {
 		if step.Stage == stage {
@@ -316,4 +481,23 @@ func hasFailedTool(steps []model.AgentStep, tool string) bool {
 		}
 	}
 	return false
+}
+
+func hasSuccessfulTool(steps []model.AgentStep, tool string) bool {
+	for _, step := range steps {
+		if step.Stage == StageToolCall && step.ToolName == tool && step.Status == model.AgentStepStatusSuccess {
+			return true
+		}
+	}
+	return false
+}
+
+func countSuccessfulTool(steps []model.AgentStep, tool string) int {
+	count := 0
+	for _, step := range steps {
+		if step.Stage == StageToolCall && step.ToolName == tool && step.Status == model.AgentStepStatusSuccess {
+			count++
+		}
+	}
+	return count
 }
