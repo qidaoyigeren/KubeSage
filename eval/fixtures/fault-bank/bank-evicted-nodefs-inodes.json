@@ -1,0 +1,130 @@
+{
+  "namespace": "eval-bank",
+  "pod_name": "bank-evicted-nodefs-inodes",
+  "pod": {
+    "metadata": {
+      "name": "bank-evicted-nodefs-inodes",
+      "namespace": "eval-bank",
+      "creationTimestamp": null,
+      "labels": {
+        "app": "bank-evicted-nodefs-inodes",
+        "faultbank": "true"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.example.com/app:v1",
+          "ports": [
+            {
+              "name": "http",
+              "containerPort": 8080
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          },
+          "imagePullPolicy": "IfNotPresent"
+        }
+      ],
+      "nodeName": "node-pressure"
+    },
+    "status": {
+      "phase": "Failed",
+      "message": "The node was low on resource: nodefs.inodesFree. Container wrote too many small files.",
+      "reason": "Evicted",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "state": {
+            "terminated": {
+              "exitCode": 137,
+              "reason": "ContainerStatusUnknown",
+              "startedAt": null,
+              "finishedAt": "2026-05-31T08:00:00Z"
+            }
+          },
+          "lastState": {},
+          "ready": false,
+          "restartCount": 0,
+          "image": "",
+          "imageID": ""
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {
+        "name": "bank-evicted-nodefs-inodes.evicted",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "Evicted",
+      "message": "Pod was evicted: The node was low on resource: nodefs.inodesFree. Container wrote too many small files.",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    }
+  ],
+  "topology": {
+    "replica_set_name": "bank-evicted-nodefs-inodes-rs",
+    "deployment_name": "bank-evicted-nodefs-inodes-deploy",
+    "node_name": "node-pressure",
+    "workload": {
+      "kind": "Deployment",
+      "name": "bank-evicted-nodefs-inodes-deploy",
+      "desired_replicas": 3,
+      "total_pods": 3,
+      "other_pods": 2,
+      "other_running": 2,
+      "other_ready": 2,
+      "other_abnormal": 0,
+      "other_restart_count": 0
+    },
+    "selected_services": [
+      {
+        "name": "bank-evicted-nodefs-inodes-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "bank-evicted-nodefs-inodes"
+        },
+        "available_endpoints": 2
+      }
+    ],
+    "node": {
+      "name": "node-pressure",
+      "ready": true,
+      "memory_pressure": false,
+      "disk_pressure": true,
+      "pid_pressure": false
+    }
+  },
+  "correlations": {
+    "node_name": "node-pressure",
+    "deployment_name": "bank-evicted-nodefs-inodes-deploy",
+    "namespace": "eval-bank",
+    "node_abnormal_count": 0,
+    "peer_abnormal_count": 0,
+    "namespace_hot_count": 0
+  },
+  "fault_time": "2026-05-31T08:00:00Z",
+  "log_window_start": "2026-05-31T07:58:00Z",
+  "log_window_end": "2026-05-31T08:01:00Z",
+  "logs_precise": true,
+  "metrics_enabled": false
+}

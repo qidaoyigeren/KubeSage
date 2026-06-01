@@ -55,7 +55,7 @@ func TestImagePullAnalyzer_Match(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "pull event",
+			name: "failed pull event",
 			ctx: &diagnostic.DiagnosticContext{
 				Pod: &corev1.Pod{
 					Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{}},
@@ -65,6 +65,18 @@ func TestImagePullAnalyzer_Match(t *testing.T) {
 				},
 			},
 			want: true,
+		},
+		{
+			name: "normal pulled event is not image pull failure",
+			ctx: &diagnostic.DiagnosticContext{
+				Pod: &corev1.Pod{
+					Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{}},
+				},
+				Events: []corev1.Event{
+					{Reason: "Pulled", Message: "Container image \"busybox\" already present on machine and can be accessed by the pod"},
+				},
+			},
+			want: false,
 		},
 		{
 			name: "running container no pull issues",
@@ -115,7 +127,7 @@ func TestImagePullAnalyzer_Analyze(t *testing.T) {
 				Reason:        "Failed",
 				Message:       "Failed to pull image \"nginx:latest\": rpc error",
 				Type:          "Warning",
-				LastTimestamp:  metav1.Now(),
+				LastTimestamp: metav1.Now(),
 			},
 		},
 	}

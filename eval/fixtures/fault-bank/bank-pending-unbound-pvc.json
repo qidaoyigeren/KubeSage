@@ -1,0 +1,146 @@
+{
+  "namespace": "eval-bank",
+  "pod_name": "bank-pending-unbound-pvc",
+  "pod": {
+    "metadata": {
+      "name": "bank-pending-unbound-pvc",
+      "namespace": "eval-bank",
+      "creationTimestamp": null,
+      "labels": {
+        "app": "bank-pending-unbound-pvc",
+        "faultbank": "true"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.example.com/app:v1",
+          "ports": [
+            {
+              "name": "http",
+              "containerPort": 8080
+            }
+          ],
+          "resources": {
+            "requests": {
+              "cpu": "250m",
+              "memory": "256Mi"
+            }
+          },
+          "imagePullPolicy": "IfNotPresent"
+        }
+      ],
+      "nodeName": "node-a"
+    },
+    "status": {
+      "phase": "Pending",
+      "conditions": [
+        {
+          "type": "PodScheduled",
+          "status": "False",
+          "lastProbeTime": null,
+          "lastTransitionTime": "2026-05-31T08:00:00Z",
+          "reason": "Unschedulable",
+          "message": "0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims."
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {
+        "name": "bank-pending-unbound-pvc.failedscheduling",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "FailedScheduling",
+      "message": "0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims.",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    }
+  ],
+  "pvcs": [
+    {
+      "name": "data",
+      "phase": "Pending",
+      "storage_class": "slow",
+      "capacity": "20Gi",
+      "storage_class_provisioner": "kubernetes.io/no-provisioner",
+      "volume_binding_mode": "Immediate"
+    }
+  ],
+  "topology": {
+    "replica_set_name": "bank-pending-unbound-pvc-rs",
+    "deployment_name": "bank-pending-unbound-pvc-deploy",
+    "node_name": "node-a",
+    "workload": {
+      "kind": "Deployment",
+      "name": "bank-pending-unbound-pvc-deploy",
+      "desired_replicas": 3,
+      "total_pods": 3,
+      "other_pods": 2,
+      "other_running": 2,
+      "other_ready": 2,
+      "other_abnormal": 0,
+      "other_restart_count": 0
+    },
+    "selected_services": [
+      {
+        "name": "bank-pending-unbound-pvc-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "bank-pending-unbound-pvc"
+        },
+        "available_endpoints": 2
+      }
+    ],
+    "node": {
+      "name": "node-a",
+      "ready": true,
+      "memory_pressure": false,
+      "disk_pressure": false,
+      "pid_pressure": false
+    }
+  },
+  "correlations": {
+    "node_name": "node-a",
+    "deployment_name": "bank-pending-unbound-pvc-deploy",
+    "namespace": "eval-bank",
+    "node_abnormal_count": 0,
+    "peer_abnormal_count": 0,
+    "namespace_hot_count": 0
+  },
+  "node_snapshots": [
+    {
+      "name": "node-a",
+      "allocatable_cpu": "2",
+      "allocatable_memory": "8Gi",
+      "ready": true
+    },
+    {
+      "name": "node-b",
+      "allocatable_cpu": "2",
+      "allocatable_memory": "8Gi",
+      "ready": true
+    },
+    {
+      "name": "node-c",
+      "allocatable_cpu": "2",
+      "allocatable_memory": "8Gi",
+      "ready": true
+    }
+  ],
+  "fault_time": "2026-05-31T08:00:00Z",
+  "log_window_start": "2026-05-31T07:58:00Z",
+  "log_window_end": "2026-05-31T08:01:00Z",
+  "logs_precise": true,
+  "metrics_enabled": false
+}

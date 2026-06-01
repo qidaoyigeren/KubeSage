@@ -42,13 +42,13 @@ const TaskList = () => {
       render: (id: number) => <Typography.Text code>#{id}</Typography.Text>,
     },
     {
-      title: 'Namespace',
+      title: '命名空间',
       dataIndex: 'namespace',
       key: 'namespace',
       width: 120,
       render: (t: string) => <Typography.Text strong>{t}</Typography.Text>,
     },
-    { title: 'Pod', dataIndex: 'pod_name', key: 'pod_name', ellipsis: true },
+    { title: 'Pod 名称', dataIndex: 'pod_name', key: 'pod_name', ellipsis: true },
     {
       title: '状态',
       dataIndex: 'status',
@@ -164,7 +164,7 @@ const TaskList = () => {
             ]}
           />
           <Input.Search
-            placeholder="搜索 Namespace / Pod"
+            placeholder="搜索命名空间 / Pod"
             allowClear
             style={{ width: 260 }}
             onSearch={(v) => setSearch(v)}

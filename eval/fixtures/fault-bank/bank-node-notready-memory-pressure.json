@@ -1,0 +1,125 @@
+{
+  "namespace": "eval-bank",
+  "pod_name": "bank-node-notready-memory-pressure",
+  "pod": {
+    "metadata": {
+      "name": "bank-node-notready-memory-pressure",
+      "namespace": "eval-bank",
+      "creationTimestamp": null,
+      "labels": {
+        "app": "bank-node-notready-memory-pressure",
+        "faultbank": "true"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.example.com/app:v1",
+          "ports": [
+            {
+              "name": "http",
+              "containerPort": 8080
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          },
+          "imagePullPolicy": "IfNotPresent"
+        }
+      ],
+      "nodeName": "node-memory-pressure"
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "state": {
+            "running": {
+              "startedAt": "2026-05-31T07:00:00Z"
+            }
+          },
+          "lastState": {},
+          "ready": true,
+          "restartCount": 0,
+          "image": "",
+          "imageID": ""
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {
+        "name": "bank-node-notready-memory-pressure.nodenotready",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "NodeNotReady",
+      "message": "Node node-memory-pressure is NotReady and reports MemoryPressure",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    }
+  ],
+  "topology": {
+    "replica_set_name": "bank-node-notready-memory-pressure-rs",
+    "deployment_name": "bank-node-notready-memory-pressure-deploy",
+    "node_name": "node-memory-pressure",
+    "workload": {
+      "kind": "Deployment",
+      "name": "bank-node-notready-memory-pressure-deploy",
+      "desired_replicas": 3,
+      "total_pods": 3,
+      "other_pods": 2,
+      "other_running": 2,
+      "other_ready": 2,
+      "other_abnormal": 0,
+      "other_restart_count": 0
+    },
+    "selected_services": [
+      {
+        "name": "bank-node-notready-memory-pressure-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "bank-node-notready-memory-pressure"
+        },
+        "available_endpoints": 2
+      }
+    ],
+    "node": {
+      "name": "node-memory-pressure",
+      "ready": false,
+      "memory_pressure": true,
+      "disk_pressure": false,
+      "pid_pressure": false
+    }
+  },
+  "correlations": {
+    "node_name": "node-memory-pressure",
+    "deployment_name": "bank-node-notready-memory-pressure-deploy",
+    "namespace": "eval-bank",
+    "node_abnormal_count": 0,
+    "peer_abnormal_count": 0,
+    "namespace_hot_count": 0
+  },
+  "fault_time": "2026-05-31T08:00:00Z",
+  "log_window_start": "2026-05-31T07:58:00Z",
+  "log_window_end": "2026-05-31T08:01:00Z",
+  "logs_precise": true,
+  "metrics_enabled": false
+}

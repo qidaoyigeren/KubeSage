@@ -77,36 +77,36 @@ const Dashboard = () => {
       render: (id: number) => <Typography.Text code>#{id}</Typography.Text>,
     },
     {
-      title: 'Namespace',
+      title: '命名空间',
       dataIndex: 'namespace',
       key: 'namespace',
       width: 110,
       render: (t: string) => <Typography.Text strong>{t}</Typography.Text>,
     },
-    { title: 'Pod', dataIndex: 'pod_name', key: 'pod_name', ellipsis: true },
+    { title: 'Pod 名称', dataIndex: 'pod_name', key: 'pod_name', ellipsis: true },
     {
-      title: 'Status',
+      title: '状态',
       dataIndex: 'status',
       key: 'status',
       width: 90,
       render: (s: DiagnosisTask['status']) => <StatusTag status={s} />,
     },
     {
-      title: 'Fault',
+      title: '故障类型',
       dataIndex: 'fault_type',
       key: 'fault_type',
       width: 150,
       render: (t: string) => t || <Typography.Text type="secondary">-</Typography.Text>,
     },
     {
-      title: 'Confidence',
+      title: '置信度',
       dataIndex: 'confidence_score',
       key: 'confidence_score',
       width: 130,
       render: (v: number) => (v ? <ConfidenceBar score={v} /> : '-'),
     },
     {
-      title: 'Duration',
+      title: '耗时',
       key: 'duration',
       width: 90,
       render: (_: unknown, r: DiagnosisTask) => (
@@ -116,7 +116,7 @@ const Dashboard = () => {
       ),
     },
     {
-      title: 'Created',
+      title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 160,
@@ -140,59 +140,59 @@ const Dashboard = () => {
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={12} lg={6}>
             <Card className="stat-card card-total" bordered={false}>
-              <Statistic title="Total Tasks" value={stats.total} prefix={<ExperimentOutlined />} />
+              <Statistic title="任务总数" value={stats.total} prefix={<ExperimentOutlined />} />
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <Card className="stat-card card-running" bordered={false}>
-              <Statistic title="Running" value={stats.running} prefix={<SyncOutlined spin={stats.running > 0} />} />
+              <Statistic title="运行中" value={stats.running} prefix={<SyncOutlined spin={stats.running > 0} />} />
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <Card className="stat-card card-success" bordered={false}>
-              <Statistic title="Success Rate" value={percent(summary?.success_rate)} prefix={<CheckCircleOutlined />} />
+              <Statistic title="成功率" value={percent(summary?.success_rate)} prefix={<CheckCircleOutlined />} />
             </Card>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <Card className="stat-card card-failed" bordered={false}>
-              <Statistic title="Failed" value={stats.failed} prefix={<CloseCircleOutlined />} />
+              <Statistic title="失败任务" value={stats.failed} prefix={<CloseCircleOutlined />} />
             </Card>
           </Col>
         </Row>
 
         <Row gutter={[16, 16]}>
           <Col xs={24} lg={6}>
-            <Card title={<MetricTitle icon={<LikeOutlined />} text="Feedback Accuracy" />} bordered={false}>
+            <Card title={<MetricTitle icon={<LikeOutlined />} text="反馈准确率" />} bordered={false}>
               <Progress percent={Math.round((summary?.feedback_accuracy_rate || 0) * 100)} />
               <Space>
-                <Tag color="green">Useful {summary?.feedback_useful || 0}</Tag>
-                <Tag color="red">Not useful {summary?.feedback_not_useful || 0}</Tag>
+                <Tag color="green">有用 {summary?.feedback_useful || 0}</Tag>
+                <Tag color="red">无用 {summary?.feedback_not_useful || 0}</Tag>
               </Space>
             </Card>
           </Col>
           <Col xs={24} lg={6}>
-            <Card title={<MetricTitle icon={<ClockCircleOutlined />} text="Diagnosis Latency" />} bordered={false}>
-              <Statistic value={summary?.average_duration_seconds || 0} precision={1} suffix="s avg" />
+            <Card title={<MetricTitle icon={<ClockCircleOutlined />} text="诊断耗时" />} bordered={false}>
+              <Statistic value={summary?.average_duration_seconds || 0} precision={1} suffix="秒 平均" />
               <Typography.Text type="secondary">
                 P95 {Number(summary?.p95_duration_seconds || 0).toFixed(1)}s
               </Typography.Text>
             </Card>
           </Col>
           <Col xs={24} lg={6}>
-            <Card title={<MetricTitle icon={<ApiOutlined />} text="Tool Health" />} bordered={false}>
+            <Card title={<MetricTitle icon={<ApiOutlined />} text="工具健康度" />} bordered={false}>
               <Progress
                 percent={Math.round((summary?.tool_failure_rate || 0) * 100)}
                 status={(summary?.tool_failure_rate || 0) > 0 ? 'exception' : 'success'}
               />
               <Space wrap>
-                <Tag color="blue">Calls {summary?.tool_calls || 0}</Tag>
-                <Tag color={(summary?.tool_failures || 0) > 0 ? 'red' : 'green'}>Failures {summary?.tool_failures || 0}</Tag>
-                <Tag icon={<DatabaseOutlined />} color={(summary?.dead_letters || 0) > 0 ? 'volcano' : 'default'}>DLQ {summary?.dead_letters || 0}</Tag>
+                <Tag color="blue">调用 {summary?.tool_calls || 0}</Tag>
+                <Tag color={(summary?.tool_failures || 0) > 0 ? 'red' : 'green'}>失败 {summary?.tool_failures || 0}</Tag>
+                <Tag icon={<DatabaseOutlined />} color={(summary?.dead_letters || 0) > 0 ? 'volcano' : 'default'}>异常 {summary?.dead_letters || 0}</Tag>
               </Space>
             </Card>
           </Col>
           <Col xs={24} lg={6}>
-            <Card title={<MetricTitle icon={<BarChartOutlined />} text="LLM Health" />} bordered={false}>
+            <Card title={<MetricTitle icon={<BarChartOutlined />} text="LLM 健康度" />} bordered={false}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <Space wrap>
                   {Object.entries(summary?.llm_calls || {}).length > 0 ? (
@@ -202,11 +202,11 @@ const Dashboard = () => {
                       </Tag>
                     ))
                   ) : (
-                    <Typography.Text type="secondary">No planner calls yet</Typography.Text>
+                    <Typography.Text type="secondary">暂无 Planner 调用</Typography.Text>
                   )}
                 </Space>
                 <Typography.Text type="secondary">
-                  Fail {percent(summary?.llm_failure_rate)} / Tokens {summary?.llm_total_tokens || 0} / Avg {Math.round(summary?.llm_average_latency_ms || 0)}ms / Cost ${Number(summary?.llm_estimated_cost || 0).toFixed(4)}
+                  失败率 {percent(summary?.llm_failure_rate)} / Token {summary?.llm_total_tokens || 0} / 平均 {Math.round(summary?.llm_average_latency_ms || 0)}ms / 成本 ${Number(summary?.llm_estimated_cost || 0).toFixed(4)}
                 </Typography.Text>
               </Space>
             </Card>
@@ -215,10 +215,10 @@ const Dashboard = () => {
 
         <Row gutter={[16, 16]}>
           <Col xs={24} lg={8}>
-            <BucketCard title="Top Root Causes" data={summary?.top_root_causes || []} />
+            <BucketCard title="高频根因" data={summary?.top_root_causes || []} />
           </Col>
           <Col xs={24} lg={8}>
-            <BucketCard title="Top Agent Tools" data={summary?.analyzer_hit_rates || []} />
+            <BucketCard title="高频 Agent 工具" data={summary?.analyzer_hit_rates || []} />
           </Col>
           <Col xs={24} lg={8}>
             <TrendCard trends={trends || []} />
@@ -231,20 +231,20 @@ const Dashboard = () => {
             title={
               <Space>
                 <RocketOutlined style={{ color: '#1677ff' }} />
-                <span>Quick Diagnosis</span>
+                <span>快速诊断</span>
               </Space>
             }
           >
             <Form layout="inline" onFinish={handleQuickDiagnose} style={{ flexWrap: 'wrap', gap: 8 }}>
-              <Form.Item name="namespace" rules={[{ required: true, message: 'Namespace is required' }]}>
-                <Input placeholder="Namespace" style={{ width: 180 }} />
+              <Form.Item name="namespace" rules={[{ required: true, message: '请输入命名空间' }]}>
+                <Input placeholder="命名空间" style={{ width: 180 }} />
               </Form.Item>
-              <Form.Item name="pod_name" rules={[{ required: true, message: 'Pod name is required' }]}>
-                <Input placeholder="Pod name" style={{ width: 280 }} />
+              <Form.Item name="pod_name" rules={[{ required: true, message: '请输入 Pod 名称' }]}>
+                <Input placeholder="Pod 名称" style={{ width: 280 }} />
               </Form.Item>
               <Form.Item>
                 <Button type="primary" htmlType="submit" icon={<SearchOutlined />} loading={diagnose.isPending}>
-                  Start
+                  开始诊断
                 </Button>
               </Form.Item>
             </Form>
@@ -255,17 +255,17 @@ const Dashboard = () => {
           className="task-list-card"
           title={
             <Space>
-              <span style={{ fontWeight: 600 }}>Recent Tasks</span>
+              <span style={{ fontWeight: 600 }}>最近任务</span>
               {stats.running > 0 && (
                 <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                  ({stats.running} running)
+                  ({stats.running} 个运行中)
                 </Typography.Text>
               )}
             </Space>
           }
           extra={
             <Button type="link" onClick={() => navigate('/tasks')}>
-              View all <ArrowRightOutlined />
+              查看全部 <ArrowRightOutlined />
             </Button>
           }
         >
@@ -282,10 +282,10 @@ const Dashboard = () => {
               })}
             />
           ) : (
-            <Empty description="No diagnosis tasks yet" style={{ padding: '40px 0' }}>
+            <Empty description="暂无诊断任务" style={{ padding: '40px 0' }}>
               {canDiagnose && (
                 <Button type="primary" onClick={() => navigate('/diagnose')}>
-                  Create first diagnosis
+                  创建第一个诊断
                 </Button>
               )}
             </Empty>
@@ -309,31 +309,31 @@ const BucketCard = ({ title, data }: { title: string; data: DashboardBucket[] })
       {data.length > 0 ? (
         data.slice(0, 6).map((item) => (
           <div key={item.name || 'unknown'} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <Typography.Text ellipsis>{item.name || 'unknown'}</Typography.Text>
+            <Typography.Text ellipsis>{item.name || '未知'}</Typography.Text>
             <Tag color="blue">{item.count}</Tag>
           </div>
         ))
       ) : (
-        <Typography.Text type="secondary">No data</Typography.Text>
+        <Typography.Text type="secondary">暂无数据</Typography.Text>
       )}
     </Space>
   </Card>
 );
 
 const TrendCard = ({ trends }: { trends: DashboardTrendPoint[] }) => (
-  <Card title="Fault Trend" bordered={false}>
+  <Card title="故障趋势" bordered={false}>
     <Space direction="vertical" style={{ width: '100%' }}>
       {trends.length > 0 ? (
         trends.slice(0, 8).map((item) => (
           <div key={`${item.date}-${item.fault_type}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
             <Typography.Text ellipsis>
-              {item.date} / {item.fault_type || 'unknown'}
+              {item.date} / {item.fault_type || '未知'}
             </Typography.Text>
             <Tag>{item.count}</Tag>
           </div>
         ))
       ) : (
-        <Typography.Text type="secondary">No trend data</Typography.Text>
+        <Typography.Text type="secondary">暂无趋势数据</Typography.Text>
       )}
     </Space>
   </Card>

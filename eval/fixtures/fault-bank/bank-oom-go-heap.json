@@ -1,0 +1,160 @@
+{
+  "namespace": "eval-bank",
+  "pod_name": "bank-oom-go-heap",
+  "pod": {
+    "metadata": {
+      "name": "bank-oom-go-heap",
+      "namespace": "eval-bank",
+      "creationTimestamp": null,
+      "labels": {
+        "app": "bank-oom-go-heap",
+        "faultbank": "true"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.example.com/app:v1",
+          "ports": [
+            {
+              "name": "http",
+              "containerPort": 8080
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          },
+          "imagePullPolicy": "IfNotPresent"
+        }
+      ],
+      "nodeName": "node-a"
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "state": {
+            "running": {
+              "startedAt": "2026-05-31T08:01:00Z"
+            }
+          },
+          "lastState": {
+            "terminated": {
+              "exitCode": 137,
+              "reason": "OOMKilled",
+              "startedAt": "2026-05-31T07:55:00Z",
+              "finishedAt": "2026-05-31T08:00:00Z"
+            }
+          },
+          "ready": true,
+          "restartCount": 2,
+          "image": "",
+          "imageID": ""
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {
+        "name": "bank-oom-go-heap.oomkilled",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "OOMKilled",
+      "message": "Container app was OOMKilled after exceeding memory limit 256Mi",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "app",
+      "Current": "",
+      "Previous": "fatal error: runtime: out of memory allocating goroutine stack; heap grew past memory limit",
+      "fault_time": "2026-05-31T08:00:00Z",
+      "window_start": "2026-05-31T07:58:00Z",
+      "window_end": "2026-05-31T08:01:00Z",
+      "precise": true
+    }
+  ],
+  "topology": {
+    "replica_set_name": "bank-oom-go-heap-rs",
+    "deployment_name": "bank-oom-go-heap-deploy",
+    "node_name": "node-a",
+    "workload": {
+      "kind": "Deployment",
+      "name": "bank-oom-go-heap-deploy",
+      "desired_replicas": 3,
+      "total_pods": 3,
+      "other_pods": 2,
+      "other_running": 2,
+      "other_ready": 2,
+      "other_abnormal": 0,
+      "other_restart_count": 0
+    },
+    "selected_services": [
+      {
+        "name": "bank-oom-go-heap-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "bank-oom-go-heap"
+        },
+        "available_endpoints": 2
+      }
+    ],
+    "node": {
+      "name": "node-a",
+      "ready": true,
+      "memory_pressure": false,
+      "disk_pressure": false,
+      "pid_pressure": false
+    }
+  },
+  "correlations": {
+    "node_name": "node-a",
+    "deployment_name": "bank-oom-go-heap-deploy",
+    "namespace": "eval-bank",
+    "node_abnormal_count": 0,
+    "peer_abnormal_count": 0,
+    "namespace_hot_count": 0
+  },
+  "metric_trends": [
+    {
+      "profile": "memory",
+      "metric": "container_memory_working_set_bytes",
+      "window": "1h",
+      "classification": "progressive_growth",
+      "sample_count": 12,
+      "first_value": 134217728,
+      "last_value": 796917760,
+      "min_value": 134217728,
+      "max_value": 817889280,
+      "avg_value": 492830720,
+      "growth_ratio": 5.9,
+      "window_start": "2026-05-31T07:00:00Z",
+      "window_end": "2026-05-31T08:00:00Z"
+    }
+  ],
+  "fault_time": "2026-05-31T08:00:00Z",
+  "log_window_start": "2026-05-31T07:58:00Z",
+  "log_window_end": "2026-05-31T08:01:00Z",
+  "logs_precise": true,
+  "metrics_enabled": true
+}

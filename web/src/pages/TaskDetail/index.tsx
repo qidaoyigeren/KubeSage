@@ -198,8 +198,8 @@ const TaskDetail = () => {
         <Descriptions column={4} size="small">
           <Descriptions.Item label="创建时间">{formatTime(task.created_at)}</Descriptions.Item>
           <Descriptions.Item label="完成时间">{formatTime(task.finished_at)}</Descriptions.Item>
-          <Descriptions.Item label="Namespace">{task.namespace}</Descriptions.Item>
-          <Descriptions.Item label="Pod">{task.pod_name}</Descriptions.Item>
+          <Descriptions.Item label="命名空间">{task.namespace}</Descriptions.Item>
+          <Descriptions.Item label="Pod 名称">{task.pod_name}</Descriptions.Item>
         </Descriptions>
       </Card>
 

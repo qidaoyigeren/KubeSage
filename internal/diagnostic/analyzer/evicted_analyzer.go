@@ -52,10 +52,10 @@ func (a *EvictedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		Raw:        ctx.Pod.Status,
 		Timestamp:  time.Now(),
 	}}
-	summary := "Pod was evicted by kubelet, usually because node resources or ephemeral storage crossed eviction thresholds."
+	summary := "Pod 被 kubelet 驱逐，通常是节点资源或临时存储超过驱逐阈值。"
 	actions := []string{
-		"Inspect node memory, disk, PID, and ephemeral-storage pressure around the eviction time.",
-		"Check pod requests/limits and ephemeral-storage usage before rescheduling the workload.",
+		"检查驱逐时间附近的节点内存、磁盘、PID 和 ephemeral-storage 压力。",
+		"重新调度工作负载前，确认 Pod requests/limits 和 ephemeral-storage 使用量是否合理。",
 	}
 	for _, event := range ctx.Events {
 		if strings.Contains(strings.ToLower(event.Reason+" "+event.Message), "evict") {
@@ -73,10 +73,10 @@ func (a *EvictedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 			Timestamp:  time.Now(),
 		})
 		if node.DiskPressure {
-			summary = "Pod was evicted while the node reported DiskPressure; ephemeral storage or node disk exhaustion is the leading cause."
+			summary = "Pod 被驱逐时节点存在 DiskPressure，临时存储或节点磁盘耗尽是优先怀疑根因。"
 		}
 		if node.MemoryPressure {
-			summary = "Pod was evicted while the node reported MemoryPressure; node-level memory pressure is the leading cause."
+			summary = "Pod 被驱逐时节点存在 MemoryPressure，节点级内存压力是优先怀疑根因。"
 		}
 	}
 	for _, container := range ctx.Pod.Spec.Containers {
@@ -95,7 +95,7 @@ func (a *EvictedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		RootCauseSummary: summary,
 		ConfidenceScore:  evictedConfidence(evidences),
 		Evidences:        evidences,
-		ImpactAnalysis:   "Evicted pods are terminal and need a replacement pod; repeated evictions usually indicate node or request sizing issues.",
+		ImpactAnalysis:   "被驱逐的 Pod 已进入终态，需要由控制器创建替代 Pod；如果反复驱逐，通常说明节点资源或资源请求配置存在问题。",
 		SuggestedActions: actions,
 		RiskLevel:        "medium",
 		NeedHumanConfirm: true,

@@ -192,16 +192,42 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 		f.sourceRefs[record.SourceType] = append(f.sourceRefs[record.SourceType], ref)
 		for _, key := range []string{
 			"oom", "oomkilled", "memory", "working set", "limit", "backoff", "crashloop", "config", "secret", "configmap",
-			"refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector", "pvc", "bound", "memorypressure",
+			"refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector", "pvc", "bound",
+			"imagepull", "errimagepull", "imagepullbackoff", "unauthorized", "denied", "manifest",
+			"init", "initerror", "initcontainer", "exitcode", "evicted", "eviction", "nodenotready", "notready",
 		} {
+			if key == "memory" && pressureFalseOnly(text, "memorypressure") {
+				continue
+			}
 			if strings.Contains(text, key) {
 				f.refsByKey[key] = append(f.refsByKey[key], ref)
 			}
 		}
+		for _, key := range []string{"memorypressure", "diskpressure", "pidpressure"} {
+			if positiveConditionSignal(text, key) {
+				f.refsByKey[key] = append(f.refsByKey[key], ref)
+			}
+		}
 	}
-	if ctx != nil && ctx.Topology != nil && ctx.Topology.Node != nil && ctx.Topology.Node.MemoryPressure {
-		f.text += "\nnode memorypressure"
-		f.refsByKey["memorypressure"] = append(f.refsByKey["memorypressure"], "topology:node_memory_pressure")
+	if ctx != nil && ctx.Topology != nil && ctx.Topology.Node != nil {
+		node := ctx.Topology.Node
+		if node.MemoryPressure {
+			f.text += "\nnode memorypressure"
+			f.refsByKey["memorypressure"] = append(f.refsByKey["memorypressure"], "topology:node_memory_pressure")
+		}
+		if node.DiskPressure {
+			f.text += "\nnode diskpressure"
+			f.refsByKey["diskpressure"] = append(f.refsByKey["diskpressure"], "topology:node_disk_pressure")
+		}
+		if node.PIDPressure {
+			f.text += "\nnode pidpressure"
+			f.refsByKey["pidpressure"] = append(f.refsByKey["pidpressure"], "topology:node_pid_pressure")
+		}
+		if !node.Ready {
+			f.text += "\nnode notready"
+			f.refsByKey["notready"] = append(f.refsByKey["notready"], "topology:node_not_ready")
+			f.refsByKey["nodenotready"] = append(f.refsByKey["nodenotready"], "topology:node_not_ready")
+		}
 	}
 	for _, pvc := range ctxPVCs(ctx) {
 		if pvc.Phase != "Bound" {
@@ -236,7 +262,6 @@ func (e *HypothesisEngine) scoreApplicationMemoryLeak(f facts) HypothesisScore {
 func (e *HypothesisEngine) scoreNodeMemoryPressure(f facts) HypothesisScore {
 	s := base("node_memory_pressure", "Node-level memory pressure may contribute to pod instability.")
 	s.add(e.weight(s.Type, "memorypressure", 0.35), refs(f, "memorypressure")...)
-	s.add(e.weight(s.Type, "k8s_topology", 0.10), f.sourceRefs["k8s_topology"]...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "node pressure observation")
 	}
@@ -394,6 +419,25 @@ func contains(text, needle string) bool {
 	return strings.Contains(strings.ToLower(text), strings.ToLower(needle))
 }
 
+func positiveConditionSignal(text, key string) bool {
+	compact := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(text))
+	key = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(key))
+	if strings.Contains(compact, key+"=false") || strings.Contains(compact, key+":false") || strings.Contains(compact, key+"false") {
+		return false
+	}
+	return strings.Contains(compact, key+"=true") || strings.Contains(compact, key+":true") || strings.Contains(compact, key)
+}
+
+func pressureFalseOnly(text, key string) bool {
+	compact := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(text))
+	key = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(key))
+	return strings.Contains(compact, key+"=false") &&
+		!strings.Contains(compact, "memorylimit") &&
+		!strings.Contains(compact, "memoryrequest") &&
+		!strings.Contains(compact, "workingset") &&
+		!strings.Contains(compact, "oom")
+}
+
 func appendUnique(items []string, additions ...string) []string {
 	seen := map[string]struct{}{}
 	for _, item := range items {
@@ -441,6 +485,9 @@ func blendScores(keyword []HypothesisScore, llm []HypothesisScore, keywordWeight
 	llmWeight := 1.0 - keywordWeight
 	for i := range keyword {
 		if llmScore, ok := llmByType[keyword[i].Type]; ok {
+			if len(keyword[i].SupportingRefs) == 0 && len(llmScore.SupportingRefs) == 0 {
+				continue
+			}
 			keyword[i].Confidence = keyword[i].Confidence*keywordWeight + llmScore.Confidence*llmWeight
 			// Merge LLM supporting refs that are not already present.
 			keyword[i].SupportingRefs = appendUnique(keyword[i].SupportingRefs, llmScore.SupportingRefs...)

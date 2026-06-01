@@ -189,7 +189,7 @@ func newSnapshotTool(name, description string, critical bool, snapshot SnapshotF
 				}
 				diagCtx, err := snapshot(ctx, state.Goal)
 				if err != nil {
-					return ToolResult{ToolName: name, Success: false, Error: err.Error(), Observation: "snapshot collection failed"}
+					return ToolResult{ToolName: name, Success: false, Error: err.Error(), Observation: "快照采集失败"}
 				}
 				state.DiagnosticContext = diagCtx
 			}
@@ -200,11 +200,11 @@ func newSnapshotTool(name, description string, critical bool, snapshot SnapshotF
 
 func podObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 	if ctx == nil || ctx.Pod == nil {
-		return failedTool("k8s.get_pod", "pod snapshot is empty")
+		return failedTool("k8s.get_pod", "Pod 快照为空")
 	}
 	return ToolResult{
 		Success:     true,
-		Observation: fmt.Sprintf("pod %s/%s phase=%s containers=%d", ctx.Namespace, ctx.PodName, ctx.Pod.Status.Phase, len(ctx.Pod.Spec.Containers)),
+		Observation: fmt.Sprintf("Pod %s/%s phase=%s containers=%d", ctx.Namespace, ctx.PodName, ctx.Pod.Status.Phase, len(ctx.Pod.Spec.Containers)),
 		Data:        ctx.Pod,
 		EvidenceRecords: []diagnostic.EvidenceRecord{{
 			SourceType: "k8s_pod",
@@ -219,7 +219,7 @@ func podObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 
 func eventsObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 	if ctx == nil {
-		return failedTool("k8s.get_events", "diagnostic context is empty")
+		return failedTool("k8s.get_events", "诊断上下文为空")
 	}
 	records := make([]diagnostic.EvidenceRecord, 0, len(ctx.Events))
 	for _, event := range ctx.Events {
@@ -232,12 +232,12 @@ func eventsObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 			Timestamp:  event.LastTimestamp.Time,
 		})
 	}
-	return ToolResult{Success: true, Observation: fmt.Sprintf("collected %d pod events", len(ctx.Events)), EvidenceRecords: records, Data: ctx.Events}
+	return ToolResult{Success: true, Observation: fmt.Sprintf("已采集 %d 条 Pod 事件", len(ctx.Events)), EvidenceRecords: records, Data: ctx.Events}
 }
 
 func logsObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 	if ctx == nil {
-		return failedTool("k8s.get_logs", "diagnostic context is empty")
+		return failedTool("k8s.get_logs", "诊断上下文为空")
 	}
 	records := make([]diagnostic.EvidenceRecord, 0, len(ctx.Logs))
 	for _, logs := range ctx.Logs {
@@ -260,19 +260,19 @@ func logsObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 			Timestamp:  time.Now(),
 		})
 	}
-	return ToolResult{Success: true, Observation: fmt.Sprintf("collected logs for %d containers", len(ctx.Logs)), EvidenceRecords: records, Data: ctx.Logs}
+	return ToolResult{Success: true, Observation: fmt.Sprintf("已采集 %d 个容器的日志", len(ctx.Logs)), EvidenceRecords: records, Data: ctx.Logs}
 }
 
 func topologyObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 	if ctx == nil || ctx.Topology == nil {
-		return ToolResult{Success: true, Observation: "topology unavailable", Data: nil}
+		return ToolResult{Success: true, Observation: "拓扑信息不可用", Data: nil}
 	}
-	return ToolResult{Success: true, Observation: "topology snapshot available", Data: ctx.Topology}
+	return ToolResult{Success: true, Observation: "拓扑快照已采集", Data: ctx.Topology}
 }
 
 func pvcObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 	if ctx == nil {
-		return failedTool("k8s.get_pvc", "diagnostic context is empty")
+		return failedTool("k8s.get_pvc", "诊断上下文为空")
 	}
 	records := make([]diagnostic.EvidenceRecord, 0, len(ctx.PVCs))
 	for _, pvc := range ctx.PVCs {
@@ -289,7 +289,7 @@ func pvcObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
 			Timestamp:  time.Now(),
 		})
 	}
-	return ToolResult{Success: true, Observation: fmt.Sprintf("collected %d pvc statuses", len(ctx.PVCs)), EvidenceRecords: records, Data: ctx.PVCs}
+	return ToolResult{Success: true, Observation: fmt.Sprintf("已采集 %d 个 PVC 状态", len(ctx.PVCs)), EvidenceRecords: records, Data: ctx.PVCs}
 }
 
 func newRunbookSearchTool(retriever Retriever) Tool {
@@ -304,7 +304,7 @@ func newRunbookSearchTool(retriever Retriever) Tool {
 		},
 		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
 			if retriever == nil {
-				return ToolResult{Success: true, Observation: "runbook retriever is not configured"}
+				return ToolResult{Success: true, Observation: "诊断手册检索器未配置"}
 			}
 			faultType := stringInput(input, "fault_type")
 			query := stringInput(input, "query")
@@ -329,7 +329,7 @@ func newRunbookSearchTool(retriever Retriever) Tool {
 					Timestamp:  time.Now(),
 				})
 			}
-			return ToolResult{Success: true, Observation: fmt.Sprintf("runbook hits=%d", len(hits)), EvidenceRecords: records, Data: hits}
+			return ToolResult{Success: true, Observation: fmt.Sprintf("诊断手册命中 %d 条", len(hits)), EvidenceRecords: records, Data: hits}
 		},
 	}
 }
@@ -347,10 +347,10 @@ func newPrometheusQueryTool(client PrometheusRangeClient) Tool {
 		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
 			query := stringInput(input, "query")
 			if query == "" {
-				return ToolResult{Success: false, Observation: "prometheus query is empty", Error: "prometheus query is empty", MissingEvidence: []string{"metrics query"}}
+				return ToolResult{Success: false, Observation: "Prometheus 查询为空", Error: "prometheus query is empty", MissingEvidence: []string{"metrics query"}}
 			}
 			if client == nil || !client.Configured() {
-				return ToolResult{Success: false, Observation: "prometheus is not configured", Error: "prometheus is not configured", MissingEvidence: []string{"prometheus metrics"}}
+				return ToolResult{Success: false, Observation: "Prometheus 未配置", Error: "prometheus is not configured", MissingEvidence: []string{"prometheus metrics"}}
 			}
 			start, end, err := rangeWindowInput(input, state)
 			if err != nil {
@@ -359,7 +359,7 @@ func newPrometheusQueryTool(client PrometheusRangeClient) Tool {
 			step := durationSecondsInput(input, "step_seconds", 30*time.Second)
 			result, err := client.QueryRange(ctx, query, start, end, step)
 			if err != nil {
-				return ToolResult{Success: false, Observation: "prometheus query failed", Error: err.Error(), MissingEvidence: []string{"prometheus metrics"}, Data: map[string]interface{}{"query": query, "start": start, "end": end, "step": step.String()}}
+				return ToolResult{Success: false, Observation: "Prometheus 查询失败", Error: err.Error(), MissingEvidence: []string{"prometheus metrics"}, Data: map[string]interface{}{"query": query, "start": start, "end": end, "step": step.String()}}
 			}
 			samples := countPrometheusSamples(result)
 			warnings := append([]string{}, result.Warnings...)
@@ -370,7 +370,7 @@ func newPrometheusQueryTool(client PrometheusRangeClient) Tool {
 			}
 			return ToolResult{
 				Success:         true,
-				Observation:     fmt.Sprintf("prometheus query_range samples=%d query=%s", samples, query),
+				Observation:     fmt.Sprintf("Prometheus 区间查询返回 samples=%d query=%s", samples, query),
 				ObservationData: result,
 				Warnings:        warnings,
 				MissingEvidence: missing,
@@ -403,10 +403,10 @@ func newLokiQueryTool(client LokiQueryClient) Tool {
 			podName := firstNonEmpty(stringInput(input, "pod_name"), goalPodName(state))
 			containerName := firstNonEmpty(stringInput(input, "container_name"), goalContainerName(state))
 			if namespace == "" || podName == "" {
-				return ToolResult{Success: false, Observation: "loki query requires namespace and pod_name", Error: "loki query requires namespace and pod_name", MissingEvidence: []string{"loki logs"}}
+				return ToolResult{Success: false, Observation: "Loki 查询需要 namespace 和 pod_name", Error: "loki query requires namespace and pod_name", MissingEvidence: []string{"loki logs"}}
 			}
 			if client == nil || !client.Configured() {
-				return ToolResult{Success: false, Observation: "loki is not configured", Error: "loki is not configured", MissingEvidence: []string{"loki logs"}}
+				return ToolResult{Success: false, Observation: "Loki 未配置", Error: "loki is not configured", MissingEvidence: []string{"loki logs"}}
 			}
 			start, end, err := rangeWindowInput(input, state)
 			if err != nil {
@@ -414,7 +414,7 @@ func newLokiQueryTool(client LokiQueryClient) Tool {
 			}
 			entries, err := client.QueryPodLogs(ctx, namespace, podName, containerName, start, end)
 			if err != nil {
-				return ToolResult{Success: false, Observation: "loki query failed", Error: err.Error(), MissingEvidence: []string{"loki logs"}, Data: map[string]interface{}{"namespace": namespace, "pod_name": podName, "container_name": containerName, "start": start, "end": end}}
+				return ToolResult{Success: false, Observation: "Loki 查询失败", Error: err.Error(), MissingEvidence: []string{"loki logs"}, Data: map[string]interface{}{"namespace": namespace, "pod_name": podName, "container_name": containerName, "start": start, "end": end}}
 			}
 			warnings := []string{}
 			missing := []string{}
@@ -424,7 +424,7 @@ func newLokiQueryTool(client LokiQueryClient) Tool {
 			}
 			return ToolResult{
 				Success:         true,
-				Observation:     fmt.Sprintf("loki log entries=%d namespace=%s pod=%s", len(entries), namespace, podName),
+				Observation:     fmt.Sprintf("Loki 返回日志 entries=%d namespace=%s pod=%s", len(entries), namespace, podName),
 				ObservationData: entries,
 				Warnings:        warnings,
 				MissingEvidence: missing,
@@ -456,7 +456,7 @@ func newRemediationGenerateTool(policy *RemediationPolicy) Tool {
 			_ = ctx
 			_ = input
 			if state == nil || state.DiagnosticContext == nil || state.Report == nil {
-				return failedTool("remediation.generate_actions", "diagnostic report is not ready")
+				return failedTool("remediation.generate_actions", "诊断报告尚未就绪")
 			}
 			actions := diagnostic.GenerateRemediationActions(state.DiagnosticContext, state.Report)
 			if policy == nil {
@@ -466,7 +466,7 @@ func newRemediationGenerateTool(policy *RemediationPolicy) Tool {
 			state.RemediationActions = actions
 			state.Executions = executions
 			state.Report.RemediationActions = actions
-			return ToolResult{Success: true, Observation: fmt.Sprintf("generated %d remediation actions", len(actions)), Data: actions}
+			return ToolResult{Success: true, Observation: fmt.Sprintf("生成 %d 条修复建议", len(actions)), Data: actions}
 		},
 	}
 }

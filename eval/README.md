@@ -48,4 +48,20 @@ Each YAML case contains:
 - `golden_answer.acceptable_remediations`
 - `golden_answer.confidence_min`
 
-The core suite currently covers 15 cases: OOMKilled x4, CrashLoopBackOff x4, PodPending x3, ImagePullBackOff x2, and ProbeFailed x2.
+The default suite currently covers 55 cases:
+
+- `core.yaml`: 15 hand-written cases covering OOMKilled x4, CrashLoopBackOff x4, PodPending x3, ImagePullBackOff x2, and ProbeFailed x2.
+- `fault-bank.yaml`: 40 generated cases covering OOMKilled, CrashLoopBackOff, PodPending, ImagePullBackOff, ProbeFailed, InitError, Evicted, and NodeNotReady.
+
+Regenerate the fault bank after editing scenarios:
+
+```bash
+go run ./scripts/generate_eval_fault_bank.go
+```
+
+The generator also writes live-cluster demo manifests to `demo/fault-bank`:
+
+```bash
+kubectl apply -k demo/fault-bank
+kubectl delete -k demo/fault-bank --ignore-not-found
+```

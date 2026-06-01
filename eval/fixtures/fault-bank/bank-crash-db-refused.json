@@ -1,0 +1,171 @@
+{
+  "namespace": "eval-bank",
+  "pod_name": "bank-crash-db-refused",
+  "pod": {
+    "metadata": {
+      "name": "bank-crash-db-refused",
+      "namespace": "eval-bank",
+      "creationTimestamp": null,
+      "labels": {
+        "app": "bank-crash-db-refused",
+        "faultbank": "true"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.example.com/app:v1",
+          "ports": [
+            {
+              "name": "http",
+              "containerPort": 8080
+            }
+          ],
+          "env": [
+            {
+              "name": "CONFIG_PATH",
+              "value": "/etc/app/config.yaml"
+            },
+            {
+              "name": "DATABASE_URL",
+              "value": "db:5432"
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          },
+          "imagePullPolicy": "IfNotPresent"
+        }
+      ],
+      "nodeName": "node-a"
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "state": {
+            "waiting": {
+              "reason": "CrashLoopBackOff",
+              "message": "back-off restarting failed container app"
+            }
+          },
+          "lastState": {
+            "terminated": {
+              "exitCode": 1,
+              "reason": "Error",
+              "startedAt": "2026-05-31T07:58:00Z",
+              "finishedAt": "2026-05-31T08:00:00Z"
+            }
+          },
+          "ready": false,
+          "restartCount": 4,
+          "image": "",
+          "imageID": ""
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {
+        "name": "bank-crash-db-refused.backoff",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container app in pod bank-crash-db-refused",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "app",
+      "Current": "",
+      "Previous": "startup failed: connection refused while dialing db:5432",
+      "fault_time": "2026-05-31T08:00:00Z",
+      "window_start": "2026-05-31T07:58:00Z",
+      "window_end": "2026-05-31T08:01:00Z",
+      "precise": true
+    }
+  ],
+  "topology": {
+    "replica_set_name": "bank-crash-db-refused-rs",
+    "deployment_name": "bank-crash-db-refused-deploy",
+    "node_name": "node-a",
+    "workload": {
+      "kind": "Deployment",
+      "name": "bank-crash-db-refused-deploy",
+      "desired_replicas": 3,
+      "total_pods": 3,
+      "other_pods": 2,
+      "other_running": 2,
+      "other_ready": 2,
+      "other_abnormal": 0,
+      "other_restart_count": 0
+    },
+    "selected_services": [
+      {
+        "name": "bank-crash-db-refused-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "bank-crash-db-refused"
+        },
+        "available_endpoints": 2
+      }
+    ],
+    "node": {
+      "name": "node-a",
+      "ready": true,
+      "memory_pressure": false,
+      "disk_pressure": false,
+      "pid_pressure": false
+    }
+  },
+  "correlations": {
+    "node_name": "node-a",
+    "deployment_name": "bank-crash-db-refused-deploy",
+    "namespace": "eval-bank",
+    "node_abnormal_count": 0,
+    "peer_abnormal_count": 0,
+    "namespace_hot_count": 0
+  },
+  "metric_trends": [
+    {
+      "profile": "restart",
+      "metric": "kube_pod_container_status_restarts_total",
+      "window": "1h",
+      "classification": "progressive_growth",
+      "sample_count": 8,
+      "first_value": 1,
+      "last_value": 4,
+      "min_value": 1,
+      "max_value": 4,
+      "avg_value": 2,
+      "growth_ratio": 4,
+      "window_start": "2026-05-31T07:00:00Z",
+      "window_end": "2026-05-31T08:00:00Z"
+    }
+  ],
+  "fault_time": "2026-05-31T08:00:00Z",
+  "log_window_start": "2026-05-31T07:58:00Z",
+  "log_window_end": "2026-05-31T08:01:00Z",
+  "logs_precise": true,
+  "metrics_enabled": false
+}

@@ -41,42 +41,42 @@ func (p *RulePlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []T
 		"namespace": goal.Namespace,
 		"pod_name":  goal.PodName,
 	}
-	add("k8s.get_pod", "load the authoritative pod snapshot", true, baseInput)
-	add("runbook.search", "collect runbook planner hints", false, map[string]interface{}{"fault_type": goal.ExpectedFault, "query": goal.AlertName})
+	add("k8s.get_pod", "读取 Pod 权威快照", true, baseInput)
+	add("runbook.search", "检索诊断手册中的计划提示", false, map[string]interface{}{"fault_type": goal.ExpectedFault, "query": goal.AlertName})
 
 	switch fault {
 	case "oomkilled":
-		add("k8s.get_logs", "inspect logs around the OOM restart", false, baseInput)
-		add("prometheus.query_range", "inspect memory working set near the failure window", false, map[string]interface{}{"query": "container_memory_working_set_bytes"})
-		add("loki.query_logs", "check centralized logs for OOM-adjacent messages", false, baseInput)
-		add("k8s.get_topology", "check workload and node pressure context", false, baseInput)
+		add("k8s.get_logs", "查看 OOM 重启前后的容器日志", false, baseInput)
+		add("prometheus.query_range", "查看故障窗口内的内存工作集趋势", false, map[string]interface{}{"query": "container_memory_working_set_bytes"})
+		add("loki.query_logs", "查看集中式日志中的 OOM 相关信息", false, baseInput)
+		add("k8s.get_topology", "检查工作负载和节点压力上下文", false, baseInput)
 	case "crashloopbackoff":
-		add("k8s.get_logs", "classify startup failure or runtime crash from previous logs", false, baseInput)
-		add("loki.query_logs", "check centralized logs for dependency or config errors", false, baseInput)
-		add("k8s.get_events", "inspect BackOff and failure events", false, baseInput)
-		add("k8s.get_topology", "check workload impact and peer pod health", false, baseInput)
+		add("k8s.get_logs", "通过 previous logs 判断是启动失败还是运行期崩溃", false, baseInput)
+		add("loki.query_logs", "查看集中式日志中的依赖或配置错误", false, baseInput)
+		add("k8s.get_events", "检查 BackOff 和失败事件", false, baseInput)
+		add("k8s.get_topology", "检查工作负载影响和同组 Pod 健康状态", false, baseInput)
 	case "probefailed":
-		add("k8s.get_events", "inspect readiness and liveness probe events", false, baseInput)
-		add("k8s.get_logs", "inspect application health endpoint logs", false, baseInput)
-		add("loki.query_logs", "check centralized logs around probe failures", false, baseInput)
-		add("k8s.get_topology", "check service endpoints and impact", false, baseInput)
+		add("k8s.get_events", "检查 Readiness/Liveness 探针事件", false, baseInput)
+		add("k8s.get_logs", "查看应用健康检查端点相关日志", false, baseInput)
+		add("loki.query_logs", "查看探针失败前后的集中式日志", false, baseInput)
+		add("k8s.get_topology", "检查 Service Endpoints 和影响范围", false, baseInput)
 	case "pending", "podpending":
-		add("k8s.get_events", "inspect scheduler failure events", false, baseInput)
-		add("k8s.get_pvc", "check PVC binding state directly", false, baseInput)
-		add("k8s.get_topology", "inspect scheduling and node context", false, baseInput)
+		add("k8s.get_events", "检查调度器失败事件", false, baseInput)
+		add("k8s.get_pvc", "直接检查 PVC 绑定状态", false, baseInput)
+		add("k8s.get_topology", "检查调度约束和节点上下文", false, baseInput)
 	case "nodenotready":
-		add("k8s.get_topology", "inspect node health and pressure conditions", true, baseInput)
-		add("k8s.get_events", "collect node-related events", false, baseInput)
+		add("k8s.get_topology", "检查节点健康和压力条件", true, baseInput)
+		add("k8s.get_events", "采集节点相关事件", false, baseInput)
 	default:
-		add("k8s.get_events", "collect general pod events", false, baseInput)
-		add("k8s.get_logs", "collect general container logs", false, baseInput)
-		add("k8s.get_pvc", "check storage constraints when present", false, baseInput)
-		add("k8s.get_topology", "collect workload impact context", false, baseInput)
+		add("k8s.get_events", "采集通用 Pod 事件", false, baseInput)
+		add("k8s.get_logs", "采集通用容器日志", false, baseInput)
+		add("k8s.get_pvc", "如存在存储约束则检查 PVC", false, baseInput)
+		add("k8s.get_topology", "采集工作负载影响上下文", false, baseInput)
 	}
 
 	applyDefaultParallelGroups(steps)
 	return Plan{
-		Summary:              "rule-based Kubernetes incident response plan",
+		Summary:              "基于规则的 Kubernetes 只读诊断计划",
 		Steps:                steps,
 		ExpectedObservations: expectedObservations(fault),
 		StopCondition: []string{
@@ -101,7 +101,7 @@ func (p *RulePlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, 
 	}
 	if last.ToolName == "runbook.search" {
 		for _, tool := range recommendedTools(last.Data) {
-			appendIfMissing(plan, tool, "added from runbook planner hint", state)
+			appendIfMissing(plan, tool, "根据诊断手册提示追加采集步骤", state)
 		}
 	}
 	for _, hypothesis := range hypotheses {
@@ -111,13 +111,13 @@ func (p *RulePlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, 
 		for _, missing := range hypothesis.MissingEvidence {
 			switch {
 			case strings.Contains(missing, "logs"):
-				appendIfMissing(plan, "k8s.get_logs", "added after hypothesis requested log evidence", state)
+				appendIfMissing(plan, "k8s.get_logs", "假设分析需要补充日志证据", state)
 			case strings.Contains(missing, "events"):
-				appendIfMissing(plan, "k8s.get_events", "added after hypothesis requested event evidence", state)
+				appendIfMissing(plan, "k8s.get_events", "假设分析需要补充事件证据", state)
 			case strings.Contains(missing, "pvc"):
-				appendIfMissing(plan, "k8s.get_pvc", "added after hypothesis requested pvc evidence", state)
+				appendIfMissing(plan, "k8s.get_pvc", "假设分析需要补充 PVC 证据", state)
 			case strings.Contains(missing, "metric"), strings.Contains(missing, "memory"):
-				appendIfMissing(plan, "prometheus.query_range", "added after hypothesis requested metric evidence", state)
+				appendIfMissing(plan, "prometheus.query_range", "假设分析需要补充指标证据", state)
 			}
 		}
 	}
@@ -235,17 +235,17 @@ func markUnavailable(plan *Plan, tool string) {
 func expectedObservations(fault string) []string {
 	switch fault {
 	case "oomkilled":
-		return []string{"termination reason", "memory limits", "memory metrics", "previous logs", "node pressure"}
+		return []string{"终止原因", "内存限制", "内存指标", "previous logs", "节点压力"}
 	case "crashloopbackoff":
-		return []string{"last termination state", "previous logs", "events", "config/dependency clues"}
+		return []string{"最近终止状态", "previous logs", "事件", "配置或依赖线索"}
 	case "probefailed":
-		return []string{"probe config", "Unhealthy events", "health endpoint logs", "service endpoint impact"}
+		return []string{"探针配置", "Unhealthy 事件", "健康检查端点日志", "Service Endpoint 影响"}
 	case "pending", "podpending":
-		return []string{"FailedScheduling events", "PVC phase", "node constraints", "taints and selectors"}
+		return []string{"FailedScheduling 事件", "PVC 状态", "节点约束", "污点和选择器"}
 	case "nodenotready":
-		return []string{"node readiness condition", "node events", "affected pod topology"}
+		return []string{"节点 Ready 条件", "节点事件", "受影响 Pod 拓扑"}
 	default:
-		return []string{"pod state", "events", "logs", "topology"}
+		return []string{"Pod 状态", "事件", "日志", "拓扑"}
 	}
 }
 

@@ -28,13 +28,19 @@ type NavItem = {
   minRole: UserRole;
 };
 
+const roleLabel: Record<UserRole, string> = {
+  viewer: '观察员',
+  operator: '诊断员',
+  admin: '管理员',
+};
+
 const navItems: NavItem[] = [
   { key: '/', icon: <DashboardOutlined />, label: '仪表盘', minRole: 'viewer' },
   { key: '/tasks', icon: <UnorderedListOutlined />, label: '任务列表', minRole: 'viewer' },
   { key: '/diagnose', icon: <MedicineBoxOutlined />, label: '新建诊断', minRole: 'operator' },
-  { key: '/runbooks', icon: <FileTextOutlined />, label: 'Runbook', minRole: 'viewer' },
+  { key: '/runbooks', icon: <FileTextOutlined />, label: '诊断手册', minRole: 'viewer' },
   { key: '/approvals', icon: <SafetyOutlined />, label: '审批中心', minRole: 'operator' },
-  { key: '/dead-letters', icon: <DatabaseOutlined />, label: 'Dead Letter', minRole: 'operator' },
+  { key: '/dead-letters', icon: <DatabaseOutlined />, label: '异常任务', minRole: 'operator' },
   { key: '/audit-logs', icon: <FileProtectOutlined />, label: '审计日志', minRole: 'admin' },
 ];
 
@@ -120,10 +126,10 @@ const MainLayout = () => {
           <span className="page-title">{pageTitle}</span>
           <Space size="middle">
             <Tag color={currentRole === 'admin' ? 'purple' : currentRole === 'operator' ? 'blue' : 'default'}>
-              {currentRole}
+              {roleLabel[currentRole] || currentRole}
             </Tag>
             {currentToken ? (
-              <Tooltip title="Token 已配置，点击按钮可修改">
+              <Tooltip title="令牌已配置，点击按钮可修改">
                 <Badge
                   status="success"
                   text={
@@ -135,7 +141,7 @@ const MainLayout = () => {
                 />
               </Tooltip>
             ) : (
-              <Tooltip title="未配置 Token，点击按钮配置">
+              <Tooltip title="未配置令牌，点击按钮配置">
                 <Badge
                   status="warning"
                   text={
@@ -155,7 +161,7 @@ const MainLayout = () => {
               }}
               size="small"
             >
-              设置 Token
+              设置令牌
             </Button>
           </Space>
         </Header>
@@ -176,7 +182,7 @@ const MainLayout = () => {
         title={
           <Space>
             <KeyOutlined />
-            配置认证 Token
+            配置认证令牌
           </Space>
         }
         open={tokenModalOpen}
@@ -188,10 +194,10 @@ const MainLayout = () => {
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Typography.Text type="secondary">
-            输入后端 API 的 Bearer Token。Token 只保存在浏览器本地，不会发送到第三方服务。
+            输入后端 API 的认证令牌。令牌只保存在浏览器本地，不会发送到第三方服务。
           </Typography.Text>
           <Input.Password
-            placeholder="请输入 Token"
+            placeholder="请输入令牌"
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value)}
             onPressEnter={handleSaveToken}

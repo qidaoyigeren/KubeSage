@@ -44,7 +44,7 @@ func (p *LLMPlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []To
 		observability.IncLLMPlannerFallback("build_plan", "llm_error")
 	}
 	plan := p.fallback.BuildInitialPlan(ctx, goal, readOnly)
-	plan.Summary = "llm planner fallback selected a policy-validated read-only diagnostic plan"
+	plan.Summary = "LLM Planner 降级为规则兜底，生成已通过策略校验的只读诊断计划"
 	return plan
 }
 
@@ -152,10 +152,11 @@ func sanitizePlan(plan Plan, tools []ToolMetadata, goal Goal) Plan {
 	available := map[string]ToolMetadata{}
 	for _, tool := range tools {
 		available[tool.Name] = tool
+		available[canonicalToolName(tool.Name)] = tool
 	}
 	sanitized := Plan{Summary: plan.Summary, ExpectedObservations: plan.ExpectedObservations, StopCondition: plan.StopCondition}
 	if sanitized.Summary == "" {
-		sanitized.Summary = "llm planner selected a policy-validated read-only diagnostic plan"
+		sanitized.Summary = "LLM Planner 生成已通过策略校验的只读诊断计划"
 	}
 	if len(sanitized.StopCondition) == 0 {
 		sanitized.StopCondition = []string{StopReasonMaxSteps, StopReasonConfirmedHypothesis, StopReasonTimeout, StopReasonNoEffectiveTool, StopReasonCriticalToolFailed}
@@ -176,7 +177,63 @@ func sanitizePlan(plan Plan, tools []ToolMetadata, goal Goal) Plan {
 	if len(sanitized.Steps) == 0 {
 		return NewRulePlanner().BuildInitialPlan(context.Background(), goal, tools)
 	}
+	ensureRequiredEvidenceSteps(&sanitized, available, goal)
+	applyDefaultParallelGroups(sanitized.Steps)
 	return sanitized
+}
+
+func ensureRequiredEvidenceSteps(plan *Plan, available map[string]ToolMetadata, goal Goal) {
+	if plan == nil || normalizeFault(goal.ExpectedFault) != "crashloopbackoff" {
+		return
+	}
+	baseInput := map[string]interface{}{"namespace": goal.Namespace, "pod_name": goal.PodName}
+	required := []struct {
+		tool   string
+		reason string
+	}{
+		{tool: "k8s.get_pod", reason: "CrashLoop 分析前先读取 Pod 权威快照"},
+		{tool: "k8s.get_events", reason: "检查 CrashLoopBackOff 相关 BackOff 和失败事件"},
+		{tool: "k8s.get_logs", reason: "检查 current/previous logs 中的启动失败证据"},
+		{tool: "k8s.get_topology", reason: "检查 CrashLoopBackOff 对工作负载和节点上下文的影响"},
+	}
+	for _, item := range required {
+		if !toolAvailable(available, item.tool) || planHasTool(plan, item.tool) {
+			continue
+		}
+		step := PlanStep{
+			ID:         "guard-" + strings.ReplaceAll(item.tool, ".", "-"),
+			ToolName:   item.tool,
+			Reason:     item.reason,
+			Input:      baseInput,
+			AppendedBy: "planner_guardrail",
+		}
+		if item.tool == "k8s.get_pod" {
+			plan.Steps = append([]PlanStep{step}, plan.Steps...)
+			continue
+		}
+		step.ParallelGroup = "evidence-snapshot"
+		plan.Steps = append(plan.Steps, step)
+	}
+}
+
+func toolAvailable(available map[string]ToolMetadata, tool string) bool {
+	if len(available) == 0 {
+		return false
+	}
+	_, ok := available[tool]
+	return ok
+}
+
+func planHasTool(plan *Plan, tool string) bool {
+	if plan == nil {
+		return false
+	}
+	for _, step := range plan.Steps {
+		if canonicalToolName(step.ToolName) == tool && !step.Skipped {
+			return true
+		}
+	}
+	return false
 }
 
 // collectObservations gathers observation strings from completed plan steps.

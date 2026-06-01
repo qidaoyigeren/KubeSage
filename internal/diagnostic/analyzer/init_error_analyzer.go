@@ -49,10 +49,10 @@ func (a *InitErrorAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 
 func (a *InitErrorAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
-	summary := "Init container failed before application containers started."
+	summary := "Init 容器在业务容器启动前失败，导致 Pod 无法继续启动。"
 	actions := []string{
-		"Inspect init container command, args, mounted config, and previous logs.",
-		"Verify dependencies that init containers wait for, such as migrations, DNS, and service endpoints.",
+		"检查 Init 容器的启动命令、参数、挂载配置和 previous logs。",
+		"确认 Init 容器等待的依赖是否可用，例如数据库迁移、DNS 和 Service Endpoints。",
 	}
 
 	for _, status := range ctx.Pod.Status.InitContainerStatuses {
@@ -93,7 +93,7 @@ func (a *InitErrorAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 	evidences = append(evidences, keyLogEvidences(ctx.Logs, "Key Init container log fragments", initErrorLogKeywords, "warning")...)
 
 	if hasEvidence(evidences, "k8s_key_log", "") {
-		summary = "Init container logs contain failure keywords; root cause is likely init command/config/dependency failure."
+		summary = "Init 容器日志包含失败关键词，根因更可能是启动命令、配置或依赖检查失败。"
 	}
 
 	return &diagnostic.AnalyzeResult{
@@ -102,7 +102,7 @@ func (a *InitErrorAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 		RootCauseSummary: summary,
 		ConfidenceScore:  initErrorConfidence(evidences),
 		Evidences:        evidences,
-		ImpactAnalysis:   "Application containers will not start until all init containers complete successfully.",
+		ImpactAnalysis:   "所有 Init 容器成功完成之前，业务容器不会启动。",
 		SuggestedActions: actions,
 		RiskLevel:        "medium",
 		NeedHumanConfirm: true,

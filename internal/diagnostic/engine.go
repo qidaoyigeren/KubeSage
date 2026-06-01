@@ -65,15 +65,10 @@ func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 	return report, nil
 }
 
-// aggregate merges multiple analyzer results and keeps the highest-confidence
-// result as the main diagnosis summary.
+// aggregate merges multiple analyzer results and keeps the strongest result as
+// the main diagnosis summary.
 func aggregate(ctx *DiagnosticContext, results []*AnalyzeResult) *Report {
-	best := results[0]
-	for _, result := range results[1:] {
-		if result.ConfidenceScore > best.ConfidenceScore {
-			best = result
-		}
-	}
+	best := selectBestResult(results)
 
 	evidences := make([]EvidenceRecord, 0)
 	actions := make([]string, 0)
@@ -101,6 +96,66 @@ func aggregate(ctx *DiagnosticContext, results []*AnalyzeResult) *Report {
 		RiskLevel:        best.RiskLevel,
 		NeedHumanConfirm: true,
 	}
+}
+
+func selectBestResult(results []*AnalyzeResult) *AnalyzeResult {
+	best := results[0]
+	for _, result := range results[1:] {
+		if preferResult(result, best) {
+			best = result
+		}
+	}
+	return best
+}
+
+func preferResult(candidate, current *AnalyzeResult) bool {
+	if current == nil {
+		return candidate != nil
+	}
+	if candidate == nil {
+		return false
+	}
+	candidateStrongOOM := hasStrongOOMTerminationEvidence(candidate)
+	currentStrongOOM := hasStrongOOMTerminationEvidence(current)
+	if candidateStrongOOM && faultTypeMatchesAny(current.FaultType, "PodPending") {
+		return true
+	}
+	if currentStrongOOM && faultTypeMatchesAny(candidate.FaultType, "PodPending") {
+		return false
+	}
+	return candidate.ConfidenceScore > current.ConfidenceScore
+}
+
+func hasStrongOOMTerminationEvidence(result *AnalyzeResult) bool {
+	if result == nil || !faultTypeMatchesAny(result.FaultType, "OOMKilled") {
+		return false
+	}
+	for _, evidence := range result.Evidences {
+		if evidence.SourceType != "k8s_pod_status" {
+			continue
+		}
+		text := strings.ToLower(evidence.Title + " " + evidence.Content)
+		if strings.Contains(text, "oom termination evidence") &&
+			(strings.Contains(text, "reason=oomkilled") || strings.Contains(text, "exitcode=137")) {
+			return true
+		}
+	}
+	return false
+}
+
+func faultTypeMatchesAny(actual, expected string) bool {
+	expected = normalizeFaultName(expected)
+	for _, part := range strings.Split(actual, ",") {
+		if normalizeFaultName(part) == expected {
+			return true
+		}
+	}
+	return normalizeFaultName(actual) == expected
+}
+
+func normalizeFaultName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.NewReplacer("-", "", "_", "", " ", "").Replace(value)
 }
 
 // enrichReportWithTopology adds topology evidence and appends topology-derived

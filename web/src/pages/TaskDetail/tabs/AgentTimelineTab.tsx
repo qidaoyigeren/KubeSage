@@ -18,13 +18,13 @@ import { formatDuration } from '../../../utils/format';
 import type { AgentStep, AgentStepStage, AgentStepStatus } from '../../../api/types';
 
 const stageConfig: Record<AgentStepStage, { color: string; label: string; icon: ReactNode }> = {
-  plan: { color: '#1677ff', label: 'PLAN', icon: <AimOutlined /> },
-  tool_call: { color: '#722ed1', label: 'TOOL', icon: <ToolOutlined /> },
-  observation: { color: '#13c2c2', label: 'OBSERVE', icon: <EyeOutlined /> },
-  reflection: { color: '#faad14', label: 'REFLECT', icon: <BulbOutlined /> },
-  decision: { color: '#52c41a', label: 'DECIDE', icon: <AuditOutlined /> },
-  action: { color: '#eb2f96', label: 'ACTION', icon: <ThunderboltOutlined /> },
-  verification: { color: '#2f54eb', label: 'VERIFY', icon: <SafetyOutlined /> },
+  plan: { color: '#1677ff', label: '计划', icon: <AimOutlined /> },
+  tool_call: { color: '#722ed1', label: '工具调用', icon: <ToolOutlined /> },
+  observation: { color: '#13c2c2', label: '观察', icon: <EyeOutlined /> },
+  reflection: { color: '#faad14', label: '反思', icon: <BulbOutlined /> },
+  decision: { color: '#52c41a', label: '决策', icon: <AuditOutlined /> },
+  action: { color: '#eb2f96', label: '动作', icon: <ThunderboltOutlined /> },
+  verification: { color: '#2f54eb', label: '验证', icon: <SafetyOutlined /> },
 };
 
 const statusIcon: Record<AgentStepStatus, ReactNode> = {
@@ -33,23 +33,23 @@ const statusIcon: Record<AgentStepStatus, ReactNode> = {
   skipped: <MinusCircleOutlined style={{ color: '#bfbfbf', fontSize: 16 }} />,
 };
 
-const groupOrder = ['PLAN', 'EXECUTE', 'HYPOTHESIZE', 'REFLECT'] as const;
+const groupOrder = ['计划阶段', '证据采集', '假设分析', '反思决策'] as const;
 type TimelineGroup = (typeof groupOrder)[number];
 
 const groupStep = (step: AgentStep): TimelineGroup => {
-  if (step.stage === 'plan') return 'PLAN';
+  if (step.stage === 'plan') return '计划阶段';
   if (step.stage === 'tool_call' || step.stage === 'observation' || step.stage === 'action' || step.stage === 'verification') {
-    return 'EXECUTE';
+    return '证据采集';
   }
   if (step.stage === 'reflection' && step.reasoning_summary?.toLowerCase().includes('hypothes')) {
-    return 'HYPOTHESIZE';
+    return '假设分析';
   }
-  return 'REFLECT';
+  return '反思决策';
 };
 
 const AgentTimelineTab = ({ steps }: { steps: AgentStep[] }) => {
   if (!steps || steps.length === 0) {
-    return <Empty description="No Agent trace recorded" />;
+    return <Empty description="暂无 Agent 执行轨迹" />;
   }
 
   const sorted = [...steps].sort((a, b) => a.step_index - b.step_index);
@@ -114,14 +114,14 @@ const renderStep = (step: AgentStep) => {
               ...(step.input_json
                 ? [{
                     key: 'input',
-                    label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>Input</Typography.Text>,
+                    label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>输入</Typography.Text>,
                     children: <JsonViewer data={step.input_json} maxHeight={200} />,
                   }]
                 : []),
               ...(step.output_json
                 ? [{
                     key: 'output',
-                    label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>Output</Typography.Text>,
+                    label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>输出</Typography.Text>,
                     children: <JsonViewer data={step.output_json} maxHeight={200} />,
                   }]
                 : []),

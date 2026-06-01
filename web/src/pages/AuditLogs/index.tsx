@@ -21,14 +21,14 @@ const AuditLogsPage = () => {
       width: 60,
     },
     {
-      title: 'Actor',
+      title: '操作人',
       dataIndex: 'actor',
       key: 'actor',
       width: 120,
       render: (actor: string) => <Tag color="blue">{actor}</Tag>,
     },
     {
-      title: 'Action',
+      title: '动作',
       dataIndex: 'action',
       key: 'action',
       width: 200,
@@ -42,7 +42,7 @@ const AuditLogsPage = () => {
       },
     },
     {
-      title: 'Resource',
+      title: '资源',
       key: 'resource',
       render: (_: unknown, record: AuditLog) => (
         <Typography.Text>
@@ -53,13 +53,13 @@ const AuditLogsPage = () => {
       ),
     },
     {
-      title: 'Summary',
+      title: '摘要',
       dataIndex: 'summary',
       key: 'summary',
       ellipsis: true,
     },
     {
-      title: 'Time',
+      title: '时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 180,
@@ -72,7 +72,7 @@ const AuditLogsPage = () => {
       title={
         <Space>
           <FileProtectOutlined />
-          <span>Audit Logs</span>
+          <span>审计日志</span>
         </Space>
       }
     >
@@ -86,7 +86,7 @@ const AuditLogsPage = () => {
           total: data?.total || 0,
           pageSize: 20,
           onChange: setPage,
-          showTotal: (total) => `Total ${total} entries`,
+          showTotal: (total) => `共 ${total} 条`,
         }}
       />
     </Card>

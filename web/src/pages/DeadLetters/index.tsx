@@ -20,7 +20,7 @@ const DeadLettersPage = () => {
   const retryMutation = useMutation({
     mutationFn: (id: number) => retryDeadLetter(id),
     onSuccess: (task) => {
-      message.success(`Retry scheduled as task #${task.id}`);
+      message.success(`已重新入队为任务 #${task.id}`);
       queryClient.invalidateQueries({ queryKey: ['dead-letters'] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       navigate(`/tasks/${task.id}`);
@@ -37,7 +37,7 @@ const DeadLettersPage = () => {
       render: (id: number) => <Typography.Text code>#{id}</Typography.Text>,
     },
     {
-      title: 'Task',
+      title: '任务',
       dataIndex: 'task_id',
       key: 'task_id',
       width: 90,
@@ -45,27 +45,27 @@ const DeadLettersPage = () => {
         taskId ? <Typography.Link href={`/tasks/${taskId}`}>#{taskId}</Typography.Link> : '-',
     },
     {
-      title: 'Stream',
+      title: '队列流',
       dataIndex: 'stream',
       key: 'stream',
       width: 180,
       render: (stream: string) => <Tag color="blue">{stream}</Tag>,
     },
     {
-      title: 'Attempts',
+      title: '重试次数',
       dataIndex: 'attempts',
       key: 'attempts',
       width: 90,
     },
     {
-      title: 'Error',
+      title: '错误',
       dataIndex: 'error',
       key: 'error',
       ellipsis: true,
       render: (error: string) => <Typography.Text type="danger">{error}</Typography.Text>,
     },
     {
-      title: 'Payload',
+      title: '载荷',
       dataIndex: 'payload_json',
       key: 'payload_json',
       width: 260,
@@ -77,14 +77,14 @@ const DeadLettersPage = () => {
       ),
     },
     {
-      title: 'Created',
+      title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 160,
       render: (t: string) => formatTime(t),
     },
     {
-      title: 'Action',
+      title: '操作',
       key: 'action',
       width: 120,
       render: (_: unknown, record: DiagnosisQueueDeadLetter) => (
@@ -94,7 +94,7 @@ const DeadLettersPage = () => {
           loading={retryMutation.isPending}
           onClick={() => retryMutation.mutate(record.id)}
         >
-          Retry
+          重试
         </Button>
       ),
     },
@@ -105,7 +105,7 @@ const DeadLettersPage = () => {
       title={
         <Space>
           <DatabaseOutlined />
-          <span>Dead Letter Queue</span>
+          <span>异常任务队列</span>
         </Space>
       }
     >
@@ -119,7 +119,7 @@ const DeadLettersPage = () => {
           total: data?.total || 0,
           pageSize: 20,
           onChange: setPage,
-          showTotal: (total) => `Total ${total} entries`,
+          showTotal: (total) => `共 ${total} 条`,
         }}
       />
     </Card>

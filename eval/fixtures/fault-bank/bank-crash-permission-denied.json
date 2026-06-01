@@ -1,0 +1,171 @@
+{
+  "namespace": "eval-bank",
+  "pod_name": "bank-crash-permission-denied",
+  "pod": {
+    "metadata": {
+      "name": "bank-crash-permission-denied",
+      "namespace": "eval-bank",
+      "creationTimestamp": null,
+      "labels": {
+        "app": "bank-crash-permission-denied",
+        "faultbank": "true"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.example.com/app:v1",
+          "ports": [
+            {
+              "name": "http",
+              "containerPort": 8080
+            }
+          ],
+          "env": [
+            {
+              "name": "CONFIG_PATH",
+              "value": "/etc/app/config.yaml"
+            },
+            {
+              "name": "DATABASE_URL",
+              "value": "db:5432"
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          },
+          "imagePullPolicy": "IfNotPresent"
+        }
+      ],
+      "nodeName": "node-a"
+    },
+    "status": {
+      "phase": "Running",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "state": {
+            "waiting": {
+              "reason": "CrashLoopBackOff",
+              "message": "back-off restarting failed container app"
+            }
+          },
+          "lastState": {
+            "terminated": {
+              "exitCode": 126,
+              "reason": "Error",
+              "startedAt": "2026-05-31T07:58:00Z",
+              "finishedAt": "2026-05-31T08:00:00Z"
+            }
+          },
+          "ready": false,
+          "restartCount": 3,
+          "image": "",
+          "imageID": ""
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {
+        "name": "bank-crash-permission-denied.backoff",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container app in pod bank-crash-permission-denied",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    }
+  ],
+  "logs": [
+    {
+      "ContainerName": "app",
+      "Current": "",
+      "Previous": "/entrypoint.sh: permission denied",
+      "fault_time": "2026-05-31T08:00:00Z",
+      "window_start": "2026-05-31T07:58:00Z",
+      "window_end": "2026-05-31T08:01:00Z",
+      "precise": true
+    }
+  ],
+  "topology": {
+    "replica_set_name": "bank-crash-permission-denied-rs",
+    "deployment_name": "bank-crash-permission-denied-deploy",
+    "node_name": "node-a",
+    "workload": {
+      "kind": "Deployment",
+      "name": "bank-crash-permission-denied-deploy",
+      "desired_replicas": 3,
+      "total_pods": 3,
+      "other_pods": 2,
+      "other_running": 2,
+      "other_ready": 2,
+      "other_abnormal": 0,
+      "other_restart_count": 0
+    },
+    "selected_services": [
+      {
+        "name": "bank-crash-permission-denied-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "bank-crash-permission-denied"
+        },
+        "available_endpoints": 2
+      }
+    ],
+    "node": {
+      "name": "node-a",
+      "ready": true,
+      "memory_pressure": false,
+      "disk_pressure": false,
+      "pid_pressure": false
+    }
+  },
+  "correlations": {
+    "node_name": "node-a",
+    "deployment_name": "bank-crash-permission-denied-deploy",
+    "namespace": "eval-bank",
+    "node_abnormal_count": 0,
+    "peer_abnormal_count": 0,
+    "namespace_hot_count": 0
+  },
+  "metric_trends": [
+    {
+      "profile": "restart",
+      "metric": "kube_pod_container_status_restarts_total",
+      "window": "1h",
+      "classification": "progressive_growth",
+      "sample_count": 8,
+      "first_value": 1,
+      "last_value": 3,
+      "min_value": 1,
+      "max_value": 3,
+      "avg_value": 1.5,
+      "growth_ratio": 3,
+      "window_start": "2026-05-31T07:00:00Z",
+      "window_end": "2026-05-31T08:00:00Z"
+    }
+  ],
+  "fault_time": "2026-05-31T08:00:00Z",
+  "log_window_start": "2026-05-31T07:58:00Z",
+  "log_window_end": "2026-05-31T08:01:00Z",
+  "logs_precise": true,
+  "metrics_enabled": false
+}

@@ -36,7 +36,7 @@ const ApprovalsPage = () => {
   const approveMutation = useMutation({
     mutationFn: (id: number) => approveRemediation(id),
     onSuccess: () => {
-      message.success('Remediation approved');
+      message.success('修复动作已审批通过');
       queryClient.invalidateQueries({ queryKey: ['pending-approvals'] });
     },
     onError: (err: Error) => message.error(err.message),
@@ -45,7 +45,7 @@ const ApprovalsPage = () => {
   const rejectMutation = useMutation({
     mutationFn: ({ id, reason }: { id: number; reason: string }) => rejectRemediation(id, reason),
     onSuccess: () => {
-      message.success('Remediation rejected');
+      message.success('修复动作已驳回');
       queryClient.invalidateQueries({ queryKey: ['pending-approvals'] });
     },
     onError: (err: Error) => message.error(err.message),
@@ -59,7 +59,7 @@ const ApprovalsPage = () => {
       width: 60,
     },
     {
-      title: 'Task ID',
+      title: '任务 ID',
       dataIndex: 'task_id',
       key: 'task_id',
       width: 80,
@@ -68,13 +68,13 @@ const ApprovalsPage = () => {
       ),
     },
     {
-      title: 'Action',
+      title: '动作',
       dataIndex: 'action_id',
       key: 'action_id',
       width: 160,
     },
     {
-      title: 'Risk',
+      title: '风险',
       dataIndex: 'risk_level',
       key: 'risk_level',
       width: 80,
@@ -88,38 +88,38 @@ const ApprovalsPage = () => {
       },
     },
     {
-      title: 'Command Preview',
+      title: '命令预览',
       dataIndex: 'command_preview',
       key: 'command_preview',
       ellipsis: true,
     },
     {
-      title: 'Created',
+      title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
       width: 160,
       render: (t: string) => formatTime(t),
     },
     {
-      title: 'Action',
+      title: '操作',
       key: 'action',
       width: 180,
       render: (_: unknown, record: RemediationExecution) => (
         <Space>
           <Popconfirm
-            title="Approve this remediation?"
+            title="确认通过该修复动作？"
             onConfirm={() => approveMutation.mutate(record.id)}
           >
             <Button type="primary" size="small" icon={<CheckCircleOutlined />}>
-              Approve
+              通过
             </Button>
           </Popconfirm>
           <Popconfirm
-            title="Reject this remediation?"
-            onConfirm={() => rejectMutation.mutate({ id: record.id, reason: 'Rejected by operator' })}
+            title="确认驳回该修复动作？"
+            onConfirm={() => rejectMutation.mutate({ id: record.id, reason: '诊断员驳回' })}
           >
             <Button danger size="small" icon={<CloseCircleOutlined />}>
-              Reject
+              驳回
             </Button>
           </Popconfirm>
         </Space>
@@ -132,7 +132,7 @@ const ApprovalsPage = () => {
       title={
         <Space>
           <SafetyOutlined />
-          <span>Pending Approvals</span>
+          <span>待审批修复动作</span>
         </Space>
       }
     >

@@ -43,8 +43,7 @@ func (a *ImagePullBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool
 		}
 	}
 	for _, event := range ctx.Events {
-		text := strings.ToLower(event.Reason + " " + event.Message)
-		if strings.Contains(text, "pull") && (strings.Contains(text, "image") || strings.Contains(text, "registry")) {
+		if imagePullFailureEvent(event) {
 			return true
 		}
 	}
@@ -53,10 +52,10 @@ func (a *ImagePullBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool
 
 func (a *ImagePullBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
-	summary := "Container image cannot be pulled; likely image name/tag, registry access, or imagePullSecret problem."
+	summary := "容器镜像无法拉取，常见原因是镜像名或标签错误、镜像仓库不可访问，或 imagePullSecret 配置异常。"
 	actions := []string{
-		"Verify image repository, tag, registry reachability, and imagePullPolicy.",
-		"Check imagePullSecrets and registry credentials in the namespace.",
+		"确认镜像仓库、标签、网络可达性和 imagePullPolicy 是否正确。",
+		"检查命名空间内的 imagePullSecrets 和镜像仓库凭据是否有效。",
 	}
 
 	for _, container := range append(ctx.Pod.Spec.InitContainers, ctx.Pod.Spec.Containers...) {
@@ -80,14 +79,14 @@ func (a *ImagePullBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 		})
 	}
 	for _, event := range ctx.Events {
-		text := strings.ToLower(event.Reason + " " + event.Message)
-		if strings.Contains(text, "pull") || strings.Contains(text, "image") || strings.Contains(text, "registry") {
+		if imagePullFailureEvent(event) {
+			text := strings.ToLower(event.Reason + " " + event.Message)
 			evidences = append(evidences, eventEvidence(event, "critical"))
 			if strings.Contains(text, "not found") || strings.Contains(text, "manifest unknown") {
-				summary = "Image pull failed because the image or tag was not found in the registry."
+				summary = "镜像拉取失败，仓库中可能不存在该镜像或标签。"
 			}
 			if strings.Contains(text, "unauthorized") || strings.Contains(text, "denied") || strings.Contains(text, "authentication") {
-				summary = "Image pull failed because registry authentication or imagePullSecret is invalid."
+				summary = "镜像拉取失败，镜像仓库认证或 imagePullSecret 可能无效。"
 			}
 		}
 	}
@@ -98,7 +97,7 @@ func (a *ImagePullBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 		RootCauseSummary: summary,
 		ConfidenceScore:  imagePullConfidence(evidences),
 		Evidences:        evidences,
-		ImpactAnalysis:   "Pod cannot start until kubelet pulls every required image successfully.",
+		ImpactAnalysis:   "在 kubelet 成功拉取所有必需镜像之前，Pod 无法进入正常运行状态。",
 		SuggestedActions: actions,
 		RiskLevel:        "medium",
 		NeedHumanConfirm: true,
@@ -110,6 +109,23 @@ func imagePullWaiting(waiting *corev1.ContainerStateWaiting) bool {
 		return false
 	}
 	return waiting.Reason == "ImagePullBackOff" || waiting.Reason == "ErrImagePull"
+}
+
+func imagePullFailureEvent(event corev1.Event) bool {
+	text := strings.ToLower(event.Reason + " " + event.Message)
+	if strings.Contains(text, "imagepullbackoff") || strings.Contains(text, "errimagepull") {
+		return true
+	}
+	for _, phrase := range []string{
+		"failed to pull image",
+		"manifest unknown",
+		"unauthorized",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func imagePullConfidence(evidences []diagnostic.EvidenceRecord) float64 {

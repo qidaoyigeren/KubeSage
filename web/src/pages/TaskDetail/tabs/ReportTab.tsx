@@ -31,7 +31,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
     mutationFn: (values: { rating: 'useful' | 'not_useful'; corrected_root_cause?: string; comment?: string }) =>
       submitFeedback(report.task_id, values),
     onSuccess: () => {
-      message.success('Feedback recorded');
+      message.success('反馈已记录');
       queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] });
       setFeedbackModalOpen(false);
       form.resetFields();
@@ -52,7 +52,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
     });
   };
 
-  if (!report) return <Typography.Text type="secondary">No report data</Typography.Text>;
+  if (!report) return <Typography.Text type="secondary">暂无报告数据</Typography.Text>;
 
   const snapshot = report.agent_report_snapshot;
 
@@ -63,16 +63,16 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
         title={
           <Space>
             <ExperimentOutlined style={{ color: '#1677ff' }} />
-            <span>Root Cause Analysis</span>
+            <span>根因分析</span>
           </Space>
         }
         extra={
           <Space>
             <Button icon={<LikeOutlined />} size="small" onClick={() => handleQuickFeedback('useful')} loading={feedback.isPending}>
-              Useful
+              有用
             </Button>
             <Button icon={<DislikeOutlined />} size="small" onClick={() => handleQuickFeedback('not_useful')} loading={feedback.isPending}>
-              Not useful
+              无用
             </Button>
             <Button
               icon={<CommentOutlined />}
@@ -82,27 +82,27 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
                 setFeedbackModalOpen(true);
               }}
             >
-              Detailed Feedback
+              详细反馈
             </Button>
           </Space>
         }
         bordered={false}
       >
         <Descriptions column={2} size="small">
-          <Descriptions.Item label="Fault type">
+          <Descriptions.Item label="故障类型">
             {report.fault_type ? <Text strong>{report.fault_type}</Text> : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="Confidence">
+          <Descriptions.Item label="置信度">
             <ConfidenceBar score={report.confidence_score} />
           </Descriptions.Item>
-          <Descriptions.Item label="Risk">
+          <Descriptions.Item label="风险等级">
             <RiskLevelTag level={report.risk_level} />
           </Descriptions.Item>
-          <Descriptions.Item label="Human confirmation">
+          <Descriptions.Item label="人工确认">
             {report.need_human_confirm ? (
-              <Alert message="Required" type="warning" showIcon icon={<WarningOutlined />} banner style={{ display: 'inline-block', padding: '2px 10px' }} />
+              <Alert message="需要确认" type="warning" showIcon icon={<WarningOutlined />} banner style={{ display: 'inline-block', padding: '2px 10px' }} />
             ) : (
-              <Text type="success">Not required</Text>
+              <Text type="success">无需确认</Text>
             )}
           </Descriptions.Item>
         </Descriptions>
@@ -110,7 +110,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
           <>
             <Divider style={{ margin: '16px 0' }} />
             <div style={{ padding: '12px 16px', background: '#f6ffed', borderRadius: 8, border: '1px solid #b7eb8f' }}>
-              <Text strong style={{ color: '#389e0d' }}>Summary: </Text>
+              <Text strong style={{ color: '#389e0d' }}>结论：</Text>
               <div style={{ marginTop: 4 }}>{report.root_cause_summary}</div>
             </div>
           </>
@@ -118,43 +118,43 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       </Card>
 
       {report.impact_analysis && (
-        <Card className="report-section-card" title={<SectionTitle icon={<SafetyOutlined />} text="Impact Analysis" />} bordered={false}>
+        <Card className="report-section-card" title={<SectionTitle icon={<SafetyOutlined />} text="影响分析" />} bordered={false}>
           <Paragraph style={{ margin: 0, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{report.impact_analysis}</Paragraph>
         </Card>
       )}
 
       {report.suggested_actions && (
-        <Card className="report-section-card" title={<SectionTitle icon={<BulbOutlined />} text="Suggested Actions" />} bordered={false}>
+        <Card className="report-section-card" title={<SectionTitle icon={<BulbOutlined />} text="建议动作" />} bordered={false}>
           <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{report.suggested_actions}</Paragraph>
         </Card>
       )}
 
       {report.rule_based_result && (
-        <Card className="report-section-card" title={<SectionTitle icon={<FileTextOutlined />} text="Rule Result" />} bordered={false}>
+        <Card className="report-section-card" title={<SectionTitle icon={<FileTextOutlined />} text="规则诊断结果" />} bordered={false}>
           <JsonViewer data={safeJSON(report.rule_based_result)} maxHeight={360} />
         </Card>
       )}
 
       {report.llm_enhanced_summary && (
-        <Card className="report-section-card" title={<SectionTitle icon={<RobotOutlined />} text="LLM Summary" />} bordered={false}>
+        <Card className="report-section-card" title={<SectionTitle icon={<RobotOutlined />} text="LLM 增强摘要" />} bordered={false}>
           <JsonViewer data={safeJSON(report.llm_enhanced_summary)} maxHeight={360} />
         </Card>
       )}
 
       {report.agent_execution_summary && (
-        <Card className="report-section-card" title={<SectionTitle icon={<ExperimentOutlined />} text="Agent Summary" />} bordered={false}>
+        <Card className="report-section-card" title={<SectionTitle icon={<ExperimentOutlined />} text="Agent 执行摘要" />} bordered={false}>
           <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', lineHeight: 1.8 }}>{report.agent_execution_summary}</Paragraph>
         </Card>
       )}
 
       {snapshot?.stop_reason && (
-        <Card className="report-section-card" title="Agent Stop Reason" bordered={false}>
+        <Card className="report-section-card" title="Agent 停止原因" bordered={false}>
           <Tag color="blue" style={{ fontSize: 13, padding: '2px 12px' }}>{snapshot.stop_reason}</Tag>
         </Card>
       )}
 
       {snapshot?.root_cause_evidence_refs && snapshot.root_cause_evidence_refs.length > 0 && (
-        <Card className="report-section-card" title="Root Cause Evidence" bordered={false}>
+        <Card className="report-section-card" title="根因证据" bordered={false}>
           <Space size={[6, 6]} wrap>
             {snapshot.root_cause_evidence_refs.map((ref) => (
               <Tag key={ref} color="red" style={{ borderRadius: 4 }}>{ref}</Tag>
@@ -164,7 +164,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       )}
 
       {snapshot?.confidence_breakdown && snapshot.confidence_breakdown.length > 0 && (
-        <Card className="report-section-card" title="Confidence Breakdown" bordered={false}>
+        <Card className="report-section-card" title="置信度拆解" bordered={false}>
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
             {snapshot.confidence_breakdown.map((item) => (
               <div
@@ -180,7 +180,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
               >
                 <Space>
                   <Text strong>{item.source}</Text>
-                  {item.missing && <Tag color="default">missing</Tag>}
+                  {item.missing && <Tag color="default">缺失</Tag>}
                 </Space>
                 <Progress
                   percent={Math.round((item.weight || 0) * 100)}
@@ -201,7 +201,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       )}
 
       {snapshot?.missing_evidence && snapshot.missing_evidence.length > 0 && (
-        <Card className="report-section-card" title="Missing Evidence" bordered={false}>
+        <Card className="report-section-card" title="缺失证据" bordered={false}>
           <Space size={[6, 6]} wrap>
             {snapshot.missing_evidence.map((item) => (
               <Tag key={item} color="orange" style={{ borderRadius: 4 }}>{item}</Tag>
@@ -211,7 +211,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       )}
 
       {snapshot?.evidence_chain && snapshot.evidence_chain.length > 0 && (
-        <Card className="report-section-card" title="Evidence Chain" bordered={false}>
+        <Card className="report-section-card" title="证据链" bordered={false}>
           <List
             size="small"
             dataSource={snapshot.evidence_chain}
@@ -230,7 +230,7 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       )}
 
       {snapshot?.residual_risks && snapshot.residual_risks.length > 0 && (
-        <Card className="report-section-card" title="Residual Risks" bordered={false}>
+        <Card className="report-section-card" title="残余风险" bordered={false}>
           <List
             size="small"
             dataSource={snapshot.residual_risks}
@@ -245,15 +245,15 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       )}
 
       {snapshot?.verification_plan && snapshot.verification_plan.length > 0 && (
-        <Card className="report-section-card" title="Verification Plan" bordered={false}>
+        <Card className="report-section-card" title="验证计划" bordered={false}>
           <Space direction="vertical" size="small" style={{ width: '100%' }}>
             {snapshot.verification_plan.map((vp, i) => (
               <Card key={`${vp.action_id}-${i}`} type="inner" size="small" title={vp.action_id}>
                 <Descriptions column={1} size="small">
-                  <Descriptions.Item label="Check">{vp.what_to_check}</Descriptions.Item>
-                  <Descriptions.Item label="Tool">{vp.tool_to_use}</Descriptions.Item>
-                  <Descriptions.Item label="Success">{vp.success_condition}</Descriptions.Item>
-                  <Descriptions.Item label="Timeout">{vp.timeout_seconds}s</Descriptions.Item>
+                  <Descriptions.Item label="检查项">{vp.what_to_check}</Descriptions.Item>
+                  <Descriptions.Item label="使用工具">{vp.tool_to_use}</Descriptions.Item>
+                  <Descriptions.Item label="成功条件">{vp.success_condition}</Descriptions.Item>
+                  <Descriptions.Item label="超时时间">{vp.timeout_seconds}s</Descriptions.Item>
                 </Descriptions>
               </Card>
             ))}
@@ -262,37 +262,38 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
       )}
 
       {report.agent_report_snapshot && (
-        <Card className="report-section-card" title="Agent Report Snapshot" bordered={false}>
+        <Card className="report-section-card" title="Agent 报告快照" bordered={false}>
           <JsonViewer data={report.agent_report_snapshot} maxHeight={500} />
         </Card>
       )}
 
-      {/* Detailed Feedback Modal */}
+      {/* Detailed feedback modal */}
       <Modal
-        title="Detailed Feedback"
+        title="详细反馈"
         open={feedbackModalOpen}
         onCancel={() => setFeedbackModalOpen(false)}
         onOk={handleDetailedFeedback}
         confirmLoading={feedback.isPending}
-        okText="Submit Feedback"
+        okText="提交反馈"
+        cancelText="取消"
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item label="Rating">
+          <Form.Item label="评价">
             <Select value={feedbackRating} onChange={setFeedbackRating}>
-              <Select.Option value="useful">Useful - Diagnosis was accurate</Select.Option>
-              <Select.Option value="not_useful">Not Useful - Diagnosis was inaccurate</Select.Option>
+              <Select.Option value="useful">有用 - 诊断准确</Select.Option>
+              <Select.Option value="not_useful">无用 - 诊断不准确</Select.Option>
             </Select>
           </Form.Item>
-          <Form.Item label="Corrected Root Cause" name="corrected_root_cause">
+          <Form.Item label="正确根因" name="corrected_root_cause">
             <Input.TextArea
               rows={3}
-              placeholder="If the diagnosis was wrong, what was the actual root cause?"
+              placeholder="如果诊断不准确，实际根因是什么？"
             />
           </Form.Item>
-          <Form.Item label="Additional Comments" name="comment">
+          <Form.Item label="补充说明" name="comment">
             <Input.TextArea
               rows={3}
-              placeholder="Any additional feedback about the diagnosis quality..."
+              placeholder="补充说明诊断质量、缺失证据或误判点..."
             />
           </Form.Item>
         </Form>

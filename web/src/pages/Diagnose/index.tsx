@@ -60,9 +60,9 @@ const Diagnose = () => {
             </Typography.Title>
 
             <Form.Item
-              label="Namespace"
+              label="命名空间"
               name="namespace"
-              rules={[{ required: true, message: '请输入 Namespace' }]}
+              rules={[{ required: true, message: '请输入命名空间' }]}
               extra="Kubernetes 命名空间名称"
             >
               <Input placeholder="例如: default, production" />

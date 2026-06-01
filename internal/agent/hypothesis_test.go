@@ -41,6 +41,40 @@ func TestHypothesisEngineRejectsUnsupportedCandidates(t *testing.T) {
 	}
 }
 
+func TestHypothesisEngineDoesNotTreatFalseNodePressureAsSupport(t *testing.T) {
+	engine := NewHypothesisEngine()
+	ctx := &diagnostic.DiagnosticContext{
+		Topology: &diagnostic.TopologyInfo{
+			Node: &diagnostic.NodeHealth{
+				Name:           "node-a",
+				Ready:          true,
+				MemoryPressure: false,
+				DiskPressure:   false,
+				PIDPressure:    false,
+			},
+		},
+	}
+	scores := engine.Update(1, ctx, []diagnostic.EvidenceRecord{
+		{
+			SourceType: "k8s_topology",
+			Title:      "Kubernetes workload, service, and node topology",
+			Content:    "node=node-a nodeReady=true memoryPressure=false diskPressure=false pidPressure=false",
+			Severity:   "info",
+			Timestamp:  time.Now(),
+		},
+	})
+	memoryPressure := findScore(scores, "node_memory_pressure")
+	if memoryPressure == nil {
+		t.Fatalf("missing node memory pressure hypothesis")
+	}
+	if memoryPressure.Status != model.HypothesisStatusRejected {
+		t.Fatalf("expected false pressure hypothesis rejected, got %s score %.2f refs=%v", memoryPressure.Status, memoryPressure.Confidence, memoryPressure.SupportingRefs)
+	}
+	if len(memoryPressure.SupportingRefs) != 0 {
+		t.Fatalf("expected no supporting refs for false pressure, got %v", memoryPressure.SupportingRefs)
+	}
+}
+
 func findScore(scores []HypothesisScore, kind string) *HypothesisScore {
 	for i := range scores {
 		if scores[i].Type == kind {

@@ -109,7 +109,7 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 		confidence += 0.05
 	}
 
-	summary := fmt.Sprintf("Pod is running on node %s which is in NotReady state", node.Name)
+	summary := fmt.Sprintf("Pod 运行在节点 %s 上，但该节点处于 NotReady 状态", node.Name)
 	var pressureConditions []string
 	if node.MemoryPressure {
 		pressureConditions = append(pressureConditions, "MemoryPressure")
@@ -121,7 +121,7 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 		pressureConditions = append(pressureConditions, "PIDPressure")
 	}
 	if len(pressureConditions) > 0 {
-		summary += " with " + strings.Join(pressureConditions, ", ") + " conditions"
+		summary += "，同时存在 " + strings.Join(pressureConditions, ", ") + " 条件"
 	}
 
 	return &diagnostic.AnalyzeResult{
@@ -129,10 +129,10 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 		ConfidenceScore:  clampConfidence(confidence),
 		RootCauseSummary: summary,
 		Evidences:        evidence,
-		ImpactAnalysis:   "Pods on the NotReady node may stop receiving traffic or fail to reschedule until node health recovers.",
+		ImpactAnalysis:   "节点恢复健康前，该节点上的 Pod 可能停止接收流量，或无法正常重新调度。",
 		SuggestedActions: []string{
-			"Check node Ready condition, kubelet status, container runtime, and node network connectivity.",
-			"Inspect node pressure conditions and recent node events before moving workloads.",
+			"检查节点 Ready 条件、kubelet 状态、容器运行时和节点网络连通性。",
+			"迁移工作负载前，先查看节点压力条件和最近的节点事件。",
 		},
 		RiskLevel:        "high",
 		NeedHumanConfirm: true,

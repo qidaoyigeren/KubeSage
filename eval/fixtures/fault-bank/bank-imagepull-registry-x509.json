@@ -1,0 +1,144 @@
+{
+  "namespace": "eval-bank",
+  "pod_name": "bank-imagepull-registry-x509",
+  "pod": {
+    "metadata": {
+      "name": "bank-imagepull-registry-x509",
+      "namespace": "eval-bank",
+      "creationTimestamp": null,
+      "labels": {
+        "app": "bank-imagepull-registry-x509",
+        "faultbank": "true"
+      }
+    },
+    "spec": {
+      "containers": [
+        {
+          "name": "app",
+          "image": "registry.corp.local/platform/app:v3",
+          "ports": [
+            {
+              "name": "http",
+              "containerPort": 8080
+            }
+          ],
+          "resources": {
+            "limits": {
+              "cpu": "500m",
+              "memory": "256Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            }
+          },
+          "imagePullPolicy": "IfNotPresent"
+        }
+      ],
+      "nodeName": "node-a"
+    },
+    "status": {
+      "phase": "Pending",
+      "containerStatuses": [
+        {
+          "name": "app",
+          "state": {
+            "waiting": {
+              "reason": "ImagePullBackOff",
+              "message": "Failed to pull image \"registry.corp.local/platform/app:v3\": x509: certificate signed by unknown authority"
+            }
+          },
+          "lastState": {},
+          "ready": false,
+          "restartCount": 0,
+          "image": "",
+          "imageID": ""
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {
+        "name": "bank-imagepull-registry-x509.failed",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "Failed",
+      "message": "Failed to pull image \"registry.corp.local/platform/app:v3\": x509: certificate signed by unknown authority",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    },
+    {
+      "metadata": {
+        "name": "bank-imagepull-registry-x509-backoff.backoff",
+        "namespace": "eval-bank",
+        "creationTimestamp": null
+      },
+      "involvedObject": {},
+      "reason": "BackOff",
+      "message": "Back-off pulling image registry.corp.local/platform/app:v3",
+      "source": {},
+      "firstTimestamp": "2026-05-31T07:59:30Z",
+      "lastTimestamp": "2026-05-31T08:00:00Z",
+      "count": 3,
+      "type": "Warning",
+      "eventTime": null,
+      "reportingComponent": "",
+      "reportingInstance": ""
+    }
+  ],
+  "topology": {
+    "replica_set_name": "bank-imagepull-registry-x509-rs",
+    "deployment_name": "bank-imagepull-registry-x509-deploy",
+    "node_name": "node-a",
+    "workload": {
+      "kind": "Deployment",
+      "name": "bank-imagepull-registry-x509-deploy",
+      "desired_replicas": 3,
+      "total_pods": 3,
+      "other_pods": 2,
+      "other_running": 2,
+      "other_ready": 2,
+      "other_abnormal": 0,
+      "other_restart_count": 0
+    },
+    "selected_services": [
+      {
+        "name": "bank-imagepull-registry-x509-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "bank-imagepull-registry-x509"
+        },
+        "available_endpoints": 2
+      }
+    ],
+    "node": {
+      "name": "node-a",
+      "ready": true,
+      "memory_pressure": false,
+      "disk_pressure": false,
+      "pid_pressure": false
+    }
+  },
+  "correlations": {
+    "node_name": "node-a",
+    "deployment_name": "bank-imagepull-registry-x509-deploy",
+    "namespace": "eval-bank",
+    "node_abnormal_count": 0,
+    "peer_abnormal_count": 0,
+    "namespace_hot_count": 0
+  },
+  "fault_time": "2026-05-31T08:00:00Z",
+  "log_window_start": "2026-05-31T07:58:00Z",
+  "log_window_end": "2026-05-31T08:01:00Z",
+  "logs_precise": true,
+  "metrics_enabled": false
+}

@@ -34,7 +34,7 @@ const RunbooksPage = () => {
   const createMutation = useMutation({
     mutationFn: (data: RunbookRequest) => createRunbook(data),
     onSuccess: () => {
-      message.success('Runbook created');
+      message.success('诊断手册已创建');
       queryClient.invalidateQueries({ queryKey: ['runbooks'] });
       setModalOpen(false);
       form.resetFields();
@@ -45,7 +45,7 @@ const RunbooksPage = () => {
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: RunbookRequest }) => updateRunbook(id, data),
     onSuccess: () => {
-      message.success('Runbook updated');
+      message.success('诊断手册已更新');
       queryClient.invalidateQueries({ queryKey: ['runbooks'] });
       setModalOpen(false);
       setEditingRunbook(null);
@@ -93,44 +93,44 @@ const RunbooksPage = () => {
       width: 60,
     },
     {
-      title: 'Fault Type',
+      title: '故障类型',
       dataIndex: 'fault_type',
       key: 'fault_type',
       render: (ft: string) => <Tag color="blue">{ft}</Tag>,
     },
     {
-      title: 'Title',
+      title: '标题',
       dataIndex: 'title',
       key: 'title',
       ellipsis: true,
     },
     {
-      title: 'Version',
+      title: '版本',
       dataIndex: 'version',
       key: 'version',
       width: 80,
     },
     {
-      title: 'Created By',
+      title: '创建人',
       dataIndex: 'created_by',
       key: 'created_by',
       width: 120,
     },
     {
-      title: 'Updated',
+      title: '更新时间',
       dataIndex: 'updated_at',
       key: 'updated_at',
       width: 180,
       render: (t: string) => t ? new Date(t).toLocaleString('zh-CN') : '-',
     },
     {
-      title: 'Action',
+      title: '操作',
       key: 'action',
       width: 100,
       render: (_: unknown, record: Runbook) =>
         canEditRunbooks ? (
           <Button type="link" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
-            Edit
+            编辑
           </Button>
         ) : null,
     },
@@ -142,13 +142,13 @@ const RunbooksPage = () => {
         title={
           <Space>
             <FileTextOutlined />
-            <span>Runbook Management</span>
+            <span>诊断手册管理</span>
           </Space>
         }
         extra={
           canEditRunbooks ? (
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-              New Runbook
+              新建手册
             </Button>
           ) : null
         }
@@ -163,7 +163,7 @@ const RunbooksPage = () => {
       </Card>
 
       <Modal
-        title={editingRunbook ? 'Edit Runbook' : 'Create Runbook'}
+        title={editingRunbook ? '编辑诊断手册' : '新建诊断手册'}
         open={modalOpen}
         onCancel={() => {
           setModalOpen(false);
@@ -175,11 +175,11 @@ const RunbooksPage = () => {
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item
-            label="Fault Type"
+            label="故障类型"
             name="fault_type"
-            rules={[{ required: true, message: 'Please select fault type' }]}
+            rules={[{ required: true, message: '请选择故障类型' }]}
           >
-            <Select placeholder="Select fault type">
+            <Select placeholder="请选择故障类型">
               {faultTypes.map((ft) => (
                 <Select.Option key={ft} value={ft}>
                   {ft}
@@ -188,18 +188,18 @@ const RunbooksPage = () => {
             </Select>
           </Form.Item>
           <Form.Item
-            label="Title"
+            label="标题"
             name="title"
-            rules={[{ required: true, message: 'Please enter title' }]}
+            rules={[{ required: true, message: '请输入标题' }]}
           >
-            <Input placeholder="Runbook title" />
+            <Input placeholder="诊断手册标题" />
           </Form.Item>
           <Form.Item
-            label="Content (Markdown)"
+            label="内容（Markdown）"
             name="content"
-            rules={[{ required: true, message: 'Please enter content' }]}
+            rules={[{ required: true, message: '请输入内容' }]}
           >
-            <Input.TextArea rows={12} placeholder="# Runbook content in markdown format..." />
+            <Input.TextArea rows={12} placeholder="# 请输入 Markdown 格式的诊断步骤..." />
           </Form.Item>
         </Form>
       </Modal>
