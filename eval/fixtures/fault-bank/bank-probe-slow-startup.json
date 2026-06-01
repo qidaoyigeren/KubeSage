@@ -43,17 +43,6 @@
             "periodSeconds": 5,
             "failureThreshold": 3
           },
-          "startupProbe": {
-            "httpGet": {
-              "path": "/startup",
-              "port": 8080,
-              "scheme": "HTTP"
-            },
-            "initialDelaySeconds": 20,
-            "timeoutSeconds": 2,
-            "periodSeconds": 5,
-            "failureThreshold": 30
-          },
           "imagePullPolicy": "IfNotPresent"
         }
       ],

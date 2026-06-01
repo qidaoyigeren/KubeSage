@@ -865,15 +865,6 @@ spec:
             initialDelaySeconds: 1
             periodSeconds: 5
             timeoutSeconds: 1
-          startupProbe:
-            failureThreshold: 30
-            httpGet:
-                path: /startup
-                port: 8080
-                scheme: HTTP
-            initialDelaySeconds: 20
-            periodSeconds: 5
-            timeoutSeconds: 2
     restartPolicy: Always
 ---
 apiVersion: v1

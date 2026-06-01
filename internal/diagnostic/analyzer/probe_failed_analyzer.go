@@ -23,7 +23,7 @@ func (a *ProbeFailedAnalyzer) Metadata() diagnostic.AnalyzerMetadata {
 		Name:             a.Name(),
 		FaultType:        "ProbeFailed",
 		Priority:         60,
-		MatchSignals:     []string{"event.reason=Unhealthy", "readiness probe failed", "liveness probe failed"},
+		MatchSignals:     []string{"event.reason=Unhealthy", "readiness probe failed", "liveness probe failed", "startup probe failed"},
 		RequiredEvidence: []string{"k8s_event", "k8s_pod_status", "k8s_log", "k8s_topology", "prometheus"},
 	}
 }
@@ -32,11 +32,17 @@ func (a *ProbeFailedAnalyzer) Metadata() diagnostic.AnalyzerMetadata {
 func (a *ProbeFailedAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	for _, event := range ctx.Events {
 		message := strings.ToLower(event.Message)
-		if event.Reason == "Unhealthy" && (strings.Contains(message, "readiness probe failed") || strings.Contains(message, "liveness probe failed")) {
+		if event.Reason == "Unhealthy" && failedProbeMessage(message) {
 			return true
 		}
 	}
 	return false
+}
+
+func failedProbeMessage(message string) bool {
+	return strings.Contains(message, "readiness probe failed") ||
+		strings.Contains(message, "liveness probe failed") ||
+		strings.Contains(message, "startup probe failed")
 }
 
 // Analyze collects probe config, event, and health-related log evidence.

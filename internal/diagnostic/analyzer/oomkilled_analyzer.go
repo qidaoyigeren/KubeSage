@@ -53,16 +53,42 @@ func (a *OOMKilledAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 	if ctx.Pod == nil {
 		return false
 	}
+	oomSignal := hasOOMContextSignal(ctx)
 	for _, status := range ctx.Pod.Status.ContainerStatuses {
-		if status.LastTerminationState.Terminated != nil {
-			terminated := status.LastTerminationState.Terminated
-			if terminated.Reason == "OOMKilled" || terminated.ExitCode == 137 {
-				return true
-			}
+		if terminationIndicatesOOM(status.LastTerminationState.Terminated, oomSignal) ||
+			terminationIndicatesOOM(status.State.Terminated, oomSignal) {
+			return true
 		}
 	}
 	for _, event := range ctx.Events {
 		if strings.Contains(strings.ToLower(event.Message), "oomkilled") {
+			return true
+		}
+	}
+	return false
+}
+
+func terminationIndicatesOOM(terminated *corev1.ContainerStateTerminated, hasOOMSignal bool) bool {
+	if terminated == nil {
+		return false
+	}
+	if strings.EqualFold(terminated.Reason, "OOMKilled") {
+		return true
+	}
+	return terminated.ExitCode == 137 && hasOOMSignal
+}
+
+func hasOOMContextSignal(ctx *diagnostic.DiagnosticContext) bool {
+	if ctx == nil {
+		return false
+	}
+	for _, event := range ctx.Events {
+		if strings.Contains(strings.ToLower(event.Reason+" "+event.Message), "oom") {
+			return true
+		}
+	}
+	for _, logs := range ctx.Logs {
+		if containsAny(logs.Current+"\n"+logs.Previous+"\n"+logs.Loki, oomKilledLogKeywords) {
 			return true
 		}
 	}

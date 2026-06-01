@@ -116,3 +116,59 @@ func TestOOMKilledAnalyzerAddsPrometheusMemoryEvidence(t *testing.T) {
 		t.Fatal("expected prometheus memory evidence")
 	}
 }
+
+func TestOOMKilledAnalyzerDoesNotMatchProbeKillExit137WithoutOOMSignal(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "probe-kill"},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "app",
+				LastTerminationState: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						Reason:   "Error",
+						ExitCode: 137,
+					},
+				},
+			}},
+		},
+	}
+	ctx := &diagnostic.DiagnosticContext{
+		Pod: pod,
+		Events: []corev1.Event{{
+			Reason:  "Unhealthy",
+			Message: "Liveness probe failed: connection refused",
+		}},
+	}
+
+	if NewOOMKilledAnalyzer().Match(ctx) {
+		t.Fatal("expected liveness-probe SIGKILL without OOM signal not to match OOMKilled")
+	}
+}
+
+func TestOOMKilledAnalyzerMatchesExit137WithOOMLogSignal(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "oom-log"},
+		Status: corev1.PodStatus{
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "app",
+				LastTerminationState: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{
+						Reason:   "Error",
+						ExitCode: 137,
+					},
+				},
+			}},
+		},
+	}
+	ctx := &diagnostic.DiagnosticContext{
+		Pod: pod,
+		Logs: []diagnostic.ContainerLogs{{
+			ContainerName: "app",
+			Previous:      "fatal: out of memory while allocating buffer",
+		}},
+	}
+
+	if !NewOOMKilledAnalyzer().Match(ctx) {
+		t.Fatal("expected exit 137 with OOM log evidence to match OOMKilled")
+	}
+}

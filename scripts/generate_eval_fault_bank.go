@@ -519,7 +519,6 @@ func probeCases() []generatedCase {
 			Event:       `Readiness probe failed: Get "http://10.0.0.44:8080/ready": context deadline exceeded`,
 			Log:         "startup still warming cache; health timeout before service became ready",
 			Readiness:   httpProbe("/ready", 8080, 1, 1, 3),
-			Startup:     httpProbe("/startup", 8080, 20, 2, 30),
 			Root:        "readiness probe failed timeout slow startup initialDelaySeconds",
 			KeyEvidence: []string{"Unhealthy", "readiness probe failed", "timeout"},
 		},
