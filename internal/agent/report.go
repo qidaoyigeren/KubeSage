@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"kubesage/internal/diagnostic"
@@ -14,11 +15,14 @@ import (
 func BuildReportSnapshot(report *diagnostic.Report, hypotheses []model.Hypothesis, hits []RunbookHit, executions []model.RemediationExecution, verification []VerificationPlan, stopReason string) ReportSnapshot {
 	summary := executionSummary(report, hypotheses, stopReason)
 	chain := evidenceChain(report)
+	primary, contributing := rootCauseFactors(report, hypotheses, chain)
 	return ReportSnapshot{
 		RuleBasedResult:       reportValue(report, func(r *diagnostic.Report) interface{} { return r.RuleBasedResult }),
 		AgentExecutionSummary: summary,
 		Hypotheses:            hypotheses,
 		EvidenceChain:         chain,
+		PrimaryRootCause:      primary,
+		ContributingFactors:   contributing,
 		RootCauseEvidenceRefs: rootCauseEvidenceRefs(report, chain),
 		ConfidenceBreakdown:   confidenceBreakdown(report, chain),
 		MissingEvidence:       missingEvidence(report, hypotheses, chain),
@@ -49,7 +53,112 @@ func executionSummary(report *diagnostic.Report, hypotheses []model.Hypothesis, 
 			active = append(active, hypothesis.HypothesisType)
 		}
 	}
-	return fmt.Sprintf("Agent completed with stop_reason=%s fault_type=%s rule_confidence=%.2f confirmed=%s active=%s", stopReason, faultType, confidence, strings.Join(confirmed, ","), strings.Join(active, ","))
+	primary, contributing := rootCauseFactors(report, hypotheses, nil)
+	primaryType := ""
+	if primary != nil {
+		primaryType = primary.HypothesisType
+	}
+	contributingTypes := make([]string, 0, len(contributing))
+	for _, factor := range contributing {
+		contributingTypes = append(contributingTypes, factor.HypothesisType)
+	}
+	return fmt.Sprintf("Agent completed with stop_reason=%s fault_type=%s rule_confidence=%.2f primary_root_cause=%s contributing_factors=%s confirmed=%s active=%s", stopReason, faultType, confidence, primaryType, strings.Join(contributingTypes, ","), strings.Join(confirmed, ","), strings.Join(active, ","))
+}
+
+func rootCauseFactors(report *diagnostic.Report, hypotheses []model.Hypothesis, chain []EvidenceRef) (*RootCauseFactor, []RootCauseFactor) {
+	if len(hypotheses) == 0 {
+		if report == nil {
+			return nil, nil
+		}
+		if report.PrimaryRootCause != nil {
+			primary := factorFromDiagnostic(*report.PrimaryRootCause)
+			contributing := make([]RootCauseFactor, 0, len(report.ContributingFactors))
+			for _, factor := range report.ContributingFactors {
+				contributing = append(contributing, factorFromDiagnostic(factor))
+			}
+			return &primary, contributing
+		}
+		return &RootCauseFactor{
+			HypothesisType:  report.FaultType,
+			Summary:         report.RootCauseSummary,
+			ConfidenceScore: report.ConfidenceScore,
+			Status:          "rule_based",
+			EvidenceRefs:    rootCauseEvidenceRefs(report, chain),
+			Reason:          "deterministic analyzer result",
+		}, nil
+	}
+
+	ranked := append([]model.Hypothesis(nil), hypotheses...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return ranked[i].ConfidenceScore > ranked[j].ConfidenceScore
+	})
+
+	primaryIndex := -1
+	for i, hypothesis := range ranked {
+		if hypothesis.Status != model.HypothesisStatusRejected {
+			primaryIndex = i
+			break
+		}
+	}
+	if primaryIndex == -1 {
+		if report == nil {
+			return nil, nil
+		}
+		return &RootCauseFactor{
+			HypothesisType:  report.FaultType,
+			Summary:         report.RootCauseSummary,
+			ConfidenceScore: report.ConfidenceScore,
+			Status:          "rule_based",
+			EvidenceRefs:    rootCauseEvidenceRefs(report, chain),
+			Reason:          "deterministic analyzer fallback because all hypotheses were rejected",
+		}, nil
+	}
+
+	primary := factorFromHypothesis(ranked[primaryIndex], "highest-confidence non-rejected hypothesis")
+	contributing := []RootCauseFactor{}
+	for i, hypothesis := range ranked {
+		if i == primaryIndex {
+			continue
+		}
+		if !isContributingFactor(hypothesis) {
+			continue
+		}
+		contributing = append(contributing, factorFromHypothesis(hypothesis, "high-confidence supporting or competing hypothesis"))
+		if len(contributing) >= 5 {
+			break
+		}
+	}
+	return &primary, contributing
+}
+
+func factorFromDiagnostic(factor diagnostic.RootCauseFactor) RootCauseFactor {
+	return RootCauseFactor{
+		HypothesisType:  factor.FaultType,
+		Summary:         factor.Summary,
+		ConfidenceScore: factor.ConfidenceScore,
+		Status:          factor.ContributingRole,
+		EvidenceRefs:    append([]string(nil), factor.EvidenceRefs...),
+		Reason:          factor.AnalyzerName,
+	}
+}
+
+func factorFromHypothesis(hypothesis model.Hypothesis, reason string) RootCauseFactor {
+	return RootCauseFactor{
+		HypothesisType:  hypothesis.HypothesisType,
+		Summary:         hypothesis.Summary,
+		ConfidenceScore: hypothesis.ConfidenceScore,
+		Status:          hypothesis.Status,
+		EvidenceRefs:    jsonTextItems(hypothesis.SupportingEvidenceRefs),
+		MissingEvidence: jsonTextItems(hypothesis.MissingEvidence),
+		Reason:          reason,
+	}
+}
+
+func isContributingFactor(hypothesis model.Hypothesis) bool {
+	if hypothesis.Status == model.HypothesisStatusRejected {
+		return false
+	}
+	return hypothesis.Status == model.HypothesisStatusConfirmed || hypothesis.ConfidenceScore >= 0.45
 }
 
 func evidenceChain(report *diagnostic.Report) []EvidenceRef {
@@ -211,6 +320,9 @@ func residualRisks(hypotheses []model.Hypothesis, executions []model.Remediation
 	for _, execution := range executions {
 		if execution.Status == model.RemediationExecutionStatusPendingApproval {
 			risks = append(risks, "manual approval required for action: "+execution.ActionID)
+		}
+		if execution.Status == model.RemediationExecutionStatusManualAck {
+			risks = append(risks, "manual remediation handling remains outside KubeSage automation: "+execution.ActionID)
 		}
 		if execution.Status == model.RemediationExecutionStatusBlocked {
 			risks = append(risks, "blocked remediation action: "+execution.ActionID)

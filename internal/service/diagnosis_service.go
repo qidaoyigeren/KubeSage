@@ -866,16 +866,36 @@ func (s *DiagnosisService) refreshAgentSnapshot(result *agent.RunResult) {
 }
 
 func (s *DiagnosisService) hydrateAgentReport(ctx context.Context, task *model.DiagnosisTask) {
-	if s == nil || s.agentRepo == nil || task == nil || task.Report == nil {
+	if s == nil || s.agentRepo == nil || task == nil {
 		return
 	}
-	if steps, err := s.agentRepo.ListStepsByTaskID(ctx, task.ID); err == nil {
+	steps, stepsErr := s.agentRepo.ListStepsByTaskID(ctx, task.ID)
+	hypotheses, hypothesesErr := s.agentRepo.ListHypothesesByTaskID(ctx, task.ID)
+	executions, executionsErr := s.agentRepo.ListRemediationExecutionsByTaskID(ctx, task.ID)
+	if task.Report == nil {
+		if (stepsErr != nil || len(steps) == 0) &&
+			(hypothesesErr != nil || len(hypotheses) == 0) &&
+			(executionsErr != nil || len(executions) == 0) {
+			return
+		}
+		task.Report = &model.DiagnosisReport{
+			TaskID:           task.ID,
+			Namespace:        task.Namespace,
+			PodName:          task.PodName,
+			FaultType:        task.FaultType,
+			RootCauseSummary: task.RootCauseSummary,
+			ConfidenceScore:  task.ConfidenceScore,
+			CreatedAt:        task.CreatedAt,
+			GeneratedAt:      task.CreatedAt,
+		}
+	}
+	if stepsErr == nil {
 		task.Report.AgentTimeline = steps
 	}
-	if hypotheses, err := s.agentRepo.ListHypothesesByTaskID(ctx, task.ID); err == nil {
+	if hypothesesErr == nil {
 		task.Report.Hypotheses = hypotheses
 	}
-	if executions, err := s.agentRepo.ListRemediationExecutionsByTaskID(ctx, task.ID); err == nil {
+	if executionsErr == nil {
 		task.Report.RemediationExecutions = executions
 	}
 }

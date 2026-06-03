@@ -17,6 +17,7 @@ const (
 	RemediationExecutionStatusDryRunSuccess   = "dry_run_success"
 	RemediationExecutionStatusDryRunFailed    = "dry_run_failed"
 	RemediationExecutionStatusPendingApproval = "pending_approval"
+	RemediationExecutionStatusManualAck       = "manual_acknowledged"
 )
 
 // AgentStep records one auditable step in an agent diagnosis run.

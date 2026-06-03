@@ -51,6 +51,43 @@ func TestBuildReportSnapshotIncludesConfidenceBreakdownAndMissingEvidence(t *tes
 	}
 }
 
+func TestBuildReportSnapshotIncludesPrimaryAndContributingFactors(t *testing.T) {
+	report := &diagnostic.Report{
+		FaultType:       "NodeNotReady",
+		ConfidenceScore: 0.82,
+		Evidences: []diagnostic.EvidenceRecord{
+			{SourceType: "k8s_event", Title: "Node pressure events", Content: "node notready and eviction", Severity: "warning", Timestamp: time.Now()},
+		},
+	}
+	hypotheses := []model.Hypothesis{
+		{
+			HypothesisType:         "node_not_ready",
+			Summary:                "Node is NotReady.",
+			ConfidenceScore:        0.86,
+			Status:                 model.HypothesisStatusConfirmed,
+			SupportingEvidenceRefs: model.JSONText(`["E1"]`),
+		},
+		{
+			HypothesisType:         "node_eviction",
+			Summary:                "Eviction may contribute.",
+			ConfidenceScore:        0.76,
+			Status:                 model.HypothesisStatusConfirmed,
+			SupportingEvidenceRefs: model.JSONText(`["E1"]`),
+			MissingEvidence:        model.JSONText(`["node pressure metrics"]`),
+		},
+	}
+	snapshot := BuildReportSnapshot(report, hypotheses, nil, nil, nil, StopReasonConfirmedHypothesis)
+	if snapshot.PrimaryRootCause == nil || snapshot.PrimaryRootCause.HypothesisType != "node_not_ready" {
+		t.Fatalf("unexpected primary root cause: %#v", snapshot.PrimaryRootCause)
+	}
+	if len(snapshot.ContributingFactors) != 1 || snapshot.ContributingFactors[0].HypothesisType != "node_eviction" {
+		t.Fatalf("unexpected contributing factors: %#v", snapshot.ContributingFactors)
+	}
+	if !containsString(snapshot.ContributingFactors[0].MissingEvidence, "node pressure metrics") {
+		t.Fatalf("expected contributing factor missing evidence, got %#v", snapshot.ContributingFactors[0].MissingEvidence)
+	}
+}
+
 func containsString(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {

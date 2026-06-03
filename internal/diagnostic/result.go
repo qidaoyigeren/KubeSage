@@ -12,6 +12,15 @@ type AnalyzeResult struct {
 	NeedHumanConfirm bool
 }
 
+type RootCauseFactor struct {
+	AnalyzerName     string   `json:"analyzer_name,omitempty"`
+	FaultType        string   `json:"fault_type"`
+	Summary          string   `json:"summary"`
+	ConfidenceScore  float64  `json:"confidence_score"`
+	EvidenceRefs     []string `json:"evidence_refs,omitempty"`
+	ContributingRole string   `json:"contributing_role,omitempty"`
+}
+
 // RemediationAction describes one advisory remediation step with risk metadata.
 type RemediationAction struct {
 	ActionID         string `json:"action_id,omitempty"`
@@ -35,6 +44,8 @@ type Report struct {
 	RemediationActions    []RemediationAction
 	RiskLevel             string
 	NeedHumanConfirm      bool
+	PrimaryRootCause      *RootCauseFactor
+	ContributingFactors   []RootCauseFactor
 	RuleBasedResult       interface{}
 	LLMEnhancedSummary    interface{}
 	AgentExecutionSummary string

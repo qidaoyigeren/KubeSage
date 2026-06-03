@@ -192,6 +192,39 @@ func TestRuntimeConfirmedHypothesisEarlyStop(t *testing.T) {
 	}
 }
 
+func TestRuntimeCollectsDistinguishingEvidenceForCloseHighConfidenceHypotheses(t *testing.T) {
+	store := &memoryStore{}
+	registry := NewToolRegistry()
+	if err := registry.Register(ambiguousRootTool{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(eventEvidenceTool{}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(RuntimeDeps{
+		Store:    store,
+		Registry: registry,
+		Analyzer: fakeAnalyzer{report: baseReport("NodeNotReady")},
+		Policy:   NewRemediationPolicy(true),
+		Planner:  singlePodPlanner{},
+	})
+	result, err := runtime.Run(context.Background(), RuntimeOptions{
+		TaskID:      1,
+		MaxSteps:    2,
+		ToolTimeout: time.Second,
+		Goal:        Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "NodeNotReady"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StopReason == StopReasonConfirmedHypothesis {
+		t.Fatalf("expected close high-confidence hypotheses not to converge immediately")
+	}
+	if !hasSuccessfulTool(store.steps, "k8s.get_events") {
+		t.Fatalf("expected distinguishing event evidence collection, got %#v", store.steps)
+	}
+}
+
 func TestRuntimeForcesProbeEvidenceBeforeReflectionStop(t *testing.T) {
 	store := &memoryStore{}
 	registry, err := NewDefaultRegistry(RegistryOptions{
@@ -379,7 +412,6 @@ func (confirmedTool) Metadata() ToolMetadata {
 func (confirmedTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
 	_ = ctx
 	_ = input
-	state.DiagnosticContext = oomContext()
 	return ToolResult{
 		ToolName:    "k8s.get_pod",
 		Success:     true,
@@ -391,6 +423,7 @@ func (confirmedTool) Execute(ctx context.Context, input map[string]interface{}, 
 			Severity:   "critical",
 			Timestamp:  time.Now(),
 		}},
+		StateDelta: &ToolStateDelta{DiagnosticContext: oomContext()},
 	}
 }
 
@@ -463,6 +496,80 @@ func (eventLoopPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState
 			Reason:   "extra event check",
 		}},
 	}, nil
+}
+
+type singlePodPlanner struct{}
+
+func (singlePodPlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan {
+	_ = ctx
+	_ = tools
+	return Plan{Steps: []PlanStep{{
+		ID:       "pod",
+		ToolName: "k8s.get_pod",
+		Input:    map[string]interface{}{"namespace": goal.Namespace, "pod_name": goal.PodName},
+		Critical: true,
+		Reason:   "minimal pod snapshot",
+	}}}
+}
+
+func (singlePodPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, hypotheses []HypothesisScore) {
+	_ = plan
+	_ = state
+	_ = last
+	_ = hypotheses
+}
+
+type ambiguousRootTool struct{}
+
+func (ambiguousRootTool) Metadata() ToolMetadata {
+	return ToolMetadata{Name: "k8s.get_pod", Description: "ambiguous node evidence", RiskLevel: "low", ReadOnly: true, Critical: true}
+}
+
+func (ambiguousRootTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+	_ = ctx
+	_ = input
+	diagCtx := &diagnostic.DiagnosticContext{
+		Namespace: "default",
+		PodName:   "api-0",
+		Pod:       testPod("Error"),
+	}
+	return ToolResult{
+		ToolName:    "k8s.get_pod",
+		Success:     true,
+		Observation: "node evidence is ambiguous",
+		EvidenceRecords: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_pod_status",
+			Title:      "Evicted pod on NotReady node",
+			Content:    "evicted eviction nodenotready notready memorypressure",
+			Severity:   "critical",
+			Timestamp:  time.Now(),
+		}},
+		StateDelta: &ToolStateDelta{DiagnosticContext: diagCtx},
+	}
+}
+
+type eventEvidenceTool struct{}
+
+func (eventEvidenceTool) Metadata() ToolMetadata {
+	return ToolMetadata{Name: "k8s.get_events", Description: "distinguishing events", RiskLevel: "low", ReadOnly: true}
+}
+
+func (eventEvidenceTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+	_ = ctx
+	_ = input
+	_ = state
+	return ToolResult{
+		ToolName:    "k8s.get_events",
+		Success:     true,
+		Observation: "collected node pressure and eviction events",
+		EvidenceRecords: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_event",
+			Title:      "Node pressure events",
+			Content:    "eviction event memorypressure node notready",
+			Severity:   "warning",
+			Timestamp:  time.Now(),
+		}},
+	}
 }
 
 func hasStepStage(steps []model.AgentStep, stage string) bool {
