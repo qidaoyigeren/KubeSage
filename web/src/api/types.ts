@@ -8,7 +8,8 @@ export type RemediationStatus =
   | 'dry_run_pending'
   | 'dry_run_success'
   | 'dry_run_failed'
-  | 'pending_approval';
+  | 'pending_approval'
+  | 'manual_acknowledged';
 export type AgentStepStage =
   | 'plan'
   | 'tool_call'
@@ -95,11 +96,23 @@ export interface VerificationPlanItem {
   timeout_seconds: number;
 }
 
+export interface RootCauseFactor {
+  hypothesis_type: string;
+  summary: string;
+  confidence_score: number;
+  status: string;
+  evidence_refs?: string[];
+  missing_evidence?: string[];
+  reason?: string;
+}
+
 export interface AgentReportSnapshot {
   rule_based_result?: string;
   agent_execution_summary?: string;
   hypotheses?: Hypothesis[];
   evidence_chain?: { ref: string; source_type: string; title: string; severity: string }[];
+  primary_root_cause?: RootCauseFactor;
+  contributing_factors?: RootCauseFactor[];
   root_cause_evidence_refs?: string[];
   confidence_breakdown?: {
     source: string;
