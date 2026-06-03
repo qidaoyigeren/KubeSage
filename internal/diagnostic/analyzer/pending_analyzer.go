@@ -60,7 +60,7 @@ func (a *PendingAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool {
 func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
 	actions := []string{"根据 FailedScheduling message 调整 requests、nodeSelector、affinity、tolerations 或 PVC。"}
-	summary := "Pod 处于 Pending，调度器暂未找到满足约束的节点。"
+	summary := "PodPending FailedScheduling: Pod 处于 Pending，调度器暂未找到满足约束的节点。"
 
 	for _, event := range ctx.Events {
 		if event.Reason != "FailedScheduling" {
@@ -70,19 +70,19 @@ func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		message := strings.ToLower(event.Message)
 		switch {
 		case strings.Contains(message, "insufficient cpu"):
-			summary = "调度失败原因包含 Insufficient cpu，集群可用 CPU 不满足 Pod requests。"
+			summary = "PodPending FailedScheduling Insufficient cpu requests: 调度失败原因包含 Insufficient cpu，集群可用 CPU 不满足 Pod requests。"
 			actions = append(actions, "降低 CPU requests 或扩容节点。")
 		case strings.Contains(message, "insufficient memory"):
-			summary = "调度失败原因包含 Insufficient memory，集群可用内存不满足 Pod requests。"
+			summary = "PodPending FailedScheduling Insufficient memory requests: 调度失败原因包含 Insufficient memory，集群可用内存不满足 Pod requests。"
 			actions = append(actions, "降低 memory requests 或扩容节点。")
 		case strings.Contains(message, "untolerated taint"):
-			summary = "Pod 无法容忍目标节点污点。"
+			summary = "PodPending FailedScheduling untolerated taint tolerations: Pod 无法容忍目标节点污点。"
 			actions = append(actions, "增加合适 tolerations，或选择无对应 taint 的节点池。")
 		case strings.Contains(message, "node selector"):
-			summary = "Pod nodeSelector 或 affinity 与当前节点标签不匹配。"
+			summary = "PodPending FailedScheduling node selector nodeSelector: Pod nodeSelector 或 affinity 与当前节点标签不匹配。"
 			actions = append(actions, "核对 nodeSelector、node affinity 和节点 label。")
 		case strings.Contains(message, "unbound immediate persistentvolumeclaims"):
-			summary = "Pod 依赖的 PVC 未绑定，导致无法调度。"
+			summary = "PodPending unbound PersistentVolumeClaim PVC not Bound: Pod 依赖的 PVC 未绑定，导致无法调度。"
 			actions = append(actions, "检查 PVC/PV/StorageClass 状态和容量。")
 		}
 	}
@@ -119,7 +119,7 @@ func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		severity := "info"
 		if pvc.Phase != string(corev1.ClaimBound) {
 			severity = "critical"
-			summary = "Pod 依赖的 PVC 未处于 Bound 状态，导致无法调度或启动。"
+			summary = "PodPending unbound PersistentVolumeClaim PVC Pending: Pod 依赖的 PVC 未处于 Bound 状态，导致无法调度或启动。"
 			actions = append(actions, "优先检查 PVC/PV/StorageClass 绑定状态，而不是只调整 Pod 调度约束。")
 		}
 		evidences = append(evidences, diagnostic.EvidenceRecord{

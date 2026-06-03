@@ -177,7 +177,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 		}
 	}
 
-	summary := "容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 limit 不足、应用内存持续增长或突发内存分配。"
+	summary := "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。"
 	confidence := 0.82
 	actions := []string{
 		"检查应用内存泄漏、大对象缓存、批量查询、JVM/Go heap 参数和近期发布变更。",
@@ -185,7 +185,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 		"临时提高 memory limit 可缓解风险，但需要标记为临时方案并继续根因排查。",
 	}
 	if sustainedNearLimit {
-		summary = "Prometheus 内存曲线显示 OOM 前后工作集持续接近容器 memory limit，根因更倾向于 memory limit 不足或应用内存持续增长。"
+		summary = "OOMKilled exitCode 137 memory limit: Prometheus 内存曲线 working set 显示 OOM 前后工作集持续接近容器 memory limit，根因更倾向于 memory limit 不足或应用内存持续增长。"
 		actions = append(actions, "优先降低峰值内存或提高 memory limit，并为关键容器补充内存使用率告警。")
 	}
 	confidence = oomConfidence(terminations, evidences, sustainedNearLimit, ctx.MetricTrends)

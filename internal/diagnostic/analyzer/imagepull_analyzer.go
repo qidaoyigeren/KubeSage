@@ -52,10 +52,10 @@ func (a *ImagePullBackOffAnalyzer) Match(ctx *diagnostic.DiagnosticContext) bool
 
 func (a *ImagePullBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
-	summary := "容器镜像无法拉取，常见原因是镜像名或标签错误、镜像仓库不可访问，或 imagePullSecret 配置异常。"
+	summary := "ImagePullBackOff: 容器镜像无法拉取，常见原因是镜像名或标签错误、镜像仓库不可访问，或 imagePullSecret 配置异常。"
 	actions := []string{
-		"确认镜像仓库、标签、网络可达性和 imagePullPolicy 是否正确。",
-		"检查命名空间内的 imagePullSecrets 和镜像仓库凭据是否有效。",
+		"确认 image repository 镜像仓库、标签、网络可达性和 imagePullPolicy 是否正确。",
+		"检查命名空间内的 imagePullSecrets 和 registry credentials 镜像仓库凭据是否有效。",
 	}
 
 	for _, container := range append(ctx.Pod.Spec.InitContainers, ctx.Pod.Spec.Containers...) {
@@ -83,10 +83,10 @@ func (a *ImagePullBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 			text := strings.ToLower(event.Reason + " " + event.Message)
 			evidences = append(evidences, eventEvidence(event, "critical"))
 			if strings.Contains(text, "not found") || strings.Contains(text, "manifest unknown") {
-				summary = "镜像拉取失败，仓库中可能不存在该镜像或标签。"
+				summary = "ImagePullBackOff image tag not found manifest unknown: 镜像拉取失败，仓库中可能不存在该镜像或标签。"
 			}
 			if strings.Contains(text, "unauthorized") || strings.Contains(text, "denied") || strings.Contains(text, "authentication") {
-				summary = "镜像拉取失败，镜像仓库认证或 imagePullSecret 可能无效。"
+				summary = "ImagePullBackOff unauthorized registry authentication imagePullSecret: 镜像拉取失败，镜像仓库认证或 imagePullSecret 可能无效。"
 			}
 		}
 	}

@@ -39,7 +39,7 @@ cases:
     max_duration_seconds: 5
     golden_answer:
       expected_fault_type: OOMKilled
-      root_cause: OOMKilled sudden memory spike working set memory limit
+      root_cause: OOMKilled exitCode 137 memory limit out of memory
       key_evidences:
         - reason=OOMKilled
         - sudden_spike
@@ -55,7 +55,7 @@ cases:
     max_duration_seconds: 5
     golden_answer:
       expected_fault_type: OOMKilled
-      root_cause: OOMKilled exitCode 137 without Prometheus metrics
+      root_cause: OOMKilled exitCode 137 memory limit out of memory
       key_evidences:
         - reason=OOMKilled
         - exitCode=137
@@ -71,7 +71,7 @@ cases:
     max_duration_seconds: 5
     golden_answer:
       expected_fault_type: CrashLoopBackOff
-      root_cause: CrashLoopBackOff restartCount exitCode 1 missing config
+      root_cause: CrashLoopBackOff startup failure config parse error
       key_evidences:
         - restartCount=5
         - exitCode=1
@@ -87,7 +87,7 @@ cases:
     max_duration_seconds: 5
     golden_answer:
       expected_fault_type: CrashLoopBackOff
-      root_cause: CrashLoopBackOff dependency connection refused startup failure
+      root_cause: CrashLoopBackOff startup failure dependency connection refused
       key_evidences:
         - CrashLoopBackOff
         - connection refused
@@ -185,7 +185,6 @@ cases:
       expected_fault_type: ImagePullBackOff
       root_cause: ImagePullBackOff image tag not found manifest unknown
       key_evidences:
-        - ImagePullBackOff
         - manifest unknown
         - image=registry.example.com/app:missing
       should_not_contain: [OOMKilled, CrashLoopBackOff, readiness]

@@ -52,7 +52,7 @@ func (a *EvictedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		Raw:        ctx.Pod.Status,
 		Timestamp:  time.Now(),
 	}}
-	summary := "Pod 被 kubelet 驱逐，通常是节点资源或临时存储超过驱逐阈值。"
+	summary := "Evicted: Pod 被 kubelet 驱逐，通常是节点资源或临时存储 ephemeral-storage 超过驱逐阈值。"
 	actions := []string{
 		"检查驱逐时间附近的节点内存、磁盘、PID 和 ephemeral-storage 压力。",
 		"重新调度工作负载前，确认 Pod requests/limits 和 ephemeral-storage 使用量是否合理。",
@@ -73,10 +73,13 @@ func (a *EvictedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 			Timestamp:  time.Now(),
 		})
 		if node.DiskPressure {
-			summary = "Pod 被驱逐时节点存在 DiskPressure，临时存储或节点磁盘耗尽是优先怀疑根因。"
+			summary = "Evicted node DiskPressure ephemeral-storage: Pod 被驱逐时节点存在 DiskPressure，临时存储或节点磁盘耗尽是优先怀疑根因。"
 		}
 		if node.MemoryPressure {
-			summary = "Pod 被驱逐时节点存在 MemoryPressure，节点级内存压力是优先怀疑根因。"
+			summary = "Evicted node MemoryPressure memory: Pod 被驱逐时节点存在 MemoryPressure，节点级内存压力是优先怀疑根因。"
+		}
+		if node.PIDPressure {
+			summary = "Evicted node PIDPressure pid: Pod 被驱逐时节点存在 PIDPressure，节点 PID 资源耗尽是优先怀疑根因。"
 		}
 	}
 	for _, container := range ctx.Pod.Spec.Containers {

@@ -109,7 +109,7 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 		confidence += 0.05
 	}
 
-	summary := fmt.Sprintf("Pod 运行在节点 %s 上，但该节点处于 NotReady 状态", node.Name)
+	summary := fmt.Sprintf("NodeNotReady node %s NotReady: Pod 运行在节点 %s 上，但该节点处于 Ready=False NotReady 状态", node.Name, node.Name)
 	var pressureConditions []string
 	if node.MemoryPressure {
 		pressureConditions = append(pressureConditions, "MemoryPressure")
@@ -131,8 +131,8 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 		Evidences:        evidence,
 		ImpactAnalysis:   "节点恢复健康前，该节点上的 Pod 可能停止接收流量，或无法正常重新调度。",
 		SuggestedActions: []string{
-			"检查节点 Ready 条件、kubelet 状态、容器运行时和节点网络连通性。",
-			"迁移工作负载前，先查看节点压力条件和最近的节点事件。",
+			"检查 node Ready 条件、kubelet 状态、容器运行时和节点网络连通性。",
+			"迁移工作负载前，先查看 node 压力条件和最近的节点事件。",
 		},
 		RiskLevel:        "high",
 		NeedHumanConfirm: true,

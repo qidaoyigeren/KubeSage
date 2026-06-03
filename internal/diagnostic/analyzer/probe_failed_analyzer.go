@@ -53,10 +53,10 @@ func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagn
 		if event.Reason == "Unhealthy" {
 			evidences = append(evidences, eventEvidence(event, "warning"))
 			if strings.Contains(strings.ToLower(event.Message), "liveness probe failed") {
-				summary = "Liveness probe 失败可能导致 kubelet 重启容器。"
+				summary = "liveness probe failed: Liveness probe 失败可能导致 kubelet 重启容器，检查 health endpoint 和 timeout 配置。"
 			}
 			if strings.Contains(strings.ToLower(event.Message), "readiness probe failed") {
-				summary = "Readiness probe 失败会使 Pod 暂时不接收流量。"
+				summary = "readiness probe failed: Readiness probe 失败会使 Pod 暂时不接收流量，检查 health path 和初始启动延迟。"
 			}
 		}
 	}

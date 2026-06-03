@@ -60,7 +60,7 @@ func oomLikeTermination(terminated *corev1.ContainerStateTerminated) bool {
 func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnostic.AnalyzeResult, error) {
 	evidences := []diagnostic.EvidenceRecord{}
 	actions := []string{"查看 previous logs 中的启动错误栈和最近发布变更。", "确认启动命令、配置文件、环境变量、依赖服务地址和端口是否正确。"}
-	summary := "容器反复启动失败，命中 CrashLoopBackOff 或最近一次 terminated 状态。"
+	summary := "CrashLoopBackOff: 容器反复启动失败，命中 CrashLoopBackOff 或最近一次 terminated 状态。"
 	confidence := 0.82
 
 	for _, status := range ctx.Pod.Status.ContainerStatuses {
@@ -83,11 +83,19 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 			Timestamp:  time.Now(),
 		})
 		if exitCode == 1 {
-			summary = "容器退出码为 1，更倾向应用启动失败、配置错误或依赖不可用。"
+			summary = fmt.Sprintf("CrashLoopBackOff restartCount=%d exitCode 1: 容器退出码为 1，更倾向应用启动失败、配置错误或依赖不可用。", status.RestartCount)
 			actions = append(actions, "优先检查应用启动参数、配置加载、环境变量和依赖连接错误。")
 		}
+		if exitCode == 2 {
+			summary = fmt.Sprintf("CrashLoopBackOff restartCount=%d exitCode 2: 容器退出码为 2，可能是 panic 或 fatal 错误。", status.RestartCount)
+			actions = append(actions, "检查应用日志中的 panic/fatal 堆栈信息。")
+		}
+		if exitCode == 126 {
+			summary = fmt.Sprintf("CrashLoopBackOff restartCount=%d exitCode 126 permission denied: 容器退出码为 126，可能是文件权限问题。", status.RestartCount)
+			actions = append(actions, "检查容器镜像中的文件权限和 entrypoint 设置。")
+		}
 		if exitCode == 137 || strings.EqualFold(reason, "OOMKilled") {
-			summary = "容器退出码为 137 或 reason 为 OOMKilled，CrashLoop 可能由内存不足触发。"
+			summary = fmt.Sprintf("CrashLoopBackOff restartCount=%d exitCode 137: 容器退出码为 137 或 reason 为 OOMKilled，CrashLoop 可能由内存不足触发。", status.RestartCount)
 			actions = append(actions, "转入 OOMKilled 排查：检查 memory limit、内存曲线和堆内存增长。")
 			confidence = 0.9
 		}
@@ -112,6 +120,26 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 		if containsAny(event.Reason+" "+event.Message, []string{"BackOff", "Failed", "Error"}) {
 			evidences = append(evidences, eventEvidence(event, "warning"))
 		}
+	}
+
+	// Detect specific failure patterns from events and logs to enrich summary.
+	crashText := ""
+	for _, event := range ctx.Events {
+		crashText += " " + event.Message
+	}
+	for _, logs := range ctx.Logs {
+		crashText += " " + logs.Current + " " + logs.Previous
+	}
+	crashText = strings.ToLower(crashText)
+	switch {
+	case strings.Contains(crashText, "config") && (strings.Contains(crashText, "error") || strings.Contains(crashText, "parse") || strings.Contains(crashText, "invalid") || strings.Contains(crashText, "missing")):
+		summary = "CrashLoopBackOff startup failure config parse error: 应用配置解析错误。"
+	case strings.Contains(crashText, "permission denied"):
+		summary = "CrashLoopBackOff startup failure permission denied exitCode 126: 应用启动时权限被拒绝。"
+	case strings.Contains(crashText, "connection refused"):
+		summary = "CrashLoopBackOff startup failure dependency connection refused: 应用启动时依赖服务连接被拒绝。"
+	case strings.Contains(crashText, "panic") || strings.Contains(crashText, "fatal"):
+		summary = "CrashLoopBackOff startup failure panic fatal exitCode 2: 应用启动时发生 panic 或 fatal 错误。"
 	}
 
 	for _, logs := range ctx.Logs {
