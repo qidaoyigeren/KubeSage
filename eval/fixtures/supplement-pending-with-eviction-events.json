@@ -1,0 +1,53 @@
+{
+  "namespace": "eval",
+  "pod_name": "pending-eviction-hint",
+  "pod": {
+    "metadata": {"name": "pending-eviction-hint", "namespace": "eval"},
+    "spec": {
+      "nodeName": "",
+      "containers": [
+        {
+          "name": "app",
+          "image": "example.com/app:v1",
+          "resources": {
+            "requests": {"cpu": "2", "memory": "4Gi"}
+          }
+        }
+      ]
+    },
+    "status": {
+      "phase": "Pending",
+      "conditions": [
+        {"type": "PodScheduled", "status": "False", "reason": "Unschedulable"}
+      ],
+      "containerStatuses": []
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "pending-eviction.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "FailedScheduling",
+      "message": "0/3 nodes are available: 3 Insufficient cpu.",
+      "lastTimestamp": "2026-05-31T00:00:01Z"
+    },
+    {
+      "metadata": {"name": "pending-eviction.2", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "Evicted",
+      "message": "Pod was evicted due to memory pressure on node worker-01",
+      "lastTimestamp": "2026-05-30T23:50:00Z"
+    }
+  ],
+  "logs": [],
+  "pvcs": [],
+  "topology": {
+    "node": {
+      "name": "worker-01",
+      "ready": true,
+      "memoryPressure": true,
+      "diskPressure": false,
+      "pidPressure": false
+    }
+  }
+}

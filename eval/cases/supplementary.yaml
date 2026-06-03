@@ -1,0 +1,67 @@
+cases:
+  - id: supplement-oom-node-pressure
+    name: OOMKilled with node MemoryPressure (multi-signal)
+    description: "OOMKilled on a node with MemoryPressure — tests that OOM is primary despite node-level pressure signals"
+    fixture: ../fixtures/supplement-oom-with-node-pressure.json
+    tags: [supplementary, oomkilled, multi-signal, node-pressure]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: OOMKilled
+      root_cause: OOMKilled exitCode 137 memory limit out of memory
+      key_evidences:
+        - reason=OOMKilled
+        - exitCode=137
+        - memoryLimit=128Mi
+      should_not_contain: [ImagePullBackOff, probe failed]
+      acceptable_remediations: [memory limit, previous logs]
+      confidence_min: 0.82
+
+  - id: supplement-crashloop-init-image
+    name: CrashLoopBackOff caused by init container image pull failure
+    description: "Init container has missing image tag — tests multi-fault: ImagePullBackOff + InitError + CrashLoopBackOff"
+    fixture: ../fixtures/supplement-crashloop-with-init-image.json
+    tags: [supplementary, crashloopbackoff, imagepullbackoff, multi-fault]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: ImagePullBackOff
+      root_cause: "InitError init container failed Init container"
+      key_evidences:
+        - ImagePullBackOff
+        - missing-tag
+      should_not_contain: [OOMKilled, probe failed]
+      acceptable_remediations: [image repository, imagePullSecrets]
+      confidence_min: 0.60
+
+  - id: supplement-oom-strong-evidence
+    name: OOMKilled with strong evidence (heap OOM + logs + metrics)
+    description: "High-confidence OOM with heap OOM log, 5 restarts, and Prometheus trend — tests convergence with strong evidence"
+    fixture: ../fixtures/supplement-oom-strong-evidence.json
+    tags: [supplementary, oomkilled, convergence, strong-evidence]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: OOMKilled
+      root_cause: OOMKilled exitCode 137 memory limit out of memory
+      key_evidences:
+        - reason=OOMKilled
+        - exitCode=137
+        - restartCount=5
+        - out of memory
+      should_not_contain: [ImagePullBackOff, CrashLoopBackOff, probe failed]
+      acceptable_remediations: [memory limit, previous logs]
+      confidence_min: 0.82
+
+  - id: supplement-pending-with-eviction-hint
+    name: PodPending with historical eviction events on node
+    description: "Pending due to insufficient CPU, but node has MemoryPressure and eviction history — tests that Pending is primary despite eviction signals"
+    fixture: ../fixtures/supplement-pending-with-eviction-events.json
+    tags: [supplementary, pending, multi-signal, eviction]
+    max_duration_seconds: 5
+    golden_answer:
+      expected_fault_type: PodPending
+      root_cause: PodPending FailedScheduling Insufficient cpu requests
+      key_evidences:
+        - FailedScheduling
+        - Insufficient cpu
+      should_not_contain: [OOMKilled, ImagePullBackOff]
+      acceptable_remediations: [CPU requests, "扩容节点"]
+      confidence_min: 0.75

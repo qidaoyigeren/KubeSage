@@ -1,0 +1,62 @@
+{
+  "namespace": "eval",
+  "pod_name": "crashloop-init-image",
+  "pod": {
+    "metadata": {"name": "crashloop-init-image", "namespace": "eval"},
+    "spec": {
+      "initContainers": [
+        {
+          "name": "init-migrate",
+          "image": "registry.example.com/migrate:missing-tag",
+          "resources": {"requests": {"cpu": "100m", "memory": "64Mi"}}
+        }
+      ],
+      "containers": [
+        {
+          "name": "app",
+          "image": "example.com/app:v1",
+          "resources": {"requests": {"cpu": "100m", "memory": "128Mi"}}
+        }
+      ]
+    },
+    "status": {
+      "phase": "Running",
+      "initContainerStatuses": [
+        {
+          "name": "init-migrate",
+          "ready": false,
+          "restartCount": 2,
+          "state": {"waiting": {"reason": "ImagePullBackOff", "message": "Back-off pulling image \"registry.example.com/migrate:missing-tag\""}},
+          "lastState": {}
+        }
+      ],
+      "containerStatuses": [
+        {
+          "name": "app",
+          "ready": false,
+          "restartCount": 0,
+          "state": {"waiting": {"reason": "PodInitializing"}},
+          "lastState": {}
+        }
+      ]
+    }
+  },
+  "events": [
+    {
+      "metadata": {"name": "crashloop-init-image.1", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "Failed",
+      "message": "Error: ImagePullBackOff",
+      "lastTimestamp": "2026-05-31T00:00:01Z"
+    },
+    {
+      "metadata": {"name": "crashloop-init-image.2", "namespace": "eval"},
+      "type": "Warning",
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container",
+      "lastTimestamp": "2026-05-31T00:00:02Z"
+    }
+  ],
+  "logs": [],
+  "pvcs": []
+}
