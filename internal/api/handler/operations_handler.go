@@ -183,7 +183,7 @@ func (h *OperationsHandler) ApproveRemediation(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "remediation approved"})
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "remediation acknowledged for manual handling"})
 }
 
 func (h *OperationsHandler) RejectRemediation(c *gin.Context) {

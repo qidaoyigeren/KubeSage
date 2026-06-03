@@ -66,6 +66,8 @@ func NewRouter(opts RouterOptions) *gin.Engine {
 			}})
 		})
 		v1.POST("/diagnose/pod", RequireOperator(), diagnoseHandler.DiagnosePod)
+		v1.GET("/diagnose/task-events", taskHandler.StreamTasks)
+		v1.GET("/diagnose/tasks/:id/events", taskHandler.StreamTask)
 		v1.GET("/diagnose/tasks/:id", taskHandler.GetTask)
 		v1.GET("/diagnose/tasks", taskHandler.ListTasks)
 		v1.POST("/diagnose/tasks/:id/cancel", RequireOperator(), taskHandler.CancelTask)
