@@ -87,9 +87,10 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	recorder := newStepRecorder(r.store, opts.TaskID, opts.TraceID)
 	recorder.record(ctx, stepRecord{Stage: StagePlan, Status: model.AgentStepStatusSuccess, Input: opts.Goal, Reason: "received diagnosis goal"})
 
-	state := &ToolState{TaskID: opts.TaskID, Goal: opts.Goal}
+	toolMetadata := r.registry.Metadata()
+	state := newToolState(opts.TaskID, opts.Goal, toolMetadata)
 	planCtx, planSpan := observability.Tracer().Start(ctx, "agent.planner")
-	plan := r.planner.BuildInitialPlan(planCtx, opts.Goal, r.registry.Metadata())
+	plan := r.planner.BuildInitialPlan(planCtx, opts.Goal, toolMetadata)
 	span.AddEvent("agent.plan.completed", trace.WithAttributes(attribute.Int("agent.plan.steps", len(plan.Steps))))
 	planSpan.End()
 	recorder.record(planCtx, stepRecord{Stage: StagePlan, ToolName: plannerToolName(r.planner), Status: model.AgentStepStatusSuccess, Input: opts.Goal, Output: plan, Reason: plan.Summary})
@@ -157,6 +158,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			if result.Success {
 				markToolComplete(state, step.ToolName)
 			}
+			state.RecordToolResult(result)
 			if len(result.EvidenceRecords) > 0 {
 				allEvidence = append(allEvidence, result.EvidenceRecords...)
 			}
@@ -174,6 +176,13 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			Input:  map[string]interface{}{"tools": toolNames(steps)},
 			Output: latestScores,
 			Reason: "updated root-cause hypotheses from latest observation",
+		})
+		convergence := r.hypotheses.DecideConvergence(latestScores)
+		recorder.record(ctx, stepRecord{
+			Stage:  StageReflection,
+			Status: model.AgentStepStatusSuccess,
+			Output: convergence,
+			Reason: convergence.Reason,
 		})
 
 		// LLM-driven reflection: ask the LLM whether to continue or stop.
@@ -208,8 +217,11 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 					continue
 				}
 				if !reflection.ShouldContinue {
-					stopReason = stopReasonLLMReflectionComplete
-					break
+					if convergence.Converged {
+						stopReason = stopReasonLLMReflectionComplete
+						break
+					}
+					appendDistinguishingEvidence(&plan, state, convergence)
 				}
 			}
 		}
@@ -220,7 +232,8 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if enforceProbeEvidenceFallback(&plan, state) {
 			continue
 		}
-		if hasConfirmed(latestScores) {
+		appendDistinguishingEvidence(&plan, state, convergence)
+		if convergence.Converged {
 			if enforceProbeEvidenceFallback(&plan, state) {
 				continue
 			}
@@ -259,6 +272,9 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	state.Report = report
 
 	remediationResult := r.executeTool(ctx, recorder, "remediation.generate_actions", map[string]interface{}{"fault_type": report.FaultType}, state, opts.ToolTimeout)
+	if state.Report != nil {
+		report = state.Report
+	}
 	if !remediationResult.Success && remediationResult.Error != "" {
 		report.Evidences = append(report.Evidences, diagnostic.EvidenceRecord{
 			SourceType: "agent",
@@ -349,7 +365,7 @@ func (r *Runtime) executePlanSteps(ctx context.Context, steps []*PlanStep, state
 					attribute.String("agent.parallel_group", step.ParallelGroup),
 				),
 			)
-			result := executeToolWithDeadline(toolCtx, tool, step.Input, state)
+			result := executeToolWithDeadline(toolCtx, tool, step.Input, state.SnapshotForTool())
 			if !result.Success {
 				toolSpan.RecordError(fmt.Errorf("%s", result.Error))
 				toolSpan.SetStatus(codes.Error, result.Error)
@@ -405,7 +421,7 @@ func (r *Runtime) executeTool(ctx context.Context, recorder *stepRecorder, name 
 		spanName = "agent.remediation_policy"
 	}
 	toolCtx, span := observability.Tracer().Start(toolCtx, spanName, trace.WithAttributes(attribute.String("agent.tool", name)))
-	result := executeToolWithDeadline(toolCtx, tool, input, state)
+	result := executeToolWithDeadline(toolCtx, tool, input, state.SnapshotForTool())
 	if !result.Success && result.Error != "" {
 		span.RecordError(fmt.Errorf("%s", result.Error))
 		span.SetStatus(codes.Error, result.Error)
@@ -416,6 +432,7 @@ func (r *Runtime) executeTool(ctx context.Context, recorder *stepRecorder, name 
 		status = model.AgentStepStatusFailed
 	}
 	observeToolMetrics(result)
+	state.RecordToolResult(result)
 	toolStep := recorder.record(ctx, stepRecord{
 		Stage:              StageToolCall,
 		ToolName:           name,
