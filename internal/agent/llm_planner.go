@@ -56,8 +56,9 @@ func (p *LLMPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, h
 		return
 	}
 
-	// Collect all observations from completed steps.
-	observations := collectObservations(plan, last)
+	// Collect all observations and evidence gathered before the analyzer runs.
+	observations := collectObservations(state, last)
+	evidence := collectEvidenceSummary(state)
 	readOnly := readonlyToolsFromState(state)
 
 	adjusted, err := p.client.GeneratePlanAdjustment(context.Background(), AdjustmentPrompt{
@@ -71,7 +72,8 @@ func (p *LLMPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, h
 			"Remove steps that are no longer needed.",
 			"Add steps to fill evidence gaps identified by hypotheses.",
 		},
-		Goal: state.Goal,
+		Goal:     state.Goal,
+		Evidence: evidence,
 	})
 	if err != nil || len(adjusted.Steps) == 0 {
 		// Fallback to rule-based adjustment.
@@ -107,7 +109,7 @@ func (p *LLMPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, h
 	}
 
 	evidence := collectEvidenceSummary(state)
-	observations := collectObservationsFromPlan(&plan)
+	observations := collectObservations(state, ToolResult{})
 	readOnly := readonlyToolsFromState(state)
 
 	prompt := ReflectionPrompt{
@@ -143,9 +145,7 @@ func readonlyTools(tools []ToolMetadata) []ToolMetadata {
 }
 
 func readonlyToolsFromState(state *ToolState) []ToolMetadata {
-	// We don't have the full tool list in state, so return an empty slice.
-	// The sanitizer will handle filtering.
-	return nil
+	return readonlyTools(state.ToolMetadataSnapshot())
 }
 
 func sanitizePlan(plan Plan, tools []ToolMetadata, goal Goal) Plan {
@@ -236,31 +236,70 @@ func planHasTool(plan *Plan, tool string) bool {
 	return false
 }
 
-// collectObservations gathers observation strings from completed plan steps.
-func collectObservations(plan *Plan, last ToolResult) []string {
-	var observations []string
-	// Include the latest observation.
+// collectObservations gathers observation strings from completed tool calls.
+func collectObservations(state *ToolState, last ToolResult) []string {
+	observations := []string{}
+	seen := map[string]struct{}{}
+	for _, record := range state.ObservationSnapshot() {
+		text := formatObservation(record)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		observations = append(observations, text)
+	}
 	if last.Observation != "" {
-		observations = append(observations, last.Observation)
+		record := ObservationRecord{
+			ToolName:        last.ToolName,
+			Success:         last.Success,
+			Observation:     last.Observation,
+			Warnings:        last.Warnings,
+			MissingEvidence: last.MissingEvidence,
+			Error:           last.Error,
+		}
+		text := formatObservation(record)
+		if _, ok := seen[text]; !ok && text != "" {
+			observations = append(observations, text)
+		}
 	}
 	return observations
 }
 
-// collectObservationsFromPlan gathers observations from the plan's expected observations.
-func collectObservationsFromPlan(plan *Plan) []string {
-	if plan == nil {
-		return nil
+func formatObservation(record ObservationRecord) string {
+	if strings.TrimSpace(record.Observation) == "" && record.Error == "" {
+		return ""
 	}
-	return plan.ExpectedObservations
+	status := "success"
+	if !record.Success {
+		status = "failed"
+	}
+	parts := []string{fmt.Sprintf("%s [%s]: %s", record.ToolName, status, record.Observation)}
+	if len(record.MissingEvidence) > 0 {
+		parts = append(parts, "missing="+strings.Join(record.MissingEvidence, ","))
+	}
+	if len(record.Warnings) > 0 {
+		parts = append(parts, "warnings="+strings.Join(record.Warnings, ","))
+	}
+	if record.Error != "" {
+		parts = append(parts, "error="+record.Error)
+	}
+	if len(record.EvidenceRefs) > 0 {
+		parts = append(parts, "evidence_refs="+strings.Join(record.EvidenceRefs, ","))
+	}
+	return strings.Join(parts, " ")
 }
 
-// collectEvidenceSummary builds a text summary of evidence from the report.
+// collectEvidenceSummary builds a text summary of evidence gathered before the
+// analyzer produces the final report.
 func collectEvidenceSummary(state *ToolState) string {
-	if state == nil || state.Report == nil {
+	if state == nil {
 		return ""
 	}
 	var parts []string
-	for _, ev := range state.Report.Evidences {
+	for _, ev := range state.EvidenceSnapshot() {
 		if ev.Content != "" {
 			parts = append(parts, fmt.Sprintf("[%s] %s: %s", ev.Severity, ev.Title, truncate(ev.Content, 200)))
 		}

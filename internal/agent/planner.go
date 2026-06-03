@@ -105,21 +105,70 @@ func (p *RulePlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, 
 		}
 	}
 	for _, hypothesis := range hypotheses {
-		if hypothesis.Status == "confirmed" {
-			return
-		}
 		for _, missing := range hypothesis.MissingEvidence {
-			switch {
-			case strings.Contains(missing, "logs"):
-				appendIfMissing(plan, "k8s.get_logs", "假设分析需要补充日志证据", state)
-			case strings.Contains(missing, "events"):
-				appendIfMissing(plan, "k8s.get_events", "假设分析需要补充事件证据", state)
-			case strings.Contains(missing, "pvc"):
-				appendIfMissing(plan, "k8s.get_pvc", "假设分析需要补充 PVC 证据", state)
-			case strings.Contains(missing, "metric"), strings.Contains(missing, "memory"):
-				appendIfMissing(plan, "prometheus.query_range", "假设分析需要补充指标证据", state)
-			}
+			appendEvidenceCollectionSteps(plan, missing, "假设分析需要补充区分性证据", state)
 		}
+	}
+}
+
+func appendDistinguishingEvidence(plan *Plan, state *ToolState, decision ConvergenceDecision) {
+	if plan == nil || decision.Converged {
+		return
+	}
+	for _, item := range decision.DistinguishingEvidence {
+		appendEvidenceCollectionSteps(plan, item, "多个高置信假设接近，需要补充区分性证据", state)
+	}
+}
+
+func appendEvidenceCollectionSteps(plan *Plan, evidence, reason string, state *ToolState) {
+	missing := strings.ToLower(strings.TrimSpace(evidence))
+	if missing == "" {
+		return
+	}
+	added := false
+	if strings.Contains(missing, "log") ||
+		strings.Contains(missing, "profile") ||
+		strings.Contains(missing, "heap") ||
+		strings.Contains(missing, "config") ||
+		strings.Contains(missing, "secret") ||
+		strings.Contains(missing, "dependency") ||
+		strings.Contains(missing, "registry") ||
+		strings.Contains(missing, "init container") {
+		appendIfMissing(plan, "k8s.get_logs", reason, state)
+		added = true
+	}
+	if strings.Contains(missing, "event") ||
+		strings.Contains(missing, "scheduler") ||
+		strings.Contains(missing, "probe") ||
+		strings.Contains(missing, "image pull") ||
+		strings.Contains(missing, "eviction") ||
+		strings.Contains(missing, "config") ||
+		strings.Contains(missing, "secret") ||
+		strings.Contains(missing, "registry") {
+		appendIfMissing(plan, "k8s.get_events", reason, state)
+		added = true
+	}
+	if strings.Contains(missing, "pvc") {
+		appendIfMissing(plan, "k8s.get_pvc", reason, state)
+		added = true
+	}
+	if strings.Contains(missing, "metric") ||
+		strings.Contains(missing, "memory") ||
+		strings.Contains(missing, "working set") {
+		appendIfMissing(plan, "prometheus.query_range", reason, state)
+		added = true
+	}
+	if strings.Contains(missing, "topology") ||
+		strings.Contains(missing, "node") ||
+		strings.Contains(missing, "pressure") ||
+		strings.Contains(missing, "taint") ||
+		strings.Contains(missing, "selector") ||
+		strings.Contains(missing, "constraint") {
+		appendIfMissing(plan, "k8s.get_topology", reason, state)
+		added = true
+	}
+	if !added {
+		appendIfMissing(plan, "k8s.get_events", reason, state)
 	}
 }
 
