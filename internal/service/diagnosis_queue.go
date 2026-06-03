@@ -158,14 +158,20 @@ func (q *redisDiagnosisQueue) handleMessage(ctx context.Context, svc *DiagnosisS
 	}
 	svc.workerWG.Add(1)
 	defer svc.workerWG.Done()
-	svc.runDiagnosis(context.Background(), payload.TaskID, payload.Request, payload.LockKey, payload.LockToken)
-	failed, failure := q.taskFailed(ctx, svc, payload.TaskID)
+	executionPayload, acquired := q.acquireExecutionLock(ctx, svc, payload)
+	if !acquired {
+		q.scheduleRetry(payload)
+		_ = q.client.XAck(ctx, q.cfg.Stream, q.cfg.Group, message.ID).Err()
+		return
+	}
+	svc.runDiagnosis(context.Background(), executionPayload.TaskID, executionPayload.Request, executionPayload.LockKey, executionPayload.LockToken)
+	failed, failure := q.taskFailed(ctx, svc, executionPayload.TaskID)
 	if failed {
-		if payload.Attempts < q.cfg.MaxRetry {
-			payload.Attempts++
-			q.scheduleRetry(payload)
+		if executionPayload.Attempts < q.cfg.MaxRetry {
+			executionPayload.Attempts++
+			q.scheduleRetry(executionPayload)
 		} else {
-			q.deadLetter(ctx, message.ID, payload.TaskID, raw, fmt.Errorf("%s", failure), payload.Attempts)
+			q.deadLetter(ctx, message.ID, executionPayload.TaskID, raw, fmt.Errorf("%s", failure), executionPayload.Attempts)
 		}
 	}
 	_ = q.client.XAck(ctx, q.cfg.Stream, q.cfg.Group, message.ID).Err()
@@ -173,6 +179,33 @@ func (q *redisDiagnosisQueue) handleMessage(ctx context.Context, svc *DiagnosisS
 	if q.cfg.MaxStreamLen > 0 {
 		_ = q.client.XTrimMaxLen(ctx, q.cfg.Stream, q.cfg.MaxStreamLen).Err()
 	}
+}
+
+func (q *redisDiagnosisQueue) acquireExecutionLock(ctx context.Context, svc *DiagnosisService, payload queuedDiagnosis) (queuedDiagnosis, bool) {
+	if payload.LockKey == "" {
+		payload.LockKey = podLockKey(payload.Request.Namespace, payload.Request.PodName)
+	}
+	if payload.Attempts == 0 {
+		return payload, true
+	}
+	if svc == nil || svc.podLocks == nil {
+		return payload, true
+	}
+	token, ok, err := svc.podLocks.TryAcquire(ctx, payload.LockKey, svc.podLockTTL())
+	if err != nil {
+		if q.log != nil {
+			q.log.Warn("acquire retry diagnosis lock failed", zap.Uint("task_id", payload.TaskID), zap.Error(err))
+		}
+		return payload, false
+	}
+	if !ok {
+		if q.log != nil {
+			q.log.Info("retry diagnosis lock is held, delaying retry", zap.Uint("task_id", payload.TaskID), zap.String("lock_key", payload.LockKey))
+		}
+		return payload, false
+	}
+	payload.LockToken = token
+	return payload, true
 }
 
 func (q *redisDiagnosisQueue) taskFailed(ctx context.Context, svc *DiagnosisService, taskID uint) (bool, string) {
