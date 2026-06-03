@@ -50,6 +50,12 @@ func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 			RiskLevel:        "medium",
 			NeedHumanConfirm: true,
 		}
+		report.PrimaryRootCause = &RootCauseFactor{
+			FaultType:        report.FaultType,
+			Summary:          report.RootCauseSummary,
+			ConfidenceScore:  report.ConfidenceScore,
+			ContributingRole: "primary",
+		}
 		enrichReportWithTopology(ctx, report)
 		enrichReportWithCorrelation(ctx, report)
 		enrichReportWithMetricTrends(ctx, report)
@@ -69,6 +75,8 @@ func (e *DiagnosisEngine) Diagnose(ctx *DiagnosticContext) (*Report, error) {
 // the main diagnosis summary.
 func aggregate(ctx *DiagnosticContext, results []*AnalyzeResult) *Report {
 	best := selectBestResult(results)
+	primary := rootCauseFactorFromResult(best, "primary")
+	contributing := contributingFactors(results, best)
 
 	evidences := make([]EvidenceRecord, 0)
 	actions := make([]string, 0)
@@ -84,18 +92,148 @@ func aggregate(ctx *DiagnosticContext, results []*AnalyzeResult) *Report {
 		faultType = strings.Join(uniqueStrings(faultTypes), ",")
 	}
 
+	confidence := adjustedConfidence(best.ConfidenceScore, contributing)
+	riskLevel := adjustedRiskLevel(best.RiskLevel, contributing)
+
 	return &Report{
-		Namespace:        ctx.Namespace,
-		PodName:          ctx.PodName,
-		FaultType:        faultType,
-		RootCauseSummary: best.RootCauseSummary,
-		ConfidenceScore:  best.ConfidenceScore,
-		Evidences:        evidences,
-		ImpactAnalysis:   best.ImpactAnalysis,
-		SuggestedActions: uniqueStrings(actions),
-		RiskLevel:        best.RiskLevel,
-		NeedHumanConfirm: true,
+		Namespace:           ctx.Namespace,
+		PodName:             ctx.PodName,
+		FaultType:           faultType,
+		RootCauseSummary:    compositeRootCauseSummary(primary, contributing),
+		ConfidenceScore:     confidence,
+		Evidences:           evidences,
+		ImpactAnalysis:      best.ImpactAnalysis,
+		SuggestedActions:    uniqueStrings(actions),
+		RiskLevel:           riskLevel,
+		NeedHumanConfirm:    true,
+		PrimaryRootCause:    &primary,
+		ContributingFactors: contributing,
 	}
+}
+
+// adjustedConfidence lowers the aggregate confidence when high-confidence
+// competing or co-causal factors exist, reflecting diagnostic uncertainty.
+func adjustedConfidence(bestConfidence float64, contributing []RootCauseFactor) float64 {
+	for _, factor := range contributing {
+		if factor.ContributingRole == "co-causal" {
+			// Two strong candidates — reduce confidence by 10%.
+			return bestConfidence * 0.90
+		}
+		if factor.ContributingRole == "competing" {
+			// Strong competitor — reduce confidence by 5%.
+			return bestConfidence * 0.95
+		}
+	}
+	return bestConfidence
+}
+
+// adjustedRiskLevel escalates the risk when co-causal or competing factors
+// indicate a composite fault scenario.
+func adjustedRiskLevel(baseRisk string, contributing []RootCauseFactor) string {
+	hasCoCausal := false
+	competingCount := 0
+	for _, factor := range contributing {
+		switch factor.ContributingRole {
+		case "co-causal":
+			hasCoCausal = true
+		case "competing":
+			competingCount++
+		}
+	}
+	if hasCoCausal {
+		return escalateRisk(baseRisk)
+	}
+	if competingCount >= 2 {
+		return escalateRisk(baseRisk)
+	}
+	return baseRisk
+}
+
+// escalateRisk raises the risk level by one notch.
+func escalateRisk(risk string) string {
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "low":
+		return "medium"
+	case "medium":
+		return "high"
+	default:
+		return risk
+	}
+}
+
+func rootCauseFactorFromResult(result *AnalyzeResult, role string) RootCauseFactor {
+	if result == nil {
+		return RootCauseFactor{}
+	}
+	refs := make([]string, 0, len(result.Evidences))
+	for i, evidence := range result.Evidences {
+		refs = append(refs, evidenceRef(evidence, i))
+	}
+	return RootCauseFactor{
+		AnalyzerName:     result.AnalyzerName,
+		FaultType:        result.FaultType,
+		Summary:          result.RootCauseSummary,
+		ConfidenceScore:  result.ConfidenceScore,
+		EvidenceRefs:     refs,
+		ContributingRole: role,
+	}
+}
+
+func contributingFactors(results []*AnalyzeResult, primary *AnalyzeResult) []RootCauseFactor {
+	factors := []RootCauseFactor{}
+	for _, result := range results {
+		if result == nil || result == primary {
+			continue
+		}
+		role := classifyContributingRole(result, primary)
+		factors = append(factors, rootCauseFactorFromResult(result, role))
+	}
+	return factors
+}
+
+// classifyContributingRole assigns a semantic role label based on the
+// relationship between a contributing result and the primary result.
+func classifyContributingRole(result, primary *AnalyzeResult) string {
+	if primary == nil {
+		return "supporting"
+	}
+	margin := primary.ConfidenceScore - result.ConfidenceScore
+	switch {
+	case result.ConfidenceScore >= 0.7 && margin < 0.15:
+		// High confidence and close to primary — likely co-causal.
+		return "co-causal"
+	case result.ConfidenceScore >= 0.7:
+		// High confidence but clearly behind primary.
+		return "competing"
+	case result.ConfidenceScore >= 0.5:
+		// Moderate confidence — secondary factor.
+		return "secondary"
+	default:
+		return "supporting"
+	}
+}
+
+func compositeRootCauseSummary(primary RootCauseFactor, contributing []RootCauseFactor) string {
+	if len(contributing) == 0 {
+		return primary.Summary
+	}
+	parts := []string{"Primary root cause: " + primary.Summary}
+	for _, factor := range contributing {
+		parts = append(parts, "Contributing factor: "+factor.Summary)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func evidenceRef(record EvidenceRecord, index int) string {
+	source := strings.TrimSpace(record.SourceType)
+	if source == "" {
+		source = "evidence"
+	}
+	title := strings.TrimSpace(record.Title)
+	if title == "" {
+		title = strconv.Itoa(index + 1)
+	}
+	return source + ":" + title
 }
 
 func selectBestResult(results []*AnalyzeResult) *AnalyzeResult {
@@ -115,6 +253,8 @@ func preferResult(candidate, current *AnalyzeResult) bool {
 	if candidate == nil {
 		return false
 	}
+	// Preserve the strong-OOM-vs-Pending hard override: strong OOM termination
+	// evidence always beats Pending, regardless of confidence.
 	candidateStrongOOM := hasStrongOOMTerminationEvidence(candidate)
 	currentStrongOOM := hasStrongOOMTerminationEvidence(current)
 	if candidateStrongOOM && faultTypeMatchesAny(current.FaultType, "PodPending") {
@@ -123,7 +263,74 @@ func preferResult(candidate, current *AnalyzeResult) bool {
 	if currentStrongOOM && faultTypeMatchesAny(candidate.FaultType, "PodPending") {
 		return false
 	}
-	return candidate.ConfidenceScore > current.ConfidenceScore
+	// Primary comparison: confidence score.
+	if candidate.ConfidenceScore != current.ConfidenceScore {
+		return candidate.ConfidenceScore > current.ConfidenceScore
+	}
+	// Tiebreaker: use weighted score incorporating evidence strength and fault
+	// severity when confidence scores are equal.
+	return weightedResultScore(candidate) > weightedResultScore(current)
+}
+
+// weightedResultScore computes a composite score from confidence, fault severity,
+// and evidence strength so that primary selection is not dominated by a single
+// dimension. Confidence carries the most weight because the rule engine already
+// encodes domain knowledge into confidence scores; severity and evidence provide
+// tie-breaking and bonus signals.
+func weightedResultScore(result *AnalyzeResult) float64 {
+	if result == nil {
+		return 0
+	}
+	confidence := result.ConfidenceScore
+	severity := faultSeverityWeight(result.FaultType)
+	evidence := evidenceStrength(result.Evidences)
+	// Strong OOM termination evidence gets an additional boost to preserve the
+	// existing OOM-vs-Pending special-case semantics.
+	if hasStrongOOMTerminationEvidence(result) {
+		evidence += 0.15
+	}
+	return confidence*0.85 + evidence*0.10 + severity*0.05
+}
+
+// faultSeverityWeight maps fault types to a severity weight in [0, 1].
+// Higher weight means the fault is more impactful or actionable.
+func faultSeverityWeight(faultType string) float64 {
+	ft := normalizeFaultName(faultType)
+	switch {
+	case strings.Contains(ft, "oomkilled"):
+		return 1.0
+	case strings.Contains(ft, "crashloopbackoff"):
+		return 0.9
+	case strings.Contains(ft, "probefailed") || strings.Contains(ft, "probefail"):
+		return 0.7
+	case strings.Contains(ft, "imagepullbackoff") || strings.Contains(ft, "imagepull"):
+		return 0.6
+	case strings.Contains(ft, "pending"):
+		return 0.5
+	default:
+		return 0.4
+	}
+}
+
+// evidenceStrength returns a score in [0, 1] reflecting the quantity and
+// severity of evidence records attached to an analysis result.
+func evidenceStrength(evidences []EvidenceRecord) float64 {
+	if len(evidences) == 0 {
+		return 0
+	}
+	warnings := 0
+	for _, ev := range evidences {
+		if ev.Severity == "warning" || ev.Severity == "critical" {
+			warnings++
+		}
+	}
+	// Base score from evidence count (capped at 5), plus bonus for warning-level evidence.
+	base := float64(len(evidences)) / 5.0
+	if base > 1.0 {
+		base = 1.0
+	}
+	bonus := float64(warnings) / float64(len(evidences)) * 0.3
+	return base*0.7 + bonus
 }
 
 func hasStrongOOMTerminationEvidence(result *AnalyzeResult) bool {

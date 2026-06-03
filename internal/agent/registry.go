@@ -86,14 +86,14 @@ func (r *ToolRegistry) Metadata() []ToolMetadata {
 
 type simpleTool struct {
 	meta ToolMetadata
-	fn   func(context.Context, map[string]interface{}, *ToolState) ToolResult
+	fn   func(context.Context, map[string]interface{}, *ReadOnlyToolState) ToolResult
 }
 
 func (t simpleTool) Metadata() ToolMetadata { return t.meta }
 
 func (t simpleTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
 	start := time.Now()
-	result := t.fn(ctx, input, state)
+	result := t.fn(ctx, input, state.ReadOnly())
 	result.ToolName = t.meta.Name
 	result.DurationMS = time.Since(start).Milliseconds()
 	if result.Observation == "" && result.Error != "" {
@@ -179,38 +179,43 @@ func newSnapshotTool(name, description string, critical bool, snapshot SnapshotF
 			Timeout:     10 * time.Second,
 			Critical:    critical,
 		},
-		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
 			if state == nil {
 				return failedTool(name, "tool state is nil")
 			}
-			state.mu.Lock()
-			defer state.mu.Unlock()
-			if state.DiagnosticContext == nil || shouldRefreshSnapshotForTool(name, state) {
+			diagCtx := state.GetDiagnosticContext()
+			goal := state.GetGoal()
+			var delta *ToolStateDelta
+			if diagCtx == nil || shouldRefreshSnapshotForTool(name, state) {
 				if snapshot == nil {
 					return failedTool(name, "snapshot collector is not configured")
 				}
-				goal := snapshotGoalForTool(name, state.Goal)
-				diagCtx, err := snapshot(ctx, goal)
+				goal = snapshotGoalForTool(name, goal)
+				refreshed, err := snapshot(ctx, goal)
 				if err != nil {
 					return ToolResult{ToolName: name, Success: false, Error: err.Error(), Observation: "快照采集失败"}
 				}
-				state.DiagnosticContext = diagCtx
-				state.Goal = goal
+				diagCtx = refreshed
+				delta = &ToolStateDelta{Goal: &goal, DiagnosticContext: diagCtx}
 			}
-			return observe(state.DiagnosticContext)
+			result := observe(diagCtx)
+			result.StateDelta = delta
+			return result
 		},
 	}
 }
 
-func shouldRefreshSnapshotForTool(name string, state *ToolState) bool {
-	if state == nil || state.DiagnosticContext == nil {
+func shouldRefreshSnapshotForTool(name string, state *ReadOnlyToolState) bool {
+	if state == nil || state.GetDiagnosticContext() == nil {
 		return false
 	}
+	diagCtx := state.GetDiagnosticContext()
+	goal := state.GetGoal()
 	switch canonicalToolName(name) {
 	case "k8s.get_events":
-		return len(state.DiagnosticContext.Events) == 0 && !state.Goal.IncludeEvents
+		return len(diagCtx.Events) == 0 && !goal.IncludeEvents
 	case "k8s.get_logs":
-		return len(state.DiagnosticContext.Logs) == 0 && !state.Goal.IncludeLogs
+		return len(diagCtx.Logs) == 0 && !goal.IncludeLogs
 	default:
 		return false
 	}
@@ -331,21 +336,18 @@ func newRunbookSearchTool(retriever Retriever) Tool {
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
 		},
-		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
 			if retriever == nil {
 				return ToolResult{Success: true, Observation: "诊断手册检索器未配置"}
 			}
 			faultType := stringInput(input, "fault_type")
 			query := stringInput(input, "query")
 			if faultType == "" && state != nil {
-				faultType = state.Goal.ExpectedFault
+				faultType = state.GetGoal().ExpectedFault
 			}
 			hits, err := retriever.Retrieve(ctx, faultType, query, 3)
 			if err != nil {
 				return failedTool("runbook.search", err.Error())
-			}
-			if state != nil {
-				state.RunbookHits = hits
 			}
 			records := make([]diagnostic.EvidenceRecord, 0, len(hits))
 			for _, hit := range hits {
@@ -358,7 +360,13 @@ func newRunbookSearchTool(retriever Retriever) Tool {
 					Timestamp:  time.Now(),
 				})
 			}
-			return ToolResult{Success: true, Observation: fmt.Sprintf("诊断手册命中 %d 条", len(hits)), EvidenceRecords: records, Data: hits}
+			return ToolResult{
+				Success:         true,
+				Observation:     fmt.Sprintf("诊断手册命中 %d 条", len(hits)),
+				EvidenceRecords: records,
+				Data:            hits,
+				StateDelta:      &ToolStateDelta{SetRunbookHits: true, RunbookHits: hits},
+			}
 		},
 	}
 }
@@ -373,7 +381,7 @@ func newPrometheusQueryTool(client PrometheusRangeClient) Tool {
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
 		},
-		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
 			query := stringInput(input, "query")
 			if query == "" {
 				return ToolResult{Success: false, Observation: "Prometheus 查询为空", Error: "prometheus query is empty", MissingEvidence: []string{"metrics query"}}
@@ -427,7 +435,7 @@ func newLokiQueryTool(client LokiQueryClient) Tool {
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
 		},
-		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
 			namespace := firstNonEmpty(stringInput(input, "namespace"), goalNamespace(state))
 			podName := firstNonEmpty(stringInput(input, "pod_name"), goalPodName(state))
 			containerName := firstNonEmpty(stringInput(input, "container_name"), goalContainerName(state))
@@ -481,21 +489,33 @@ func newRemediationGenerateTool(policy *RemediationPolicy) Tool {
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
 		},
-		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
 			_ = ctx
 			_ = input
-			if state == nil || state.DiagnosticContext == nil || state.Report == nil {
+			if state == nil || state.GetDiagnosticContext() == nil || state.GetReport() == nil {
 				return failedTool("remediation.generate_actions", "诊断报告尚未就绪")
 			}
-			actions := diagnostic.GenerateRemediationActions(state.DiagnosticContext, state.Report)
+			actions := diagnostic.GenerateRemediationActions(state.GetDiagnosticContext(), state.GetReport())
 			if policy == nil {
 				policy = NewRemediationPolicy(true)
 			}
-			actions, executions := policy.SanitizeActions(state.TaskID, actions)
-			state.RemediationActions = actions
-			state.Executions = executions
-			state.Report.RemediationActions = actions
-			return ToolResult{Success: true, Observation: fmt.Sprintf("生成 %d 条修复建议", len(actions)), Data: actions}
+			actions, executions := policy.SanitizeActions(state.GetTaskID(), actions)
+			report := cloneReport(state.GetReport())
+			if report != nil {
+				report.RemediationActions = append([]diagnostic.RemediationAction(nil), actions...)
+			}
+			return ToolResult{
+				Success:     true,
+				Observation: fmt.Sprintf("生成 %d 条修复建议", len(actions)),
+				Data:        actions,
+				StateDelta: &ToolStateDelta{
+					Report:                report,
+					SetRemediationActions: true,
+					RemediationActions:    actions,
+					SetExecutions:         true,
+					Executions:            executions,
+				},
+			}
 		},
 	}
 }
@@ -510,7 +530,7 @@ func newRemediationDryRunTool(policy *RemediationPolicy) Tool {
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
 		},
-		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
 			_ = ctx
 			command := stringInput(input, "command_preview")
 			risk := stringInput(input, "risk_level")
@@ -519,17 +539,15 @@ func newRemediationDryRunTool(policy *RemediationPolicy) Tool {
 			}
 			taskID := uint(0)
 			if state != nil {
-				taskID = state.TaskID
+				taskID = state.GetTaskID()
 			}
 			execution := policy.ValidateDryRunPreview(taskID, command, risk)
-			if state != nil {
-				state.Executions = append(state.Executions, execution)
-			}
 			return ToolResult{
 				Success:     execution.Status == model.RemediationExecutionStatusDryRunSuccess || execution.Status == model.RemediationExecutionStatusDryRunPending,
 				Observation: execution.DryRunOutput,
 				Error:       errorForExecution(execution),
 				Data:        execution,
+				StateDelta:  &ToolStateDelta{AppendExecutions: []model.RemediationExecution{execution}},
 			}
 		},
 	}
@@ -539,20 +557,24 @@ func failedTool(name, err string) ToolResult {
 	return ToolResult{ToolName: name, Success: false, Error: err, Observation: err}
 }
 
-func rangeWindowInput(input map[string]interface{}, state *ToolState) (time.Time, time.Time, error) {
+func rangeWindowInput(input map[string]interface{}, state *ReadOnlyToolState) (time.Time, time.Time, error) {
 	end := time.Now()
 	start := end.Add(-10 * time.Minute)
-	if state != nil && state.DiagnosticContext != nil {
-		if !state.DiagnosticContext.LogWindowStart.IsZero() && !state.DiagnosticContext.LogWindowEnd.IsZero() {
-			start = state.DiagnosticContext.LogWindowStart
-			end = state.DiagnosticContext.LogWindowEnd
-		} else if !state.DiagnosticContext.FaultTime.IsZero() {
-			start = state.DiagnosticContext.FaultTime.Add(-5 * time.Minute)
-			end = state.DiagnosticContext.FaultTime.Add(5 * time.Minute)
+	if state != nil && state.GetDiagnosticContext() != nil {
+		diagCtx := state.GetDiagnosticContext()
+		if !diagCtx.LogWindowStart.IsZero() && !diagCtx.LogWindowEnd.IsZero() {
+			start = diagCtx.LogWindowStart
+			end = diagCtx.LogWindowEnd
+		} else if !diagCtx.FaultTime.IsZero() {
+			start = diagCtx.FaultTime.Add(-5 * time.Minute)
+			end = diagCtx.FaultTime.Add(5 * time.Minute)
 		}
-	} else if state != nil && state.Goal.AlertTime != nil && !state.Goal.AlertTime.IsZero() {
-		start = state.Goal.AlertTime.Add(-5 * time.Minute)
-		end = state.Goal.AlertTime.Add(5 * time.Minute)
+	} else if state != nil {
+		goal := state.GetGoal()
+		if goal.AlertTime != nil && !goal.AlertTime.IsZero() {
+			start = goal.AlertTime.Add(-5 * time.Minute)
+			end = goal.AlertTime.Add(5 * time.Minute)
+		}
 	}
 	if raw := stringInput(input, "start"); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
@@ -622,25 +644,25 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func goalNamespace(state *ToolState) string {
+func goalNamespace(state *ReadOnlyToolState) string {
 	if state == nil {
 		return ""
 	}
-	return state.Goal.Namespace
+	return state.GetGoal().Namespace
 }
 
-func goalPodName(state *ToolState) string {
+func goalPodName(state *ReadOnlyToolState) string {
 	if state == nil {
 		return ""
 	}
-	return state.Goal.PodName
+	return state.GetGoal().PodName
 }
 
-func goalContainerName(state *ToolState) string {
+func goalContainerName(state *ReadOnlyToolState) string {
 	if state == nil {
 		return ""
 	}
-	return state.Goal.ContainerName
+	return state.GetGoal().ContainerName
 }
 
 func eventSeverity(reason, message string) string {

@@ -161,7 +161,7 @@ func (p *MCPProvider) wrapTool(mc *mcpClient, tool mcp.Tool) Tool {
 			Timeout:     30 * time.Second,
 			Critical:    false,
 		},
-		fn: func(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
 			callReq := mcp.CallToolRequest{
 				Request: mcp.Request{Method: "tools/call"},
 			}

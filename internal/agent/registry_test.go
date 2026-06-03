@@ -112,6 +112,8 @@ func TestSnapshotEvidenceToolsRefreshEmptyPodOnlyCache(t *testing.T) {
 	podTool, _ := registry.Get("k8s.get_pod")
 	if result := podTool.Execute(context.Background(), nil, state); !result.Success {
 		t.Fatalf("get_pod failed: %s", result.Error)
+	} else {
+		state.RecordToolResult(result)
 	}
 	if len(state.DiagnosticContext.Events) != 0 {
 		t.Fatalf("expected pod-only cache without events")
@@ -121,6 +123,7 @@ func TestSnapshotEvidenceToolsRefreshEmptyPodOnlyCache(t *testing.T) {
 	if !result.Success {
 		t.Fatalf("get_events failed: %s", result.Error)
 	}
+	state.RecordToolResult(result)
 	if calls < 2 {
 		t.Fatalf("expected get_events to refresh the snapshot, calls=%d", calls)
 	}
@@ -211,5 +214,79 @@ func TestLokiQueryLogsToolUsesRealClient(t *testing.T) {
 	}
 	if len(result.EvidenceRecords) != 1 || result.EvidenceRecords[0].SourceType != "loki" {
 		t.Fatalf("expected loki evidence, got %#v", result.EvidenceRecords)
+	}
+}
+
+func TestReadOnlyToolStateFromSnapshot(t *testing.T) {
+	state := &ToolState{
+		TaskID: 42,
+		Goal:   Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled"},
+		DiagnosticContext: &diagnostic.DiagnosticContext{
+			Namespace: "default",
+			PodName:   "api-0",
+		},
+		CompletedTools: map[string]bool{"k8s.get_pod": true},
+	}
+
+	ro := state.ReadOnly()
+	if ro == nil {
+		t.Fatal("expected non-nil ReadOnlyToolState")
+	}
+	if ro.GetTaskID() != 42 {
+		t.Fatalf("expected taskID 42, got %d", ro.GetTaskID())
+	}
+	if ro.GetGoal().Namespace != "default" {
+		t.Fatalf("expected namespace default, got %s", ro.GetGoal().Namespace)
+	}
+	if ro.GetDiagnosticContext() == nil || ro.GetDiagnosticContext().PodName != "api-0" {
+		t.Fatalf("expected diagCtx with podName api-0, got %#v", ro.GetDiagnosticContext())
+	}
+	if ro.GetCompletedTools()["k8s.get_pod"] != true {
+		t.Fatal("expected k8s.get_pod completed")
+	}
+}
+
+func TestReadOnlyToolStateNilSafe(t *testing.T) {
+	var state *ToolState
+	ro := state.ReadOnly()
+	if ro != nil {
+		t.Fatal("expected nil ReadOnlyToolState from nil state")
+	}
+	// Getter methods should not panic on nil.
+	if ro.GetTaskID() != 0 {
+		t.Fatalf("expected 0, got %d", ro.GetTaskID())
+	}
+	if ro.GetGoal().Namespace != "" {
+		t.Fatalf("expected empty namespace, got %s", ro.GetGoal().Namespace)
+	}
+	if ro.GetDiagnosticContext() != nil {
+		t.Fatal("expected nil diagCtx")
+	}
+	if ro.GetReport() != nil {
+		t.Fatal("expected nil report")
+	}
+}
+
+func TestToolReceivesReadOnlyState(t *testing.T) {
+	// Verify that simpleTool.Execute passes a ReadOnlyToolState to the fn closure.
+	var receivedType string
+	tool := simpleTool{
+		meta: ToolMetadata{Name: "test.tool", ReadOnly: true},
+		fn: func(ctx context.Context, input map[string]interface{}, state *ReadOnlyToolState) ToolResult {
+			if state == nil {
+				receivedType = "nil"
+			} else {
+				receivedType = "ReadOnlyToolState"
+			}
+			return ToolResult{Success: true}
+		},
+	}
+	state := &ToolState{
+		TaskID: 1,
+		Goal:   Goal{Namespace: "default"},
+	}
+	tool.Execute(context.Background(), nil, state)
+	if receivedType != "ReadOnlyToolState" {
+		t.Fatalf("expected fn to receive ReadOnlyToolState, got %s", receivedType)
 	}
 }

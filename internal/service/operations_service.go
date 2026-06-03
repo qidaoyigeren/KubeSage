@@ -235,15 +235,18 @@ func (s *OperationsService) ListPendingApprovals(ctx context.Context) ([]model.R
 	return s.agentRepo.ListPendingApprovals(ctx)
 }
 
-// ApproveRemediation approves a pending remediation execution.
+// ApproveRemediation records operator acknowledgement for manual handling.
+// Pass nil verifier to record a manual acknowledgement without dry-run
+// validation. Wire a repository.DryRunVerifier to enable policy-based
+// verification during approval.
 func (s *OperationsService) ApproveRemediation(ctx context.Context, executionID uint, actor string) error {
 	if s == nil || s.agentRepo == nil {
 		return fmt.Errorf("operations service is not configured")
 	}
-	if err := s.agentRepo.ApproveRemediation(ctx, executionID, actor); err != nil {
+	if err := s.agentRepo.ApproveRemediation(ctx, executionID, actor, nil); err != nil {
 		return err
 	}
-	_ = s.RecordAudit(ctx, actor, "remediation.approve", "", "remediation_execution", fmt.Sprintf("%d", executionID), nil, "approved", nil)
+	_ = s.RecordAudit(ctx, actor, "remediation.acknowledge", "", "remediation_execution", fmt.Sprintf("%d", executionID), nil, "manual acknowledgement recorded", nil)
 	return nil
 }
 

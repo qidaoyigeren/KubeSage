@@ -72,6 +72,7 @@ type AdjustmentPrompt struct {
 	Tools        []ToolMetadata    `json:"tools"`
 	Safety       []string          `json:"safety"`
 	Goal         Goal              `json:"goal"`
+	Evidence     string            `json:"evidence,omitempty"`
 }
 
 // ReflectionResult is returned by ReflectivePlanner after LLM-driven reflection.
@@ -162,12 +163,29 @@ type ToolResult struct {
 	Error           string                      `json:"error,omitempty"`
 	DurationMS      int64                       `json:"duration_ms"`
 	Data            interface{}                 `json:"data,omitempty"`
+	StateDelta      *ToolStateDelta             `json:"-"`
+}
+
+type ToolStateDelta struct {
+	Goal                  *Goal
+	DiagnosticContext     *diagnostic.DiagnosticContext
+	Report                *diagnostic.Report
+	SetRunbookHits        bool
+	RunbookHits           []RunbookHit
+	SetRemediationActions bool
+	RemediationActions    []diagnostic.RemediationAction
+	SetExecutions         bool
+	Executions            []model.RemediationExecution
+	AppendExecutions      []model.RemediationExecution
 }
 
 type ToolState struct {
 	mu                 sync.Mutex
 	TaskID             uint
 	Goal               Goal
+	AvailableTools     []ToolMetadata
+	Observations       []ObservationRecord
+	EvidenceRecords    []diagnostic.EvidenceRecord
 	DiagnosticContext  *diagnostic.DiagnosticContext
 	Report             *diagnostic.Report
 	RunbookHits        []RunbookHit
@@ -176,9 +194,80 @@ type ToolState struct {
 	CompletedTools     map[string]bool
 }
 
+type ObservationRecord struct {
+	ToolName        string    `json:"tool_name"`
+	Success         bool      `json:"success"`
+	Observation     string    `json:"observation"`
+	Warnings        []string  `json:"warnings,omitempty"`
+	MissingEvidence []string  `json:"missing_evidence,omitempty"`
+	EvidenceRefs    []string  `json:"evidence_refs,omitempty"`
+	Error           string    `json:"error,omitempty"`
+	Timestamp       time.Time `json:"timestamp"`
+}
+
 type Tool interface {
 	Metadata() ToolMetadata
 	Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult
+}
+
+// ReadOnlyToolState is an immutable snapshot of ToolState passed to tool
+// function closures. Tools must not mutate this struct; they express state
+// changes via ToolResult.StateDelta instead.
+type ReadOnlyToolState struct {
+	TaskID            uint
+	Goal              Goal
+	DiagnosticContext *diagnostic.DiagnosticContext
+	Report            *diagnostic.Report
+	RunbookHits       []RunbookHit
+	CompletedTools    map[string]bool
+}
+
+// GetTaskID returns the task identifier.
+func (s *ReadOnlyToolState) GetTaskID() uint {
+	if s == nil {
+		return 0
+	}
+	return s.TaskID
+}
+
+// GetGoal returns a copy of the current goal.
+func (s *ReadOnlyToolState) GetGoal() Goal {
+	if s == nil {
+		return Goal{}
+	}
+	return s.Goal
+}
+
+// GetDiagnosticContext returns the current diagnostic context snapshot.
+func (s *ReadOnlyToolState) GetDiagnosticContext() *diagnostic.DiagnosticContext {
+	if s == nil {
+		return nil
+	}
+	return s.DiagnosticContext
+}
+
+// GetReport returns the current report snapshot.
+func (s *ReadOnlyToolState) GetReport() *diagnostic.Report {
+	if s == nil {
+		return nil
+	}
+	return s.Report
+}
+
+// GetRunbookHits returns the current runbook hits.
+func (s *ReadOnlyToolState) GetRunbookHits() []RunbookHit {
+	if s == nil {
+		return nil
+	}
+	return s.RunbookHits
+}
+
+// GetCompletedTools returns the set of completed tool names.
+func (s *ReadOnlyToolState) GetCompletedTools() map[string]bool {
+	if s == nil {
+		return nil
+	}
+	return s.CompletedTools
 }
 
 type RunResult struct {
@@ -205,6 +294,8 @@ type ReportSnapshot struct {
 	AgentExecutionSummary string                         `json:"agent_execution_summary"`
 	Hypotheses            []model.Hypothesis             `json:"hypotheses"`
 	EvidenceChain         []EvidenceRef                  `json:"evidence_chain"`
+	PrimaryRootCause      *RootCauseFactor               `json:"primary_root_cause,omitempty"`
+	ContributingFactors   []RootCauseFactor              `json:"contributing_factors,omitempty"`
 	RootCauseEvidenceRefs []string                       `json:"root_cause_evidence_refs"`
 	ConfidenceBreakdown   []ConfidenceComponent          `json:"confidence_breakdown"`
 	MissingEvidence       []string                       `json:"missing_evidence"`
@@ -215,6 +306,16 @@ type ReportSnapshot struct {
 	VerificationPlan      []VerificationPlan             `json:"verification_plan"`
 	ResidualRisks         []string                       `json:"residual_risks"`
 	StopReason            string                         `json:"stop_reason"`
+}
+
+type RootCauseFactor struct {
+	HypothesisType  string   `json:"hypothesis_type"`
+	Summary         string   `json:"summary"`
+	ConfidenceScore float64  `json:"confidence_score"`
+	Status          string   `json:"status"`
+	EvidenceRefs    []string `json:"evidence_refs,omitempty"`
+	MissingEvidence []string `json:"missing_evidence,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
 }
 
 type EvidenceRef struct {
