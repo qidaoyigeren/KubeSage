@@ -121,11 +121,26 @@ func appendDistinguishingEvidence(plan *Plan, state *ToolState, decision Converg
 }
 
 func appendEvidenceCollectionSteps(plan *Plan, evidence, reason string, state *ToolState) {
-	missing := strings.ToLower(strings.TrimSpace(evidence))
-	if missing == "" {
+	if strings.TrimSpace(evidence) == "" {
 		return
 	}
 	added := false
+	for _, tool := range toolsForEvidenceGap(evidence) {
+		if appendIfMissing(plan, tool, reason, state) {
+			added = true
+		}
+	}
+	if !added && len(toolsForEvidenceGap(evidence)) == 0 {
+		appendIfMissing(plan, "k8s.get_events", reason, state)
+	}
+}
+
+func toolsForEvidenceGap(evidence string) []string {
+	missing := strings.ToLower(strings.TrimSpace(evidence))
+	if missing == "" {
+		return nil
+	}
+	tools := []string{}
 	if strings.Contains(missing, "log") ||
 		strings.Contains(missing, "profile") ||
 		strings.Contains(missing, "heap") ||
@@ -134,8 +149,7 @@ func appendEvidenceCollectionSteps(plan *Plan, evidence, reason string, state *T
 		strings.Contains(missing, "dependency") ||
 		strings.Contains(missing, "registry") ||
 		strings.Contains(missing, "init container") {
-		appendIfMissing(plan, "k8s.get_logs", reason, state)
-		added = true
+		tools = append(tools, "k8s.get_logs")
 	}
 	if strings.Contains(missing, "event") ||
 		strings.Contains(missing, "scheduler") ||
@@ -145,18 +159,15 @@ func appendEvidenceCollectionSteps(plan *Plan, evidence, reason string, state *T
 		strings.Contains(missing, "config") ||
 		strings.Contains(missing, "secret") ||
 		strings.Contains(missing, "registry") {
-		appendIfMissing(plan, "k8s.get_events", reason, state)
-		added = true
+		tools = append(tools, "k8s.get_events")
 	}
 	if strings.Contains(missing, "pvc") {
-		appendIfMissing(plan, "k8s.get_pvc", reason, state)
-		added = true
+		tools = append(tools, "k8s.get_pvc")
 	}
 	if strings.Contains(missing, "metric") ||
 		strings.Contains(missing, "memory") ||
 		strings.Contains(missing, "working set") {
-		appendIfMissing(plan, "prometheus.query_range", reason, state)
-		added = true
+		tools = append(tools, "prometheus.query_range")
 	}
 	if strings.Contains(missing, "topology") ||
 		strings.Contains(missing, "node") ||
@@ -164,12 +175,12 @@ func appendEvidenceCollectionSteps(plan *Plan, evidence, reason string, state *T
 		strings.Contains(missing, "taint") ||
 		strings.Contains(missing, "selector") ||
 		strings.Contains(missing, "constraint") {
-		appendIfMissing(plan, "k8s.get_topology", reason, state)
-		added = true
+		tools = append(tools, "k8s.get_topology")
 	}
-	if !added {
-		appendIfMissing(plan, "k8s.get_events", reason, state)
+	if len(tools) == 0 {
+		tools = append(tools, "k8s.get_events")
 	}
+	return appendUniqueStrings(tools)
 }
 
 func recommendedTools(data interface{}) []string {
@@ -249,10 +260,14 @@ func markStepComplete(plan *Plan, id string) {
 	}
 }
 
-func appendIfMissing(plan *Plan, tool, reason string, state *ToolState) {
+func appendIfMissing(plan *Plan, tool, reason string, state *ToolState) bool {
+	if !toolAvailableInState(state, tool) || toolAttempted(state, tool) {
+		return false
+	}
+	canonical := canonicalToolName(tool)
 	for _, step := range plan.Steps {
-		if step.ToolName == tool && !step.Skipped {
-			return
+		if canonicalToolName(step.ToolName) == canonical {
+			return false
 		}
 	}
 	input := map[string]interface{}{}
@@ -268,6 +283,36 @@ func appendIfMissing(plan *Plan, tool, reason string, state *ToolState) {
 		AppendedBy:    "observation",
 		ParallelGroup: "followup-evidence",
 	})
+	return true
+}
+
+func toolAvailableInState(state *ToolState, tool string) bool {
+	if state == nil || len(state.AvailableTools) == 0 {
+		return true
+	}
+	canonical := canonicalToolName(tool)
+	for _, meta := range state.AvailableTools {
+		if canonicalToolName(meta.Name) == canonical {
+			return true
+		}
+	}
+	return false
+}
+
+func toolAttempted(state *ToolState, tool string) bool {
+	if state == nil {
+		return false
+	}
+	canonical := canonicalToolName(tool)
+	if toolCompleted(state, canonical) {
+		return true
+	}
+	for _, observation := range state.ObservationSnapshot() {
+		if canonicalToolName(observation.ToolName) == canonical {
+			return true
+		}
+	}
+	return false
 }
 
 func markUnavailable(plan *Plan, tool string) {

@@ -279,6 +279,8 @@ type RunResult struct {
 	VerificationPlan []VerificationPlan
 	StopReason       string
 	StepsExecuted    int
+	PlanSummary      string   `json:"-"`
+	PlannedToolNames []string `json:"-"`
 }
 
 type VerificationPlan struct {

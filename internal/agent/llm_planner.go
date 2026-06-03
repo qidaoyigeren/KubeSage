@@ -3,10 +3,16 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"kubesage/internal/observability"
 )
+
+// logLLMPlannerError logs LLM planner errors so fallback reasons are visible.
+func logLLMPlannerError(operation string, err error) {
+	log.Printf("[LLMPlanner] %s failed, falling back to rule planner: %v", operation, err)
+}
 
 const (
 	stopReasonLLMReflectionComplete = "llm_reflection_complete"
@@ -42,6 +48,8 @@ func (p *LLMPlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []To
 			return sanitizePlan(plan, readOnly, goal)
 		}
 		observability.IncLLMPlannerFallback("build_plan", "llm_error")
+		// Log the error so it is visible in diagnostics instead of silently falling back.
+		logLLMPlannerError("BuildInitialPlan", err)
 	}
 	plan := p.fallback.BuildInitialPlan(ctx, goal, readOnly)
 	plan.Summary = "LLM Planner 降级为规则兜底，生成已通过策略校验的只读诊断计划"
@@ -78,6 +86,9 @@ func (p *LLMPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, h
 	if err != nil || len(adjusted.Steps) == 0 {
 		// Fallback to rule-based adjustment.
 		observability.IncLLMPlannerFallback("adjust_plan", "llm_error_or_empty")
+		if err != nil {
+			logLLMPlannerError("AdjustPlan", err)
+		}
 		p.fallback.AdjustPlan(plan, state, last, hypotheses)
 		return
 	}
@@ -124,6 +135,7 @@ func (p *LLMPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, h
 
 	result, err := p.client.GenerateReflection(ctx, prompt)
 	if err != nil {
+		logLLMPlannerError("Reflect", err)
 		return ReflectionResult{ShouldContinue: true, Reason: "LLM reflection failed: " + err.Error()}, nil
 	}
 	return result, nil
@@ -172,6 +184,7 @@ func sanitizePlan(plan Plan, tools []ToolMetadata, goal Goal) Plan {
 		if step.Input == nil {
 			step.Input = map[string]interface{}{"namespace": goal.Namespace, "pod_name": goal.PodName}
 		}
+		step.Critical = tool.Critical
 		sanitized.Steps = append(sanitized.Steps, step)
 	}
 	if len(sanitized.Steps) == 0 {

@@ -117,7 +117,7 @@ func (s *ToolState) applyDeltaLocked(delta *ToolStateDelta) {
 		s.Goal = *delta.Goal
 	}
 	if delta.DiagnosticContext != nil {
-		s.DiagnosticContext = cloneDiagnosticContext(delta.DiagnosticContext)
+		s.DiagnosticContext = mergeDiagnosticContext(s.DiagnosticContext, delta.DiagnosticContext)
 	}
 	if delta.Report != nil {
 		s.Report = cloneReport(delta.Report)
@@ -154,6 +154,69 @@ func cloneDiagnosticContext(ctx *diagnostic.DiagnosticContext) *diagnostic.Diagn
 	clone.NodeSnapshots = append([]diagnostic.NodeSnapshot(nil), ctx.NodeSnapshots...)
 	clone.RunbookHits = append([]diagnostic.RunbookHit(nil), ctx.RunbookHits...)
 	return &clone
+}
+
+func mergeDiagnosticContext(base, update *diagnostic.DiagnosticContext) *diagnostic.DiagnosticContext {
+	if base == nil {
+		return cloneDiagnosticContext(update)
+	}
+	if update == nil {
+		return cloneDiagnosticContext(base)
+	}
+	merged := cloneDiagnosticContext(base)
+	if update.RequestContext != nil {
+		merged.RequestContext = update.RequestContext
+	}
+	if update.Namespace != "" {
+		merged.Namespace = update.Namespace
+	}
+	if update.PodName != "" {
+		merged.PodName = update.PodName
+	}
+	if update.Pod != nil {
+		merged.Pod = update.Pod.DeepCopy()
+	}
+	if update.Events != nil {
+		merged.Events = append([]corev1.Event(nil), update.Events...)
+	}
+	if update.Logs != nil {
+		merged.Logs = append([]diagnostic.ContainerLogs(nil), update.Logs...)
+	}
+	if update.PVCs != nil {
+		merged.PVCs = append([]diagnostic.PVCBrief(nil), update.PVCs...)
+	}
+	if update.Topology != nil {
+		merged.Topology = update.Topology
+	}
+	if update.Correlations != nil {
+		merged.Correlations = update.Correlations
+	}
+	if update.MetricTrends != nil {
+		merged.MetricTrends = append([]diagnostic.MetricTrend(nil), update.MetricTrends...)
+	}
+	if update.NodeSnapshots != nil {
+		merged.NodeSnapshots = append([]diagnostic.NodeSnapshot(nil), update.NodeSnapshots...)
+	}
+	if update.RunbookHits != nil {
+		merged.RunbookHits = append([]diagnostic.RunbookHit(nil), update.RunbookHits...)
+	}
+	if !update.FaultTime.IsZero() {
+		merged.FaultTime = update.FaultTime
+	}
+	if !update.LogWindowStart.IsZero() {
+		merged.LogWindowStart = update.LogWindowStart
+	}
+	if !update.LogWindowEnd.IsZero() {
+		merged.LogWindowEnd = update.LogWindowEnd
+	}
+	if update.LogsPrecise {
+		merged.LogsPrecise = true
+	}
+	if update.LogFallback != "" {
+		merged.LogFallback = update.LogFallback
+	}
+	merged.MetricsEnabled = merged.MetricsEnabled || update.MetricsEnabled
+	return merged
 }
 
 func cloneReport(report *diagnostic.Report) *diagnostic.Report {

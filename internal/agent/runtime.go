@@ -95,6 +95,13 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	planSpan.End()
 	recorder.record(planCtx, stepRecord{Stage: StagePlan, ToolName: plannerToolName(r.planner), Status: model.AgentStepStatusSuccess, Input: opts.Goal, Output: plan, Reason: plan.Summary})
 
+	// Capture initial plan metadata for RunResult.
+	initialPlanSummary := plan.Summary
+	initialPlannedTools := make([]string, 0, len(plan.Steps))
+	for _, s := range plan.Steps {
+		initialPlannedTools = append(initialPlannedTools, s.ToolName)
+	}
+
 	allEvidence := []diagnostic.EvidenceRecord{}
 	latestScores := []HypothesisScore{}
 	stopReason := ""
@@ -112,6 +119,9 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		steps := nextPlanSteps(&plan)
 		if len(steps) == 0 {
 			if enforceProbeEvidenceFallback(&plan, state) {
+				continue
+			}
+			if enforceStateDrivenEvidenceFallback(&plan, state) {
 				continue
 			}
 			stopReason = StopReasonPlanComplete
@@ -162,7 +172,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			if len(result.EvidenceRecords) > 0 {
 				allEvidence = append(allEvidence, result.EvidenceRecords...)
 			}
-			if step.Critical && !result.Success {
+			if r.stepIsCritical(step) && !result.Success {
 				stopReason = StopReasonCriticalToolFailed
 			}
 		}
@@ -209,6 +219,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 						if newStep.ID == "" {
 							newStep.ID = "reflect-" + newStep.ToolName
 						}
+						newStep.Critical = r.toolIsCritical(newStep.ToolName)
 						newStep.AppendedBy = "llm_reflection"
 						plan.Steps = append(plan.Steps, newStep)
 					}
@@ -216,8 +227,20 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 				if enforceProbeEvidenceFallback(&plan, state) {
 					continue
 				}
+				if enforceStateDrivenEvidenceFallback(&plan, state) {
+					continue
+				}
 				if !reflection.ShouldContinue {
 					if convergence.Converged {
+						if ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
+							recorder.record(ctx, stepRecord{
+								Stage:  StageReflection,
+								Status: model.AgentStepStatusSuccess,
+								Output: convergence,
+								Reason: "confirmed hypothesis still has runnable distinguishing evidence; continue collection before stopping",
+							})
+							continue
+						}
 						stopReason = stopReasonLLMReflectionComplete
 						break
 					}
@@ -237,6 +260,18 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			if enforceProbeEvidenceFallback(&plan, state) {
 				continue
 			}
+			if enforceStateDrivenEvidenceFallback(&plan, state) {
+				continue
+			}
+			if ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
+				recorder.record(ctx, stepRecord{
+					Stage:  StageReflection,
+					Status: model.AgentStepStatusSuccess,
+					Output: convergence,
+					Reason: "confirmed hypothesis still has runnable distinguishing evidence; continue collection before stopping",
+				})
+				continue
+			}
 			stopReason = StopReasonConfirmedHypothesis
 			break
 		}
@@ -249,6 +284,19 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if nextPlanStep(&plan) == nil {
 			if enforceProbeEvidenceFallback(&plan, state) {
 				continue
+			}
+			if enforceStateDrivenEvidenceFallback(&plan, state) {
+				continue
+			}
+			if ok, reason := shouldConfirmWithExhaustedEvidence(&plan, state, convergence, confirmedThreshold(r.hypotheses)); ok {
+				recorder.record(ctx, stepRecord{
+					Stage:  StageReflection,
+					Status: model.AgentStepStatusSuccess,
+					Output: map[string]interface{}{"convergence": convergence, "evidence_exhausted": true},
+					Reason: reason,
+				})
+				stopReason = StopReasonConfirmedHypothesis
+				break
 			}
 			stopReason = StopReasonNoEffectiveTool
 			break
@@ -269,6 +317,17 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		return nil, err
 	}
 	report.Evidences = appendUniqueEvidence(report.Evidences, allEvidence...)
+	alignmentScores := r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, report.Evidences)
+	alignmentModels := r.hypotheses.ToModels(opts.TaskID, alignmentScores)
+	alignment := AlignReportWithHypotheses(report, alignmentModels)
+	if alignment.Changed {
+		recorder.record(ctx, stepRecord{
+			Stage:  StageDecision,
+			Status: model.AgentStepStatusSuccess,
+			Output: alignment,
+			Reason: alignment.Reason,
+		})
+	}
 	state.Report = report
 
 	remediationResult := r.executeTool(ctx, recorder, "remediation.generate_actions", map[string]interface{}{"fault_type": report.FaultType}, state, opts.ToolTimeout)
@@ -336,6 +395,8 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		VerificationPlan: verificationPlan,
 		StopReason:       stopReason,
 		StepsExecuted:    stepsExecuted,
+		PlanSummary:      initialPlanSummary,
+		PlannedToolNames: initialPlannedTools,
 	}, nil
 }
 
@@ -377,6 +438,21 @@ func (r *Runtime) executePlanSteps(ctx context.Context, steps []*PlanStep, state
 	}
 	wg.Wait()
 	return results
+}
+
+func (r *Runtime) stepIsCritical(step *PlanStep) bool {
+	if r == nil || step == nil {
+		return false
+	}
+	return step.Critical && r.toolIsCritical(step.ToolName)
+}
+
+func (r *Runtime) toolIsCritical(name string) bool {
+	if r == nil || r.registry == nil {
+		return false
+	}
+	tool, ok := r.registry.Get(name)
+	return ok && tool.Metadata().Critical
 }
 
 func plannerToolName(planner Planner) string {
@@ -490,6 +566,13 @@ func hasConfirmed(scores []HypothesisScore) bool {
 		}
 	}
 	return false
+}
+
+func confirmedThreshold(engine *HypothesisEngine) float64 {
+	if engine != nil && engine.config.ConfirmedThreshold > 0 {
+		return engine.config.ConfirmedThreshold
+	}
+	return convergenceMinConfidence
 }
 
 func appendUniqueEvidence(existing []diagnostic.EvidenceRecord, additions ...diagnostic.EvidenceRecord) []diagnostic.EvidenceRecord {

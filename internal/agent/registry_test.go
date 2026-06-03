@@ -89,12 +89,14 @@ func TestDefaultRegistryCriticalAndNonCriticalMetadata(t *testing.T) {
 }
 
 func TestSnapshotEvidenceToolsRefreshEmptyPodOnlyCache(t *testing.T) {
-	calls := 0
+	calls := []Goal{}
 	registry, err := NewDefaultRegistry(RegistryOptions{
 		Snapshot: func(ctx context.Context, goal Goal) (*diagnostic.DiagnosticContext, error) {
 			_ = ctx
-			calls++
+			calls = append(calls, goal)
 			diagCtx := probeNotReadyContext()
+			diagCtx.PVCs = []diagnostic.PVCBrief{{Name: "data", Phase: "Bound"}}
+			diagCtx.Topology = &diagnostic.TopologyInfo{NodeName: "node-a"}
 			if !goal.IncludeEvents {
 				diagCtx.Events = nil
 			}
@@ -115,8 +117,17 @@ func TestSnapshotEvidenceToolsRefreshEmptyPodOnlyCache(t *testing.T) {
 	} else {
 		state.RecordToolResult(result)
 	}
+	if len(calls) != 1 {
+		t.Fatalf("expected one snapshot call after get_pod, got %d", len(calls))
+	}
+	if calls[0].IncludeEvents || calls[0].IncludeLogs || calls[0].IncludeMetrics {
+		t.Fatalf("expected get_pod to request pod-only snapshot, got %+v", calls[0])
+	}
 	if len(state.DiagnosticContext.Events) != 0 {
 		t.Fatalf("expected pod-only cache without events")
+	}
+	if len(state.DiagnosticContext.Logs) != 0 || len(state.DiagnosticContext.PVCs) != 0 || state.DiagnosticContext.Topology != nil {
+		t.Fatalf("expected get_pod to cache only pod status, got logs=%d pvcs=%d topology=%#v", len(state.DiagnosticContext.Logs), len(state.DiagnosticContext.PVCs), state.DiagnosticContext.Topology)
 	}
 	eventTool, _ := registry.Get("k8s.get_events")
 	result := eventTool.Execute(context.Background(), nil, state)
@@ -124,11 +135,17 @@ func TestSnapshotEvidenceToolsRefreshEmptyPodOnlyCache(t *testing.T) {
 		t.Fatalf("get_events failed: %s", result.Error)
 	}
 	state.RecordToolResult(result)
-	if calls < 2 {
-		t.Fatalf("expected get_events to refresh the snapshot, calls=%d", calls)
+	if len(calls) < 2 {
+		t.Fatalf("expected get_events to refresh the snapshot, calls=%d", len(calls))
+	}
+	if !calls[1].IncludeEvents || calls[1].IncludeLogs || calls[1].IncludeMetrics {
+		t.Fatalf("expected get_events to request event-only snapshot, got %+v", calls[1])
 	}
 	if len(result.EvidenceRecords) != 1 || result.EvidenceRecords[0].SourceType != "k8s_event" {
 		t.Fatalf("expected refreshed event evidence, got %#v", result.EvidenceRecords)
+	}
+	if state.DiagnosticContext.Topology != nil {
+		t.Fatalf("expected get_events not to cache topology implicitly")
 	}
 	if result.EvidenceRecords[0].Raw.(corev1.Event).Reason != "Unhealthy" {
 		t.Fatalf("expected refreshed Unhealthy event, got %#v", result.EvidenceRecords[0].Raw)
@@ -214,6 +231,31 @@ func TestLokiQueryLogsToolUsesRealClient(t *testing.T) {
 	}
 	if len(result.EvidenceRecords) != 1 || result.EvidenceRecords[0].SourceType != "loki" {
 		t.Fatalf("expected loki evidence, got %#v", result.EvidenceRecords)
+	}
+}
+
+func TestToolStateMergesPartialDiagnosticContextDeltas(t *testing.T) {
+	state := &ToolState{}
+	state.RecordToolResult(ToolResult{
+		ToolName: "k8s.get_events",
+		Success:  true,
+		StateDelta: &ToolStateDelta{DiagnosticContext: &diagnostic.DiagnosticContext{
+			Namespace: "default",
+			PodName:   "api-0",
+			Events:    []corev1.Event{{Reason: "BackOff"}},
+		}},
+	})
+	state.RecordToolResult(ToolResult{
+		ToolName: "k8s.get_logs",
+		Success:  true,
+		StateDelta: &ToolStateDelta{DiagnosticContext: &diagnostic.DiagnosticContext{
+			Namespace: "default",
+			PodName:   "api-0",
+			Logs:      []diagnostic.ContainerLogs{{ContainerName: "app", Previous: "boom"}},
+		}},
+	})
+	if len(state.DiagnosticContext.Events) != 1 || len(state.DiagnosticContext.Logs) != 1 {
+		t.Fatalf("expected merged events and logs, got events=%d logs=%d", len(state.DiagnosticContext.Events), len(state.DiagnosticContext.Logs))
 	}
 }
 

@@ -225,9 +225,15 @@ func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt a
 		Messages: []chatMessage{
 			{Role: "system", Content: strings.Join([]string{
 				"You are KubeSage's Kubernetes RCA planner.",
-				"Return JSON only using fields: plan_summary, steps, expected_observations, stop_condition.",
-				"Each step must use an available read-only tool name from the supplied tools.",
+				"Return a JSON object with EXACTLY these fields:",
+				`  "plan_summary": string — one-sentence diagnosis strategy,`,
+				`  "steps": array of objects, each with "tool_name" (string), "reason" (string), "critical" (bool), "input" (object),`,
+				`  "expected_observations": array of strings,`,
+				`  "stop_condition": array of strings.`,
+				"Each step.tool_name MUST be one of the provided tool names exactly as listed.",
+				"Each step.input should contain namespace and pod_name from the goal.",
 				"Do not propose remediation execution or cluster mutation.",
+				"Return JSON only, no markdown fences.",
 			}, "\n")},
 			{Role: "user", Content: string(payloadBytes)},
 		},
@@ -267,13 +273,10 @@ func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt a
 		return agent.Plan{}, fmt.Errorf("llm plan response has no choices")
 	}
 	c.captureUsage(raw.Usage, time.Since(start))
-	var plan agent.Plan
-	content := strings.TrimSpace(raw.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &plan); err != nil {
-		return agent.Plan{}, err
+	content := stripMarkdownFences(raw.Choices[0].Message.Content)
+	plan, err := parseFlexiblePlan(content, prompt.Goal)
+	if err != nil {
+		return agent.Plan{}, fmt.Errorf("llm plan parse error: %w; raw=%s", err, truncateString(content, 500))
 	}
 	if len(plan.Steps) == 0 {
 		return agent.Plan{}, fmt.Errorf("llm plan has no steps")
@@ -299,10 +302,15 @@ func (c *OpenAICompatibleClient) GeneratePlanAdjustment(ctx context.Context, pro
 			{Role: "system", Content: strings.Join([]string{
 				"You are KubeSage's Kubernetes RCA planner revising a diagnostic plan mid-execution.",
 				"You will receive the current plan, observations so far, hypothesis scores, and available tools.",
-				"Return a revised JSON plan using fields: plan_summary, steps, expected_observations, stop_condition.",
-				"Each step must use an available read-only tool name from the supplied tools.",
+				"Return a revised JSON plan with EXACTLY these fields:",
+				`  "plan_summary": string,`,
+				`  "steps": array of objects, each with "tool_name" (string), "reason" (string), "critical" (bool), "input" (object),`,
+				`  "expected_observations": array of strings,`,
+				`  "stop_condition": array of strings.`,
+				"Each step.tool_name MUST be one of the provided tool names exactly as listed.",
 				"Do not propose remediation execution or cluster mutation.",
 				"Remove steps that are no longer needed and add steps to fill evidence gaps.",
+				"Return JSON only, no markdown fences.",
 			}, "\n")},
 			{Role: "user", Content: string(payloadBytes)},
 		},
@@ -342,13 +350,10 @@ func (c *OpenAICompatibleClient) GeneratePlanAdjustment(ctx context.Context, pro
 		return agent.Plan{}, fmt.Errorf("llm adjustment response has no choices")
 	}
 	c.captureUsage(raw.Usage, time.Since(start))
-	var plan agent.Plan
-	content := strings.TrimSpace(raw.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &plan); err != nil {
-		return agent.Plan{}, err
+	content := stripMarkdownFences(raw.Choices[0].Message.Content)
+	plan, err := parseFlexiblePlan(content, prompt.Goal)
+	if err != nil {
+		return agent.Plan{}, fmt.Errorf("llm adjustment parse error: %w; raw=%s", err, truncateString(content, 500))
 	}
 	return plan, nil
 }
@@ -633,4 +638,113 @@ func isDangerousAction(action string) bool {
 		}
 	}
 	return false
+}
+
+// stripMarkdownFences removes ```json ... ``` wrappers from LLM output.
+func stripMarkdownFences(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "```json")
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimSuffix(s, "```")
+	return strings.TrimSpace(s)
+}
+
+// truncateString truncates s to maxLen runes, appending "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// flexibleStep is an intermediate struct that accepts both LLM-generated field
+// names ("tool"/"params") and canonical names ("tool_name"/"input").
+type flexibleStep struct {
+	ID            string                 `json:"id"`
+	ToolName      string                 `json:"tool_name"`
+	ToolNameAlt   string                 `json:"tool"`
+	Input         map[string]interface{} `json:"input"`
+	InputAlt      map[string]interface{} `json:"params"`
+	Reason        string                 `json:"reason"`
+	ReasonAlt     string                 `json:"description"`
+	Critical      bool                   `json:"critical"`
+	ParallelGroup string                 `json:"parallel_group"`
+}
+
+// flexiblePlan is an intermediate struct that accepts stop_condition as either
+// a string or an array of strings.
+type flexiblePlan struct {
+	Summary              string          `json:"plan_summary"`
+	Steps                []flexibleStep  `json:"steps"`
+	ExpectedObservations []string        `json:"expected_observations"`
+	StopCondition        json.RawMessage `json:"stop_condition"`
+}
+
+// parseFlexiblePlan parses LLM-generated JSON into an agent.Plan, tolerating
+// common field name variations and type mismatches.
+func parseFlexiblePlan(content string, goal agent.Goal) (agent.Plan, error) {
+	var fp flexiblePlan
+	if err := json.Unmarshal([]byte(strings.TrimSpace(content)), &fp); err != nil {
+		return agent.Plan{}, err
+	}
+
+	// Parse stop_condition: may be string or []string.
+	var stopConditions []string
+	if len(fp.StopCondition) > 0 {
+		// Try as array first.
+		if err := json.Unmarshal(fp.StopCondition, &stopConditions); err != nil {
+			// Try as single string.
+			var single string
+			if err2 := json.Unmarshal(fp.StopCondition, &single); err2 == nil {
+				stopConditions = []string{single}
+			}
+		}
+	}
+
+	// Map flexible steps to canonical steps.
+	steps := make([]agent.PlanStep, 0, len(fp.Steps))
+	for i, fs := range fp.Steps {
+		toolName := fs.ToolName
+		if toolName == "" {
+			toolName = fs.ToolNameAlt
+		}
+		input := fs.Input
+		if len(input) == 0 {
+			input = fs.InputAlt
+		}
+		reason := fs.Reason
+		if reason == "" {
+			reason = fs.ReasonAlt
+		}
+		if toolName == "" {
+			continue
+		}
+		// Fill default input from goal if empty.
+		if len(input) == 0 {
+			input = map[string]interface{}{
+				"namespace": goal.Namespace,
+				"pod_name":  goal.PodName,
+			}
+		}
+		id := fs.ID
+		if id == "" {
+			id = fmt.Sprintf("step-%02d", i+1)
+		}
+		steps = append(steps, agent.PlanStep{
+			ID:            id,
+			ToolName:      toolName,
+			Input:         input,
+			Reason:        reason,
+			Critical:      fs.Critical,
+			ParallelGroup: fs.ParallelGroup,
+		})
+	}
+
+	plan := agent.Plan{
+		Summary:              fp.Summary,
+		Steps:                steps,
+		ExpectedObservations: fp.ExpectedObservations,
+		StopCondition:        stopConditions,
+	}
+	return plan, nil
 }

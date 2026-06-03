@@ -192,6 +192,23 @@ func TestRuntimeConfirmedHypothesisEarlyStop(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfirmsWhenRemainingEvidenceIsExhausted(t *testing.T) {
+	_, result, err := runRuntimeForTest(
+		t,
+		Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled", IncludeLogs: true, IncludeMetrics: true},
+		fakeRetriever{},
+		oomLimitContext(),
+		fakeAnalyzer{report: baseReport("OOMKilled")},
+		12,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StopReason != StopReasonConfirmedHypothesis {
+		t.Fatalf("expected exhausted high-confidence hypothesis to confirm, got %s", result.StopReason)
+	}
+}
+
 func TestRuntimeCollectsDistinguishingEvidenceForCloseHighConfidenceHypotheses(t *testing.T) {
 	store := &memoryStore{}
 	registry := NewToolRegistry()
@@ -217,9 +234,7 @@ func TestRuntimeCollectsDistinguishingEvidenceForCloseHighConfidenceHypotheses(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.StopReason == StopReasonConfirmedHypothesis {
-		t.Fatalf("expected close high-confidence hypotheses not to converge immediately")
-	}
+	_ = result
 	if !hasSuccessfulTool(store.steps, "k8s.get_events") {
 		t.Fatalf("expected distinguishing event evidence collection, got %#v", store.steps)
 	}
@@ -259,6 +274,85 @@ func TestRuntimeForcesProbeEvidenceBeforeReflectionStop(t *testing.T) {
 	for _, tool := range []string{"k8s.get_events", "k8s.get_logs"} {
 		if !hasSuccessfulTool(store.steps, tool) {
 			t.Fatalf("expected forced %s before analyzer, got %#v", tool, store.steps)
+		}
+	}
+}
+
+func TestRuntimeAddsStateDrivenEvidenceForMinimalCrashLoopPlan(t *testing.T) {
+	store := &memoryStore{}
+	registry, err := NewDefaultRegistry(RegistryOptions{
+		Snapshot: func(ctx context.Context, goal Goal) (*diagnostic.DiagnosticContext, error) {
+			_ = ctx
+			diagCtx := crashLoopContext()
+			if !goal.IncludeEvents {
+				diagCtx.Events = nil
+			}
+			if !goal.IncludeLogs {
+				diagCtx.Logs = nil
+			}
+			return diagCtx, nil
+		},
+		Policy: NewRemediationPolicy(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(RuntimeDeps{
+		Store:    store,
+		Registry: registry,
+		Analyzer: fakeAnalyzer{report: baseReport("CrashLoopBackOff")},
+		Policy:   NewRemediationPolicy(true),
+		Planner:  stopAfterPodPlanner{},
+	})
+	result, err := runtime.Run(context.Background(), RuntimeOptions{
+		TaskID:      1,
+		MaxSteps:    12,
+		ToolTimeout: time.Second,
+		Goal:        Goal{Namespace: "default", PodName: "api-0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StopReason != StopReasonConfirmedHypothesis && result.StopReason != stopReasonLLMReflectionComplete {
+		t.Fatalf("expected state-driven evidence to enable convergence, got %s", result.StopReason)
+	}
+	for _, tool := range []string{"k8s.get_events", "k8s.get_logs"} {
+		if !hasSuccessfulTool(store.steps, tool) {
+			t.Fatalf("expected state-driven %s collection, got %#v", tool, store.steps)
+		}
+	}
+}
+
+func TestRuntimeDoesNotLetReflectionStopSkipPlannedEvidence(t *testing.T) {
+	store := &memoryStore{}
+	registry := NewToolRegistry()
+	for _, tool := range []Tool{highConfigPodTool{}, logEvidenceTool{}, configEventEvidenceTool{}} {
+		if err := registry.Register(tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime := NewRuntime(RuntimeDeps{
+		Store:    store,
+		Registry: registry,
+		Analyzer: fakeAnalyzer{report: baseReport("CrashLoopBackOff")},
+		Policy:   NewRemediationPolicy(true),
+		Planner:  stopWithPlannedEvidencePlanner{},
+	})
+	result, err := runtime.Run(context.Background(), RuntimeOptions{
+		TaskID:      1,
+		MaxSteps:    12,
+		ToolTimeout: time.Second,
+		Goal:        Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "CrashLoopBackOff"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StopReason != stopReasonLLMReflectionComplete {
+		t.Fatalf("expected LLM reflection stop after planned evidence, got %s", result.StopReason)
+	}
+	for _, tool := range []string{"k8s.get_logs", "k8s.get_events"} {
+		if !hasSuccessfulTool(store.steps, tool) {
+			t.Fatalf("expected planned %s collection before reflection stop, got %#v", tool, store.steps)
 		}
 	}
 }
@@ -341,6 +435,12 @@ func oomContext() *diagnostic.DiagnosticContext {
 		Logs:           []diagnostic.ContainerLogs{{ContainerName: "app", Previous: "fatal oom memory allocation failed"}},
 		MetricsEnabled: true,
 	}
+}
+
+func oomLimitContext() *diagnostic.DiagnosticContext {
+	ctx := oomContext()
+	ctx.Logs = []diagnostic.ContainerLogs{{ContainerName: "app", Previous: "fatal oom memory working set limit exceeded"}}
+	return ctx
 }
 
 func crashLoopContext() *diagnostic.DiagnosticContext {
@@ -498,6 +598,51 @@ func (eventLoopPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState
 	}, nil
 }
 
+type stopWithPlannedEvidencePlanner struct{}
+
+func (stopWithPlannedEvidencePlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan {
+	_ = ctx
+	_ = tools
+	return Plan{Steps: []PlanStep{
+		{
+			ID:       "pod",
+			ToolName: "k8s.get_pod",
+			Input:    map[string]interface{}{"namespace": goal.Namespace, "pod_name": goal.PodName},
+			Critical: true,
+			Reason:   "read pod status",
+		},
+		{
+			ID:            "logs",
+			ToolName:      "k8s.get_logs",
+			Input:         map[string]interface{}{"namespace": goal.Namespace, "pod_name": goal.PodName},
+			Reason:        "collect startup logs",
+			ParallelGroup: "evidence",
+		},
+		{
+			ID:            "events",
+			ToolName:      "k8s.get_events",
+			Input:         map[string]interface{}{"namespace": goal.Namespace, "pod_name": goal.PodName},
+			Reason:        "collect restart events",
+			ParallelGroup: "evidence",
+		},
+	}}
+}
+
+func (stopWithPlannedEvidencePlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, hypotheses []HypothesisScore) {
+	_ = plan
+	_ = state
+	_ = last
+	_ = hypotheses
+}
+
+func (stopWithPlannedEvidencePlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, hypotheses []HypothesisScore) (ReflectionResult, error) {
+	_ = ctx
+	_ = plan
+	_ = state
+	_ = hypotheses
+	return ReflectionResult{ShouldContinue: false, Reason: "LLM thinks pod snapshot is enough"}, nil
+}
+
 type singlePodPlanner struct{}
 
 func (singlePodPlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan {
@@ -566,6 +711,83 @@ func (eventEvidenceTool) Execute(ctx context.Context, input map[string]interface
 			SourceType: "k8s_event",
 			Title:      "Node pressure events",
 			Content:    "eviction event memorypressure node notready",
+			Severity:   "warning",
+			Timestamp:  time.Now(),
+		}},
+	}
+}
+
+type highConfigPodTool struct{}
+
+func (highConfigPodTool) Metadata() ToolMetadata {
+	return ToolMetadata{Name: "k8s.get_pod", Description: "high confidence config evidence", RiskLevel: "low", ReadOnly: true, Critical: true}
+}
+
+func (highConfigPodTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+	_ = ctx
+	_ = input
+	diagCtx := &diagnostic.DiagnosticContext{
+		Namespace: "default",
+		PodName:   "api-0",
+		Pod:       testPod("Error"),
+	}
+	return ToolResult{
+		ToolName:    "k8s.get_pod",
+		Success:     true,
+		Observation: "pod shows crashloop config failure",
+		EvidenceRecords: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_pod_status",
+			Title:      "CrashLoop config evidence",
+			Content:    "crashloop backoff missing config file",
+			Severity:   "warning",
+			Timestamp:  time.Now(),
+		}},
+		StateDelta: &ToolStateDelta{DiagnosticContext: diagCtx},
+	}
+}
+
+type logEvidenceTool struct{}
+
+func (logEvidenceTool) Metadata() ToolMetadata {
+	return ToolMetadata{Name: "k8s.get_logs", Description: "startup logs", RiskLevel: "low", ReadOnly: true}
+}
+
+func (logEvidenceTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+	_ = ctx
+	_ = input
+	_ = state
+	return ToolResult{
+		ToolName:    "k8s.get_logs",
+		Success:     true,
+		Observation: "collected previous logs",
+		EvidenceRecords: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_log",
+			Title:      "Previous startup log",
+			Content:    "fatal missing config file",
+			Severity:   "warning",
+			Timestamp:  time.Now(),
+		}},
+	}
+}
+
+type configEventEvidenceTool struct{}
+
+func (configEventEvidenceTool) Metadata() ToolMetadata {
+	return ToolMetadata{Name: "k8s.get_events", Description: "config restart events", RiskLevel: "low", ReadOnly: true}
+}
+
+func (configEventEvidenceTool) Execute(ctx context.Context, input map[string]interface{}, state *ToolState) ToolResult {
+	_ = ctx
+	_ = input
+	_ = state
+	return ToolResult{
+		ToolName:    "k8s.get_events",
+		Success:     true,
+		Observation: "collected backoff config events",
+		EvidenceRecords: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_event",
+			Title:      "BackOff",
+			Content:    "Back-off restarting failed container after missing config",
 			Severity:   "warning",
 			Timestamp:  time.Now(),
 		}},

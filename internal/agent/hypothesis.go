@@ -63,17 +63,17 @@ func DefaultHypothesisScoringConfig() HypothesisScoringConfig {
 			"memory_limit_too_low":        {"oom": 0.25, "working_set_limit": 0.20, "prometheus": 0.10},
 			"application_memory_leak":     {"oom": 0.20, "memory": 0.10},
 			"node_memory_pressure":        {"memorypressure": 0.35, "k8s_topology": 0.10},
-			"bad_config":                  {"config": 0.25, "backoff": 0.15},
+			"bad_config":                  {"config": 0.30, "backoff": 0.20},
 			"missing_secret_or_configmap": {"secret_configmap": 0.30},
 			"dependency_unavailable":      {"refused_timeout": 0.25, "backoff_probe": 0.10},
-			"probe_misconfigured":         {"probe_unhealthy": 0.30},
-			"pvc_unbound":                 {"pvc_bound": 0.35},
-			"scheduling_constraint":       {"scheduler": 0.30},
+			"probe_misconfigured":         {"probe_unhealthy": 0.45},
+			"pvc_unbound":                 {"pvc_bound": 0.45},
+			"scheduling_constraint":       {"scheduler": 0.45},
 			// New hypothesis types for expanded analyzer coverage.
-			"image_pull_failed":    {"imagepull": 0.35, "registry_auth": 0.15},
-			"init_container_crash": {"init_error": 0.30, "init_exit": 0.15},
-			"node_eviction":        {"evicted": 0.35, "node_pressure": 0.15},
-			"node_not_ready":       {"nodenotready": 0.40, "node_pressure": 0.10},
+			"image_pull_failed":    {"imagepull": 0.45, "registry_auth": 0.15},
+			"init_container_crash": {"init_error": 0.35, "init_exit": 0.20},
+			"node_eviction":        {"evicted": 0.45, "node_pressure": 0.15},
+			"node_not_ready":       {"nodenotready": 0.45, "node_pressure": 0.10},
 		},
 	}
 }
@@ -194,9 +194,12 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 			"oom", "oomkilled", "memory", "working set", "limit", "backoff", "crashloop", "config", "secret", "configmap",
 			"refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector", "pvc", "bound",
 			"imagepull", "errimagepull", "imagepullbackoff", "unauthorized", "denied", "manifest",
-			"init", "initerror", "initcontainer", "exitcode", "evicted", "eviction", "nodenotready", "notready",
+			"initerror", "initcontainer", "init container", "exitcode", "evicted", "eviction", "nodenotready", "notready",
 		} {
 			if key == "memory" && pressureFalseOnly(text, "memorypressure") {
+				continue
+			}
+			if key == "config" && !configErrorSignal(text) {
 				continue
 			}
 			if strings.Contains(text, key) {
@@ -336,8 +339,11 @@ func (e *HypothesisEngine) scoreImagePullFailed(f facts) HypothesisScore {
 
 func (e *HypothesisEngine) scoreInitContainerCrash(f facts) HypothesisScore {
 	s := base("init_container_crash", "An init container is failing, possibly due to dependency issues or misconfiguration.")
-	s.add(e.weight(s.Type, "init_error", 0.30), refs(f, "init", "initerror")...)
-	s.add(e.weight(s.Type, "init_exit", 0.15), refs(f, "initcontainer", "exitcode")...)
+	initRefs := refs(f, "initerror", "initcontainer", "init container")
+	s.add(e.weight(s.Type, "init_error", 0.30), initRefs...)
+	if len(initRefs) > 0 {
+		s.add(e.weight(s.Type, "init_exit", 0.15), refs(f, "exitcode")...)
+	}
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "init container status and logs")
 	}
@@ -436,6 +442,29 @@ func pressureFalseOnly(text, key string) bool {
 		!strings.Contains(compact, "memoryrequest") &&
 		!strings.Contains(compact, "workingset") &&
 		!strings.Contains(compact, "oom")
+}
+
+func configErrorSignal(text string) bool {
+	compact := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(text))
+	if strings.Contains(compact, "containerimageconfiguration") ||
+		strings.Contains(compact, "imagepull") ||
+		strings.Contains(compact, "errimagepull") {
+		return false
+	}
+	for _, needle := range []string{
+		"config",
+		"configuration",
+		"configmap",
+		"config.yaml",
+		"missingconfig",
+		"invalidconfig",
+		"parseerror",
+	} {
+		if strings.Contains(text, needle) || strings.Contains(compact, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func appendUnique(items []string, additions ...string) []string {

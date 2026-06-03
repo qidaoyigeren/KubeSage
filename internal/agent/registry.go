@@ -11,6 +11,8 @@ import (
 	"kubesage/internal/model"
 	"kubesage/internal/observability"
 	"kubesage/internal/prometheus"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 type ToolRegistry struct {
@@ -129,11 +131,11 @@ type LokiQueryClient interface {
 func NewDefaultRegistry(opts RegistryOptions) (*ToolRegistry, error) {
 	registry := NewToolRegistry()
 	tools := []Tool{
-		newSnapshotTool("k8s.get_pod", "Load pod snapshot and cache diagnostic context.", true, opts.Snapshot, podObservation),
-		newSnapshotTool("k8s.get_events", "Read pod Events from cached Kubernetes snapshot.", false, opts.Snapshot, eventsObservation),
-		newSnapshotTool("k8s.get_logs", "Read previous/current pod logs from cached Kubernetes snapshot.", false, opts.Snapshot, logsObservation),
-		newSnapshotTool("k8s.get_topology", "Read workload, service, endpoint, and node topology.", false, opts.Snapshot, topologyObservation),
-		newSnapshotTool("k8s.get_pvc", "Read PVC status referenced by the pod.", false, opts.Snapshot, pvcObservation),
+		newSnapshotTool("k8s.get_pod", "Read Pod spec/status only and seed a minimal diagnostic context. Use explicit tools for Events, logs, metrics, PVC, or topology evidence.", true, opts.Snapshot, podObservation),
+		newSnapshotTool("k8s.get_events", "Read pod Events and cache them as explicit event evidence.", false, opts.Snapshot, eventsObservation),
+		newSnapshotTool("k8s.get_logs", "Read previous/current pod logs and cache them as explicit log evidence.", false, opts.Snapshot, logsObservation),
+		newSnapshotTool("k8s.get_topology", "Read workload, service, endpoint, and node topology as explicit topology evidence.", false, opts.Snapshot, topologyObservation),
+		newSnapshotTool("k8s.get_pvc", "Read PVC status referenced by the pod as explicit storage evidence.", false, opts.Snapshot, pvcObservation),
 		newRunbookSearchTool(opts.Retriever),
 		newPrometheusQueryTool(opts.Prometheus),
 		newLokiQueryTool(opts.Loki),
@@ -195,7 +197,7 @@ func newSnapshotTool(name, description string, critical bool, snapshot SnapshotF
 				if err != nil {
 					return ToolResult{ToolName: name, Success: false, Error: err.Error(), Observation: "快照采集失败"}
 				}
-				diagCtx = refreshed
+				diagCtx = diagnosticContextForTool(name, refreshed)
 				delta = &ToolStateDelta{Goal: &goal, DiagnosticContext: diagCtx}
 			}
 			result := observe(diagCtx)
@@ -222,6 +224,9 @@ func shouldRefreshSnapshotForTool(name string, state *ReadOnlyToolState) bool {
 }
 
 func snapshotGoalForTool(name string, goal Goal) Goal {
+	goal.IncludeEvents = false
+	goal.IncludeLogs = false
+	goal.IncludeMetrics = false
 	switch canonicalToolName(name) {
 	case "k8s.get_events":
 		goal.IncludeEvents = true
@@ -230,6 +235,41 @@ func snapshotGoalForTool(name string, goal Goal) Goal {
 		goal.IncludeLogs = true
 	}
 	return goal
+}
+
+func diagnosticContextForTool(name string, ctx *diagnostic.DiagnosticContext) *diagnostic.DiagnosticContext {
+	if ctx == nil {
+		return nil
+	}
+	out := &diagnostic.DiagnosticContext{
+		RequestContext: ctx.RequestContext,
+		Namespace:      ctx.Namespace,
+		PodName:        ctx.PodName,
+		Pod:            ctx.Pod,
+	}
+	switch canonicalToolName(name) {
+	case "k8s.get_pod":
+		return cloneDiagnosticContext(out)
+	case "k8s.get_events":
+		out.Events = append([]corev1.Event(nil), ctx.Events...)
+	case "k8s.get_logs":
+		out.Events = append([]corev1.Event(nil), ctx.Events...)
+		out.Logs = append([]diagnostic.ContainerLogs(nil), ctx.Logs...)
+		out.FaultTime = ctx.FaultTime
+		out.LogWindowStart = ctx.LogWindowStart
+		out.LogWindowEnd = ctx.LogWindowEnd
+		out.LogsPrecise = ctx.LogsPrecise
+		out.LogFallback = ctx.LogFallback
+	case "k8s.get_topology":
+		out.Topology = ctx.Topology
+		out.Correlations = ctx.Correlations
+		out.NodeSnapshots = append([]diagnostic.NodeSnapshot(nil), ctx.NodeSnapshots...)
+	case "k8s.get_pvc":
+		out.PVCs = append([]diagnostic.PVCBrief(nil), ctx.PVCs...)
+	default:
+		return cloneDiagnosticContext(ctx)
+	}
+	return cloneDiagnosticContext(out)
 }
 
 func podObservation(ctx *diagnostic.DiagnosticContext) ToolResult {
