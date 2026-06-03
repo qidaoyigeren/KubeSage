@@ -357,6 +357,38 @@ func TestRuntimeDoesNotLetReflectionStopSkipPlannedEvidence(t *testing.T) {
 	}
 }
 
+func TestRuntimeUsesLLMReflectionStopWhenEvidenceIsExhausted(t *testing.T) {
+	store := &memoryStore{}
+	registry := NewToolRegistry()
+	for _, tool := range []Tool{highConfigPodTool{}, logEvidenceTool{}} {
+		if err := registry.Register(tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime := NewRuntime(RuntimeDeps{
+		Store:    store,
+		Registry: registry,
+		Analyzer: fakeAnalyzer{report: baseReport("CrashLoopBackOff")},
+		Policy:   NewRemediationPolicy(true),
+		Planner:  stopAfterPodPlanner{},
+	})
+	result, err := runtime.Run(context.Background(), RuntimeOptions{
+		TaskID:      1,
+		MaxSteps:    12,
+		ToolTimeout: time.Second,
+		Goal:        Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "CrashLoopBackOff"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StopReason != stopReasonLLMReflectionComplete {
+		t.Fatalf("expected exhausted evidence to stop via LLM reflection, got %s", result.StopReason)
+	}
+	if !hasSuccessfulTool(store.steps, "k8s.get_logs") {
+		t.Fatalf("expected state-driven log collection before LLM reflection stop, got %#v", store.steps)
+	}
+}
+
 func TestRuntimePrioritizesMissingProbeLogsOverReflectiveEventLoop(t *testing.T) {
 	store := &memoryStore{}
 	registry, err := NewDefaultRegistry(RegistryOptions{

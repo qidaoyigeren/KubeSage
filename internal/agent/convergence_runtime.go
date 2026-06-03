@@ -2,6 +2,8 @@ package agent
 
 import "fmt"
 
+const llmReflectionEvidenceFloor = 0.60
+
 func shouldConfirmWithExhaustedEvidence(plan *Plan, state *ToolState, decision ConvergenceDecision, threshold float64) (bool, string) {
 	if decision.Converged {
 		if decision.Top == nil {
@@ -26,6 +28,20 @@ func shouldConfirmWithExhaustedEvidence(plan *Plan, state *ToolState, decision C
 		return false, ""
 	}
 	return true, fmt.Sprintf("top hypothesis %s confidence %.2f is confirmed; remaining evidence gaps were already attempted or unavailable", top.Type, top.Confidence)
+}
+
+func shouldStopAfterLLMReflectionWithExhaustedEvidence(plan *Plan, state *ToolState, decision ConvergenceDecision, reflection ReflectionResult, hasReflection bool) (bool, string) {
+	if !hasReflection || reflection.ShouldContinue || decision.Top == nil {
+		return false, ""
+	}
+	top := *decision.Top
+	if top.Confidence < llmReflectionEvidenceFloor || len(top.SupportingRefs) == 0 {
+		return false, ""
+	}
+	if hasRunnableDistinguishingEvidence(plan, state, decision) {
+		return false, ""
+	}
+	return true, fmt.Sprintf("LLM reflection judged evidence sufficient for %s and distinguishing evidence is exhausted", top.Type)
 }
 
 func hasRunnableDistinguishingEvidence(plan *Plan, state *ToolState, decision ConvergenceDecision) bool {

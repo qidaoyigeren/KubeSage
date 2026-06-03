@@ -90,7 +90,7 @@ func rootCauseFactors(report *diagnostic.Report, hypotheses []model.Hypothesis, 
 
 	ranked := append([]model.Hypothesis(nil), hypotheses...)
 	sort.SliceStable(ranked, func(i, j int) bool {
-		return ranked[i].ConfidenceScore > ranked[j].ConfidenceScore
+		return betterPrimaryHypothesis(ranked[i], ranked[j])
 	})
 
 	primaryIndex := -1

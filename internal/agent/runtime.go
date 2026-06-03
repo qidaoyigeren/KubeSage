@@ -106,6 +106,8 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	latestScores := []HypothesisScore{}
 	stopReason := ""
 	stepsExecuted := 0
+	lastReflection := ReflectionResult{ShouldContinue: true}
+	hasLastReflection := false
 
 	for stopReason == "" {
 		if err := ctx.Err(); err != nil {
@@ -199,6 +201,8 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if rp, ok := r.planner.(ReflectivePlanner); ok {
 			reflection, reflectErr := rp.Reflect(ctx, plan, state, latestScores)
 			if reflectErr == nil {
+				lastReflection = reflection
+				hasLastReflection = true
 				span.AddEvent("agent.reflection.decision", trace.WithAttributes(
 					attribute.Bool("agent.reflection.should_continue", reflection.ShouldContinue),
 					attribute.Int("agent.reflection.new_steps", len(reflection.NewSteps)),
@@ -296,6 +300,16 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 					Reason: reason,
 				})
 				stopReason = StopReasonConfirmedHypothesis
+				break
+			}
+			if ok, reason := shouldStopAfterLLMReflectionWithExhaustedEvidence(&plan, state, convergence, lastReflection, hasLastReflection); ok {
+				recorder.record(ctx, stepRecord{
+					Stage:  StageReflection,
+					Status: model.AgentStepStatusSuccess,
+					Output: map[string]interface{}{"convergence": convergence, "evidence_exhausted": true, "llm_reflection": lastReflection},
+					Reason: reason,
+				})
+				stopReason = stopReasonLLMReflectionComplete
 				break
 			}
 			stopReason = StopReasonNoEffectiveTool

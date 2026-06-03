@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -177,9 +178,16 @@ func main() {
 	if cfg.Redis.Enabled {
 		redisClient = db.NewRedis(cfg.Redis)
 		if err := redisClient.Ping(context.Background()).Err(); err != nil {
-			log.Fatal("connect redis failed", zap.Error(err))
+			if strings.EqualFold(cfg.Queue.Type, "redis_stream") {
+				log.Fatal("connect redis failed", zap.Error(err))
+			}
+			log.Warn("connect redis failed; continuing with local diagnosis lock and in-process workers", zap.Error(err))
+			_ = redisClient.Close()
+			redisClient = nil
 		}
-		defer func() { _ = redisClient.Close() }()
+		if redisClient != nil {
+			defer func() { _ = redisClient.Close() }()
+		}
 	}
 	prometheusClient := prometheus.NewClient(cfg.Prometheus)
 	operationsSvc := service.NewOperationsService(service.OperationsOptions{

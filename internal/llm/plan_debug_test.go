@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -15,10 +16,25 @@ import (
 
 // TestDebugGenerateAgentPlanRaw gets the raw LLM response to inspect format issues
 func TestDebugGenerateAgentPlanRaw(t *testing.T) {
+	if os.Getenv("KUBESAGE_LLM_PLAN_DEBUG") != "1" {
+		t.Skip("set KUBESAGE_LLM_PLAN_DEBUG=1 and KUBESAGE_LLM_API_KEY to run this live LLM debug test")
+	}
+	apiKey := os.Getenv("KUBESAGE_LLM_API_KEY")
+	if apiKey == "" {
+		t.Skip("KUBESAGE_LLM_API_KEY is required for live LLM debug test")
+	}
+	baseURL := os.Getenv("KUBESAGE_LLM_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.deepseek.com"
+	}
+	model := os.Getenv("KUBESAGE_LLM_MODEL")
+	if model == "" {
+		model = "deepseek-chat"
+	}
 	cfg := config.LLMConfig{
-		BaseURL: "https://api.deepseek.com",
-		APIKey:  "sk-1e70a404983b4b96b6d70ce8852e7580",
-		Model:   "deepseek-chat",
+		BaseURL: baseURL,
+		APIKey:  apiKey,
+		Model:   model,
 	}
 	c := NewOpenAICompatibleClient(cfg).(*OpenAICompatibleClient)
 

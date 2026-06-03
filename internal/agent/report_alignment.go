@@ -65,7 +65,7 @@ func selectPrimaryHypothesis(hypotheses []model.Hypothesis) *model.Hypothesis {
 		if h.Status == model.HypothesisStatusRejected {
 			continue
 		}
-		if best == nil || h.ConfidenceScore > best.ConfidenceScore {
+		if best == nil || betterPrimaryHypothesis(*h, *best) {
 			best = h
 		}
 	}

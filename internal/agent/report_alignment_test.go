@@ -82,3 +82,33 @@ func TestAlignReportWithHypothesesLeavesEquivalentFaultAlone(t *testing.T) {
 		t.Fatalf("unexpected fault type: %s", report.FaultType)
 	}
 }
+
+func TestPrimaryHypothesisPrefersSpecificConfirmedRootCause(t *testing.T) {
+	hypotheses := []model.Hypothesis{
+		{
+			HypothesisType:  "scheduling_constraint",
+			Summary:         "Pod cannot be scheduled.",
+			ConfidenceScore: 0.79,
+			Status:          model.HypothesisStatusConfirmed,
+		},
+		{
+			HypothesisType:  "pvc_unbound",
+			Summary:         "PVC is not bound.",
+			ConfidenceScore: 0.79,
+			Status:          model.HypothesisStatusConfirmed,
+		},
+	}
+
+	primary := selectPrimaryHypothesis(hypotheses)
+	if primary == nil || primary.HypothesisType != "pvc_unbound" {
+		t.Fatalf("expected pvc_unbound primary, got %#v", primary)
+	}
+
+	snapshotPrimary, contributing := rootCauseFactors(nil, hypotheses, nil)
+	if snapshotPrimary == nil || snapshotPrimary.HypothesisType != "pvc_unbound" {
+		t.Fatalf("expected pvc_unbound snapshot primary, got %#v", snapshotPrimary)
+	}
+	if len(contributing) == 0 || contributing[0].HypothesisType != "scheduling_constraint" {
+		t.Fatalf("expected scheduling_constraint as contributing factor, got %#v", contributing)
+	}
+}
