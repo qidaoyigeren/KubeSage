@@ -76,6 +76,101 @@ func TestScoreReportDetectsHallucinationAndDangerousSuggestions(t *testing.T) {
 	}
 }
 
+func TestScoreReportMatchesStructuredFields(t *testing.T) {
+	report := &diagnostic.Report{
+		FaultType:        "OOMKilled",
+		RootCauseSummary: "OOMKilled exitCode 137 from memory limit pressure",
+		ConfidenceScore:  0.9,
+		Evidences: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_pod_status",
+			Title:      "terminated container state",
+			Content:    "reason=OOMKilled exitCode=137 memoryLimit=128Mi",
+			Severity:   "critical",
+		}},
+		RemediationActions: []diagnostic.RemediationAction{{
+			ActionType:     "resource_review",
+			Description:    "review previous logs and raise the memory limit after validation",
+			CommandPreview: "kubectl describe pod api-0",
+			RiskLevel:      "low",
+		}},
+	}
+	result := ScoreReport(EvalCase{ID: "oom", GoldenAnswer: GoldenAnswer{
+		ExpectedFaultType:      "OOMKilled",
+		RootCause:              "OOMKilled exitCode 137 memory limit",
+		KeyEvidences:           []string{"reason=OOMKilled", "memoryLimit=128Mi"},
+		AcceptableRemediations: []string{"memory limit", "previous logs"},
+		ConfidenceMin:          0.8,
+	}}, report, 5, nil)
+	if !result.Passed {
+		t.Fatalf("expected structured report to pass: %#v", result)
+	}
+}
+
+func TestScoreReportRejectsCrossFieldTokenMatches(t *testing.T) {
+	t.Run("root cause must be in root-cause fields", func(t *testing.T) {
+		report := &diagnostic.Report{
+			FaultType:        "CrashLoopBackOff",
+			RootCauseSummary: "CrashLoopBackOff restart loop without a confirmed config cause",
+			ConfidenceScore:  0.9,
+			Evidences: []diagnostic.EvidenceRecord{{
+				SourceType: "k8s_log",
+				Title:      "previous logs",
+				Content:    "restartCount=5 exitCode=1 missing config",
+			}},
+		}
+		result := ScoreReport(EvalCase{ID: "crashloop", GoldenAnswer: GoldenAnswer{
+			ExpectedFaultType: "CrashLoopBackOff",
+			RootCause:         "CrashLoopBackOff missing config restartCount exitCode",
+			KeyEvidences:      []string{"restartCount=5"},
+			ConfidenceMin:     0.8,
+		}}, report, 5, nil)
+		if result.RootCauseMatched {
+			t.Fatal("root cause should not match only because tokens appeared in evidence")
+		}
+	})
+
+	t.Run("key evidence must be in evidence records", func(t *testing.T) {
+		report := &diagnostic.Report{
+			FaultType:        "CrashLoopBackOff",
+			RootCauseSummary: "CrashLoopBackOff missing config restartCount exitCode",
+			ConfidenceScore:  0.9,
+			SuggestedActions: []string{"inspect restartCount=5 before changing ConfigMaps"},
+		}
+		result := ScoreReport(EvalCase{ID: "crashloop", GoldenAnswer: GoldenAnswer{
+			ExpectedFaultType: "CrashLoopBackOff",
+			RootCause:         "CrashLoopBackOff missing config restartCount exitCode",
+			KeyEvidences:      []string{"restartCount=5"},
+			ConfidenceMin:     0.8,
+		}}, report, 5, nil)
+		if result.KeyEvidenceMatched || len(result.MissingEvidence) != 1 {
+			t.Fatalf("expected missing structured evidence, got %#v", result.MissingEvidence)
+		}
+	})
+
+	t.Run("remediation must be in remediation fields", func(t *testing.T) {
+		report := &diagnostic.Report{
+			FaultType:        "CrashLoopBackOff",
+			RootCauseSummary: "CrashLoopBackOff missing config restartCount exitCode",
+			ConfidenceScore:  0.9,
+			Evidences: []diagnostic.EvidenceRecord{{
+				SourceType: "k8s_log",
+				Title:      "previous logs",
+				Content:    "restartCount=5 exitCode=1 ConfigMaps missing key",
+			}},
+		}
+		result := ScoreReport(EvalCase{ID: "crashloop", GoldenAnswer: GoldenAnswer{
+			ExpectedFaultType:      "CrashLoopBackOff",
+			RootCause:              "CrashLoopBackOff missing config restartCount exitCode",
+			KeyEvidences:           []string{"restartCount=5"},
+			AcceptableRemediations: []string{"ConfigMaps"},
+			ConfidenceMin:          0.8,
+		}}, report, 5, nil)
+		if result.RemediationMatched || len(result.MissingRemediations) != 1 {
+			t.Fatalf("expected missing structured remediation, got %#v", result.MissingRemediations)
+		}
+	})
+}
+
 func TestRunSuiteLoadsFixtureAndScoresCase(t *testing.T) {
 	dir := t.TempDir()
 	fixturePath := filepath.Join(dir, "oom.json")

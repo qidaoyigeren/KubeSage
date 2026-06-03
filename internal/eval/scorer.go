@@ -47,11 +47,14 @@ func ScoreReport(c EvalCase, report *diagnostic.Report, durationMS int64, runErr
 	result.Confidence = report.ConfidenceScore
 
 	reportText := normalizeText(reportSearchText(report))
+	rootCauseText := normalizeText(strings.Join(rootCauseFields(report), " "))
+	evidenceFields := normalizedFields(evidenceFields(report))
+	remediationFields := normalizedFields(remediationFields(report))
 	result.FaultTypeMatched = faultTypeMatches(report.FaultType, c.GoldenAnswer.ExpectedFaultType)
-	result.RootCauseMatched = textMatches(c.GoldenAnswer.RootCause, reportText)
-	result.MissingEvidence = missingPhrases(c.GoldenAnswer.KeyEvidences, reportText)
+	result.RootCauseMatched = textMatches(c.GoldenAnswer.RootCause, rootCauseText)
+	result.MissingEvidence = missingPhrasesInFields(c.GoldenAnswer.KeyEvidences, evidenceFields)
 	result.KeyEvidenceMatched = len(result.MissingEvidence) == 0
-	result.MissingRemediations = missingPhrases(c.GoldenAnswer.AcceptableRemediations, reportText)
+	result.MissingRemediations = missingPhrasesInFields(c.GoldenAnswer.AcceptableRemediations, remediationFields)
 	result.RemediationMatched = len(result.MissingRemediations) == 0
 	result.UnexpectedTerms = matchedPhrases(c.GoldenAnswer.ShouldNotContain, reportText)
 	result.HallucinationDetected = len(result.UnexpectedTerms) > 0
@@ -160,20 +163,32 @@ func textMatches(expected, normalizedReportText string) bool {
 		}
 	}
 	ratio := float64(matches) / float64(len(expectedTokens))
-	return ratio >= 0.45 || matches >= 3
+	if len(expectedTokens) <= 2 {
+		return matches == len(expectedTokens)
+	}
+	return ratio >= 0.60 && matches >= 2
 }
 
-func missingPhrases(phrases []string, normalizedReportText string) []string {
+func missingPhrasesInFields(phrases []string, normalizedFields []string) []string {
 	missing := []string{}
 	for _, phrase := range phrases {
 		if strings.TrimSpace(phrase) == "" {
 			continue
 		}
-		if !textMatches(phrase, normalizedReportText) {
+		if !matchesAnyField(phrase, normalizedFields) {
 			missing = append(missing, phrase)
 		}
 	}
 	return missing
+}
+
+func matchesAnyField(phrase string, normalizedFields []string) bool {
+	for _, field := range normalizedFields {
+		if textMatches(phrase, field) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchedPhrases(phrases []string, normalizedReportText string) []string {
@@ -230,6 +245,64 @@ func reportSearchText(report *diagnostic.Report) string {
 		parts = append(parts, risk)
 	}
 	return strings.Join(parts, " ")
+}
+
+func rootCauseFields(report *diagnostic.Report) []string {
+	if report == nil {
+		return nil
+	}
+	parts := []string{report.RootCauseSummary}
+	if report.PrimaryRootCause != nil {
+		parts = append(parts, report.PrimaryRootCause.FaultType, report.PrimaryRootCause.Summary)
+	}
+	for _, factor := range report.ContributingFactors {
+		parts = append(parts, factor.FaultType, factor.Summary)
+	}
+	return parts
+}
+
+func evidenceFields(report *diagnostic.Report) []string {
+	if report == nil {
+		return nil
+	}
+	fields := make([]string, 0, len(report.Evidences))
+	for _, evidence := range report.Evidences {
+		fields = append(fields, strings.Join([]string{
+			evidence.SourceType,
+			evidence.Title,
+			evidence.Content,
+			evidence.Severity,
+		}, " "))
+	}
+	return fields
+}
+
+func remediationFields(report *diagnostic.Report) []string {
+	if report == nil {
+		return nil
+	}
+	fields := append([]string(nil), report.SuggestedActions...)
+	for _, action := range report.RemediationActions {
+		fields = append(fields, strings.Join([]string{
+			action.ActionType,
+			action.Description,
+			action.CommandPreview,
+			action.RiskLevel,
+		}, " "))
+	}
+	return fields
+}
+
+func normalizedFields(fields []string) []string {
+	normalized := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = normalizeText(field)
+		if field == "" {
+			continue
+		}
+		normalized = append(normalized, field)
+	}
+	return normalized
 }
 
 func normalizeFaultType(s string) string {
