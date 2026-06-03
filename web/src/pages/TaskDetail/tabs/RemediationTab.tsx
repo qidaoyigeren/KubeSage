@@ -22,6 +22,7 @@ const execStatusConfig: Record<RemediationStatus, { color: string; label: string
   dry_run_success: { color: 'green', label: 'Dry Run 成功', icon: <CheckCircleOutlined /> },
   dry_run_failed: { color: 'red', label: 'Dry Run 失败', icon: <CloseCircleOutlined /> },
   pending_approval: { color: 'gold', label: '待审批', icon: <WarningOutlined /> },
+  manual_acknowledged: { color: 'cyan', label: '人工已确认', icon: <CheckCircleOutlined /> },
 };
 
 interface RemediationTabProps {
@@ -153,7 +154,7 @@ const RemediationTab = ({ actions, executions }: RemediationTabProps) => {
                       items={[
                         {
                           key: 'dryrun',
-                          label: 'Dry Run 输出',
+                          label: e.status === 'manual_acknowledged' ? '处理说明' : 'Dry Run 输出',
                           children: <JsonViewer data={e.dry_run_output} maxHeight={200} />,
                         },
                       ]}

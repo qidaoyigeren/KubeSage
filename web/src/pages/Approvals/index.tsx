@@ -36,7 +36,7 @@ const ApprovalsPage = () => {
   const approveMutation = useMutation({
     mutationFn: (id: number) => approveRemediation(id),
     onSuccess: () => {
-      message.success('修复动作已审批通过');
+      message.success('已记录人工确认');
       queryClient.invalidateQueries({ queryKey: ['pending-approvals'] });
     },
     onError: (err: Error) => message.error(err.message),
@@ -107,11 +107,11 @@ const ApprovalsPage = () => {
       render: (_: unknown, record: RemediationExecution) => (
         <Space>
           <Popconfirm
-            title="确认通过该修复动作？"
+            title="确认已读并转人工处理？"
             onConfirm={() => approveMutation.mutate(record.id)}
           >
             <Button type="primary" size="small" icon={<CheckCircleOutlined />}>
-              通过
+              确认已读
             </Button>
           </Popconfirm>
           <Popconfirm
@@ -132,7 +132,7 @@ const ApprovalsPage = () => {
       title={
         <Space>
           <SafetyOutlined />
-          <span>待审批修复动作</span>
+          <span>待人工确认修复动作</span>
         </Space>
       }
     >

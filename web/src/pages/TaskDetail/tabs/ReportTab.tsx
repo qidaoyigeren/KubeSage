@@ -117,6 +117,65 @@ const ReportTab = ({ report }: { report: DiagnosisReport }) => {
         )}
       </Card>
 
+      {snapshot?.primary_root_cause && (
+        <Card className="report-section-card" title="主根因" bordered={false}>
+          <Descriptions column={2} size="small">
+            <Descriptions.Item label="假设类型">
+              <Text strong>{snapshot.primary_root_cause.hypothesis_type}</Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="置信度">
+              <ConfidenceBar score={snapshot.primary_root_cause.confidence_score} />
+            </Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <Tag color={hypothesisStatusColor(snapshot.primary_root_cause.status)} style={{ borderRadius: 4 }}>
+                {snapshot.primary_root_cause.status}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="证据">
+              <Space size={[4, 4]} wrap>
+                {(snapshot.primary_root_cause.evidence_refs || []).map((ref) => (
+                  <Tag key={ref} color="red" style={{ borderRadius: 4 }}>{ref}</Tag>
+                ))}
+              </Space>
+            </Descriptions.Item>
+          </Descriptions>
+          {snapshot.primary_root_cause.summary && (
+            <Paragraph style={{ margin: '12px 0 0', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
+              {snapshot.primary_root_cause.summary}
+            </Paragraph>
+          )}
+        </Card>
+      )}
+
+      {snapshot?.contributing_factors && snapshot.contributing_factors.length > 0 && (
+        <Card className="report-section-card" title="促成因素" bordered={false}>
+          <List
+            size="small"
+            dataSource={snapshot.contributing_factors}
+            renderItem={(item) => (
+              <List.Item>
+                <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                  <Space size="small" wrap>
+                    <Tag color={hypothesisStatusColor(item.status)} style={{ borderRadius: 4 }}>{item.status}</Tag>
+                    <Text strong>{item.hypothesis_type}</Text>
+                    <Progress percent={Math.round((item.confidence_score || 0) * 100)} size="small" style={{ width: 140 }} />
+                  </Space>
+                  {item.summary && <Text>{item.summary}</Text>}
+                  <Space size={[4, 4]} wrap>
+                    {(item.evidence_refs || []).map((ref) => (
+                      <Tag key={ref} color="geekblue" style={{ borderRadius: 4 }}>{ref}</Tag>
+                    ))}
+                    {(item.missing_evidence || []).map((missing) => (
+                      <Tag key={missing} color="orange" style={{ borderRadius: 4 }}>{missing}</Tag>
+                    ))}
+                  </Space>
+                </Space>
+              </List.Item>
+            )}
+          />
+        </Card>
+      )}
+
       {report.impact_analysis && (
         <Card className="report-section-card" title={<SectionTitle icon={<SafetyOutlined />} text="影响分析" />} bordered={false}>
           <Paragraph style={{ margin: 0, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{report.impact_analysis}</Paragraph>
@@ -308,6 +367,19 @@ const SectionTitle = ({ icon, text }: { icon: ReactNode; text: string }) => (
     <span>{text}</span>
   </Space>
 );
+
+const hypothesisStatusColor = (status: string) => {
+  switch (status) {
+    case 'confirmed':
+      return 'green';
+    case 'active':
+      return 'blue';
+    case 'rejected':
+      return 'default';
+    default:
+      return 'purple';
+  }
+};
 
 const safeJSON = (value: string) => {
   try {
