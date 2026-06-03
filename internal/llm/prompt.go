@@ -122,14 +122,16 @@ func RuleResultFromReport(report *diagnostic.Report) RuleBasedResult {
 		return RuleBasedResult{}
 	}
 	return RuleBasedResult{
-		FaultType:          report.FaultType,
-		RootCauseSummary:   report.RootCauseSummary,
-		ConfidenceScore:    report.ConfidenceScore,
-		ImpactAnalysis:     report.ImpactAnalysis,
-		SuggestedActions:   report.SuggestedActions,
-		RemediationActions: report.RemediationActions,
-		RiskLevel:          report.RiskLevel,
-		NeedHumanConfirm:   report.NeedHumanConfirm,
+		FaultType:           report.FaultType,
+		RootCauseSummary:    report.RootCauseSummary,
+		ConfidenceScore:     report.ConfidenceScore,
+		ImpactAnalysis:      report.ImpactAnalysis,
+		SuggestedActions:    report.SuggestedActions,
+		RemediationActions:  report.RemediationActions,
+		RiskLevel:           report.RiskLevel,
+		NeedHumanConfirm:    report.NeedHumanConfirm,
+		PrimaryRootCause:    report.PrimaryRootCause,
+		ContributingFactors: append([]diagnostic.RootCauseFactor(nil), report.ContributingFactors...),
 	}
 }
 

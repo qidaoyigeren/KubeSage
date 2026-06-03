@@ -77,17 +77,18 @@ func (v *EvidenceValidator) Validate(summary *GroundedSummary) GroundingValidati
 	ungrounded := 0
 	scores := []float64{}
 
-	rootScore, rootUngrounded, rootInvalid := v.scoreClaim(summary.RootCauseConfirmation.Summary, summary.RootCauseConfirmation.EvidenceRefs)
+	rootScore, rootUngrounded, rootInvalid, rootWarnings := v.scoreClaim(summary.RootCauseConfirmation.Summary, summary.RootCauseConfirmation.EvidenceRefs)
 	if rootUngrounded {
 		ungrounded++
 		cleaned.QualityWarnings = append(cleaned.QualityWarnings, "root cause confirmation is weakly grounded")
 	}
+	cleaned.QualityWarnings = append(cleaned.QualityWarnings, rootWarnings...)
 	invalidRefs = append(invalidRefs, rootInvalid...)
 	scores = append(scores, rootScore)
 	cleaned.RootCauseConfirmation.EvidenceRefs = validRefs(summary.RootCauseConfirmation.EvidenceRefs, v.evidence)
 
 	for _, claim := range summary.EvidenceChain {
-		score, isUngrounded, invalid := v.scoreClaim(claim.Claim, claim.EvidenceRefs)
+		score, isUngrounded, invalid, warnings := v.scoreClaim(claim.Claim, claim.EvidenceRefs)
 		invalidRefs = append(invalidRefs, invalid...)
 		refs := validRefs(claim.EvidenceRefs, v.evidence)
 		if len(refs) == 0 {
@@ -101,6 +102,7 @@ func (v *EvidenceValidator) Validate(summary *GroundedSummary) GroundingValidati
 			ungrounded++
 			cleaned.QualityWarnings = append(cleaned.QualityWarnings, fmt.Sprintf("claim is weakly grounded: %s", claim.Claim))
 		}
+		cleaned.QualityWarnings = append(cleaned.QualityWarnings, warnings...)
 		cleaned.EvidenceChain = append(cleaned.EvidenceChain, claim)
 		scores = append(scores, score)
 	}
@@ -132,10 +134,10 @@ func (v *EvidenceValidator) Validate(summary *GroundedSummary) GroundingValidati
 	}
 }
 
-func (v *EvidenceValidator) scoreClaim(claim string, refs []string) (float64, bool, []string) {
+func (v *EvidenceValidator) scoreClaim(claim string, refs []string) (float64, bool, []string, []string) {
 	refs = trimStrings(refs)
 	if len(refs) == 0 {
-		return 0, true, nil
+		return 0, true, nil, nil
 	}
 	valid := make([]GroundingEvidence, 0, len(refs))
 	invalid := []string{}
@@ -148,7 +150,7 @@ func (v *EvidenceValidator) scoreClaim(claim string, refs []string) (float64, bo
 		valid = append(valid, item)
 	}
 	if len(valid) == 0 {
-		return 0, true, invalid
+		return 0, true, invalid, nil
 	}
 	evidenceText := strings.Builder{}
 	for _, item := range valid {
@@ -160,7 +162,17 @@ func (v *EvidenceValidator) scoreClaim(claim string, refs []string) (float64, bo
 		evidenceText.WriteString(" ")
 	}
 	score := jaccard(claim, evidenceText.String())
-	return score, score < v.options.SemanticMinOverlap, invalid
+	structured := checkStructuredClaim(claim, valid)
+	warnings := structuredWarnings(structured)
+	if structured.Checked > 0 {
+		if len(structured.Mismatches) > 0 {
+			return math.Min(score, 0.1), true, invalid, warnings
+		}
+		if structured.Checked >= 2 && structured.DiagnosticFacts > 0 && score < 0.85 {
+			score = 0.85
+		}
+	}
+	return score, score < v.options.SemanticMinOverlap, invalid, warnings
 }
 
 func normalizeGroundingOptions(options GroundingOptions) GroundingOptions {
@@ -257,6 +269,198 @@ func tokenSet(text string) map[string]struct{} {
 	}
 	return result
 }
+
+type structuredFacts struct {
+	FaultTypes    map[string]struct{}
+	PodNames      map[string]struct{}
+	Containers    map[string]struct{}
+	ExitCodes     map[string]struct{}
+	EventReasons  map[string]struct{}
+	MetricWindows map[string]struct{}
+}
+
+type structuredCheck struct {
+	Checked         int
+	Matched         int
+	DiagnosticFacts int
+	Mismatches      []string
+}
+
+func checkStructuredClaim(claim string, evidences []GroundingEvidence) structuredCheck {
+	claimFacts := extractStructuredFacts(claim)
+	if claimFacts.empty() {
+		return structuredCheck{}
+	}
+	evidenceFacts := newStructuredFacts()
+	for _, evidence := range evidences {
+		text := strings.Join([]string{evidence.SourceType, evidence.Title, evidence.Content}, " ")
+		evidenceFacts.merge(extractStructuredFacts(text))
+	}
+	check := structuredCheck{}
+	checkFactSet("fault_type", claimFacts.FaultTypes, evidenceFacts.FaultTypes, &check)
+	checkFactSet("pod", claimFacts.PodNames, evidenceFacts.PodNames, &check)
+	checkFactSet("container", claimFacts.Containers, evidenceFacts.Containers, &check)
+	checkFactSet("exit_code", claimFacts.ExitCodes, evidenceFacts.ExitCodes, &check)
+	checkFactSet("event_reason", claimFacts.EventReasons, evidenceFacts.EventReasons, &check)
+	checkFactSet("metric_window", claimFacts.MetricWindows, evidenceFacts.MetricWindows, &check)
+	check.DiagnosticFacts = len(claimFacts.FaultTypes) + len(claimFacts.ExitCodes) + len(claimFacts.EventReasons) + len(claimFacts.MetricWindows)
+	return check
+}
+
+func structuredWarnings(check structuredCheck) []string {
+	if len(check.Mismatches) == 0 {
+		return nil
+	}
+	warnings := make([]string, 0, len(check.Mismatches))
+	for _, mismatch := range check.Mismatches {
+		warnings = append(warnings, "structured grounding mismatch: "+mismatch)
+	}
+	return warnings
+}
+
+func checkFactSet(label string, claim, evidence map[string]struct{}, check *structuredCheck) {
+	for value := range claim {
+		check.Checked++
+		if _, ok := evidence[value]; ok {
+			check.Matched++
+			continue
+		}
+		check.Mismatches = append(check.Mismatches, fmt.Sprintf("%s=%s", label, value))
+	}
+}
+
+func extractStructuredFacts(text string) structuredFacts {
+	facts := newStructuredFacts()
+	lower := strings.ToLower(text)
+	for fault, patterns := range faultTypePatterns {
+		for _, pattern := range patterns {
+			if strings.Contains(lower, pattern) {
+				facts.FaultTypes[fault] = struct{}{}
+				break
+			}
+		}
+	}
+	addRegexFacts(text, podPatterns, facts.PodNames, true)
+	addRegexFacts(text, containerPatterns, facts.Containers, false)
+	addRegexFacts(text, exitCodePatterns, facts.ExitCodes, false)
+	for _, reason := range knownEventReasons {
+		if strings.Contains(lower, strings.ToLower(reason)) {
+			facts.EventReasons[strings.ToLower(reason)] = struct{}{}
+		}
+	}
+	addRegexFacts(text, eventReasonPatterns, facts.EventReasons, false)
+	extractMetricWindows(text, facts.MetricWindows)
+	return facts
+}
+
+func newStructuredFacts() structuredFacts {
+	return structuredFacts{
+		FaultTypes:    map[string]struct{}{},
+		PodNames:      map[string]struct{}{},
+		Containers:    map[string]struct{}{},
+		ExitCodes:     map[string]struct{}{},
+		EventReasons:  map[string]struct{}{},
+		MetricWindows: map[string]struct{}{},
+	}
+}
+
+func (f structuredFacts) empty() bool {
+	return len(f.FaultTypes) == 0 && len(f.PodNames) == 0 && len(f.Containers) == 0 &&
+		len(f.ExitCodes) == 0 && len(f.EventReasons) == 0 && len(f.MetricWindows) == 0
+}
+
+func (f structuredFacts) merge(other structuredFacts) {
+	mergeFactSet(f.FaultTypes, other.FaultTypes)
+	mergeFactSet(f.PodNames, other.PodNames)
+	mergeFactSet(f.Containers, other.Containers)
+	mergeFactSet(f.ExitCodes, other.ExitCodes)
+	mergeFactSet(f.EventReasons, other.EventReasons)
+	mergeFactSet(f.MetricWindows, other.MetricWindows)
+}
+
+func mergeFactSet(dst, src map[string]struct{}) {
+	for value := range src {
+		dst[value] = struct{}{}
+	}
+}
+
+func addRegexFacts(text string, patterns []*regexp.Regexp, facts map[string]struct{}, requirePodShape bool) {
+	for _, pattern := range patterns {
+		for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+			if len(match) < 2 {
+				continue
+			}
+			value := strings.ToLower(strings.Trim(match[1], " \t\r\n.,;:()[]{}'\""))
+			if value == "" {
+				continue
+			}
+			if requirePodShape && !looksLikePodName(value) {
+				continue
+			}
+			facts[value] = struct{}{}
+		}
+	}
+}
+
+func looksLikePodName(value string) bool {
+	return strings.ContainsAny(value, "-.0123456789")
+}
+
+func extractMetricWindows(text string, facts map[string]struct{}) {
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "window") && !strings.Contains(lower, "start=") &&
+		!strings.Contains(lower, "end=") && !strings.Contains(lower, "metric") &&
+		!strings.Contains(lower, "prometheus") && !strings.Contains(lower, "loki") {
+		return
+	}
+	times := rfc3339Pattern.FindAllString(text, -1)
+	if len(times) >= 2 {
+		facts[normalizeTimestamp(times[0])+".."+normalizeTimestamp(times[1])] = struct{}{}
+	}
+	for _, match := range relativeWindowPattern.FindAllStringSubmatch(lower, -1) {
+		if len(match) >= 3 {
+			facts[match[1]+match[2]] = struct{}{}
+		}
+	}
+}
+
+func normalizeTimestamp(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+var faultTypePatterns = map[string][]string{
+	"oomkilled":         {"oomkilled", "oom killed", "exit code 137", "exitcode=137", "退出码137", "内存不足", "内存溢出"},
+	"crashloopbackoff":  {"crashloopbackoff", "crash loop backoff", "back-off restarting", "backoff restarting"},
+	"probe_failed":      {"probefailed", "probe failed", "readiness probe", "liveness probe", "startup probe", "unhealthy", "探针失败"},
+	"image_pull_failed": {"imagepullbackoff", "errimagepull", "image pull", "pull image", "镜像拉取"},
+	"pending":           {"failedscheduling", "failed scheduling", "pod pending", "调度失败"},
+	"node_not_ready":    {"nodenotready", "node not ready", "notready node", "节点notready", "节点不可用"},
+}
+
+var (
+	podPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bpod(?:\s+name)?\s*[=:]\s*([a-z0-9][a-z0-9._-]*)`),
+		regexp.MustCompile(`(?i)\bpod\s+([a-z0-9][a-z0-9._-]*)`),
+		regexp.MustCompile(`(?i)\b([a-z0-9][a-z0-9._-]*)\s+pod\b`),
+	}
+	containerPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bcontainer(?:\s+name)?\s*[=:]\s*([a-z0-9][a-z0-9._-]*)`),
+		regexp.MustCompile(`(?i)\bcontainer\s+([a-z0-9][a-z0-9._-]*)`),
+		regexp.MustCompile(`容器\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)`),
+	}
+	exitCodePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bexit\s*code\s*[=:]?\s*(\d{1,3})`),
+		regexp.MustCompile(`(?i)\bexitcode\s*[=:]?\s*(\d{1,3})`),
+		regexp.MustCompile(`退出码\s*[=:]?\s*(\d{1,3})`),
+	}
+	eventReasonPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\breason\s*[=:]\s*([a-z][a-z0-9_-]*)`),
+		regexp.MustCompile(`(?i)\bevent\s+reason\s+([a-z][a-z0-9_-]*)`),
+	}
+	rfc3339Pattern        = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})`)
+	relativeWindowPattern = regexp.MustCompile(`(?i)(?:last|past)\s+(\d+)\s*(m|min|minute|minutes|h|hour|hours)`)
+	knownEventReasons     = []string{"Unhealthy", "BackOff", "FailedScheduling", "FailedMount", "FailedPull", "ErrImagePull", "ImagePullBackOff", "Killing", "Evicted", "NodeNotReady"}
+)
 
 var stopWords = map[string]bool{
 	"the": true, "and": true, "for": true, "with": true, "from": true, "that": true, "this": true,

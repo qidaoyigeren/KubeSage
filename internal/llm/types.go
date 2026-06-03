@@ -88,14 +88,16 @@ type GroundedObservation struct {
 // RuleBasedResult preserves the deterministic analyzer output before LLM
 // enhancement.
 type RuleBasedResult struct {
-	FaultType          string                         `json:"fault_type"`
-	RootCauseSummary   string                         `json:"root_cause_summary"`
-	ConfidenceScore    float64                        `json:"confidence_score"`
-	ImpactAnalysis     string                         `json:"impact_analysis"`
-	SuggestedActions   []string                       `json:"suggested_actions"`
-	RemediationActions []diagnostic.RemediationAction `json:"remediation_actions"`
-	RiskLevel          string                         `json:"risk_level"`
-	NeedHumanConfirm   bool                           `json:"need_human_confirm"`
+	FaultType           string                         `json:"fault_type"`
+	RootCauseSummary    string                         `json:"root_cause_summary"`
+	ConfidenceScore     float64                        `json:"confidence_score"`
+	ImpactAnalysis      string                         `json:"impact_analysis"`
+	SuggestedActions    []string                       `json:"suggested_actions"`
+	RemediationActions  []diagnostic.RemediationAction `json:"remediation_actions"`
+	RiskLevel           string                         `json:"risk_level"`
+	NeedHumanConfirm    bool                           `json:"need_human_confirm"`
+	PrimaryRootCause    *diagnostic.RootCauseFactor    `json:"primary_root_cause,omitempty"`
+	ContributingFactors []diagnostic.RootCauseFactor   `json:"contributing_factors,omitempty"`
 }
 
 func (s GroundedSummary) ToEnhancedSummary(rule RuleBasedResult) *EnhancedSummary {
