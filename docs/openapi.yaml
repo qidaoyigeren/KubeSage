@@ -148,18 +148,18 @@ paths:
           description: Newly scheduled diagnosis task
   /remediation/pending:
     get:
-      summary: List remediation executions waiting for approval
+      summary: List remediation executions waiting for manual acknowledgement
       responses:
         '200':
           description: Pending remediation executions
   /remediation/{id}/approve:
     post:
-      summary: Approve a pending remediation execution
+      summary: Acknowledge a pending remediation execution for manual handling
       parameters:
         - $ref: '#/components/parameters/ID'
       responses:
         '200':
-          description: Approval accepted
+          description: Manual acknowledgement recorded
   /remediation/{id}/reject:
     post:
       summary: Reject a pending remediation execution

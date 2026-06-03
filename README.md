@@ -234,8 +234,8 @@ Core API groups:
 | `GET /api/v1/audit-logs` | Audit log query |
 | `GET /api/v1/dead-letters` | Queue dead-letter query |
 | `POST /api/v1/dead-letters/:id/retry` | Retry failed diagnosis |
-| `GET /api/v1/remediation/pending` | Pending remediation approvals |
-| `POST /api/v1/remediation/:id/approve` | Approve remediation proposal |
+| `GET /api/v1/remediation/pending` | Remediation proposals waiting for manual acknowledgement |
+| `POST /api/v1/remediation/:id/approve` | Acknowledge proposal for manual handling; no automated dry-run/execution |
 | `POST /api/v1/remediation/:id/reject` | Reject remediation proposal |
 
 OpenAPI spec: [docs/openapi.yaml](docs/openapi.yaml)
