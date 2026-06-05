@@ -26,6 +26,40 @@ services:
       timeout: 5s
       retries: 10
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles:
+      - local-observability
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  loki:
+    image: grafana/loki:3.3.2
+    profiles:
+      - local-observability
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "${LOKI_PORT:-13100}:3100"
+    volumes:
+      - loki_data:/loki
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+    volumes:
+      - ./configs/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+
   kubesage:
     build:
       context: .
@@ -40,6 +74,14 @@ services:
       KUBESAGE_REDIS_ENABLED: "true"
       KUBESAGE_REDIS_ADDRESS: redis:6379
       KUBESAGE_REDIS_PASSWORD: ${REDIS_PASSWORD:-kubesage}
+
+      KUBESAGE_PROMETHEUS_BASE_URL: ${KUBESAGE_PROMETHEUS_BASE_URL:-http://host.docker.internal:9091}
+      KUBESAGE_LOKI_ENABLED: "true"
+      KUBESAGE_LOKI_BASE_URL: ${KUBESAGE_LOKI_BASE_URL:-http://host.docker.internal:3102}
+      KUBESAGE_OTEL_ENABLED: "true"
+      KUBESAGE_OTEL_EXPORTER: otlphttp
+      KUBESAGE_OTEL_ENDPOINT: otel-collector:4318
+      KUBESAGE_OTEL_INSECURE: "true"
 
       KUBESAGE_RAG_VECTOR_STORE: pgvector
       KUBESAGE_RAG_PGVECTOR_DSN: postgres://${PGVECTOR_USER:-kubesage}:${PGVECTOR_PASSWORD:-kubesage}@pgvector:5432/${PGVECTOR_DATABASE:-kubesage_vector}?sslmode=disable
@@ -61,3 +103,5 @@ services:
 
 volumes:
   pgvector_data:
+  prometheus_data:
+  loki_data:
