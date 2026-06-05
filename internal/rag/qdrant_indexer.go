@@ -29,7 +29,7 @@ type embeddingClient struct {
 	http    *http.Client
 }
 
-func NewIndexer(cfg config.RAGConfig) *qdrantIndexer {
+func newQdrantIndexer(cfg config.RAGConfig) *qdrantIndexer {
 	if !strings.EqualFold(cfg.VectorStore, "qdrant") || strings.TrimSpace(cfg.Qdrant.BaseURL) == "" {
 		return nil
 	}

@@ -191,6 +191,7 @@ type RAGConfig struct {
 	VectorStore  string          `mapstructure:"vector_store"`
 	Embedding    EmbeddingConfig `mapstructure:"embedding"`
 	Qdrant       QdrantConfig    `mapstructure:"qdrant"`
+	PGVector     PGVectorConfig  `mapstructure:"pgvector"`
 	PreferVector bool            `mapstructure:"prefer_vector"`
 }
 
@@ -206,6 +207,11 @@ type QdrantConfig struct {
 	BaseURL    string `mapstructure:"base_url"`
 	APIKey     string `mapstructure:"api_key"`
 	Collection string `mapstructure:"collection"`
+}
+
+type PGVectorConfig struct {
+	DSN   string `mapstructure:"dsn"`
+	Table string `mapstructure:"table"`
 }
 
 type NotificationConfig struct {
@@ -266,6 +272,9 @@ func (c Config) SecurityWarnings() []string {
 	if strings.EqualFold(c.RAG.VectorStore, "qdrant") && strings.TrimSpace(c.RAG.Embedding.APIKey) == "" {
 		warnings = append(warnings, "rag.embedding.api_key is empty but Qdrant is configured. Set KUBESAGE_RAG_EMBEDDING_API_KEY env var.")
 	}
+	if strings.EqualFold(c.RAG.VectorStore, "pgvector") && strings.TrimSpace(c.RAG.Embedding.APIKey) == "" {
+		warnings = append(warnings, "rag.embedding.api_key is empty but pgvector is configured. Set KUBESAGE_RAG_EMBEDDING_API_KEY env var.")
+	}
 	return warnings
 }
 
@@ -318,8 +327,10 @@ func (c Config) Validate() error {
 			return fmt.Errorf("redis.mode must be single, sentinel, or cluster")
 		}
 	}
-	if c.RAG.VectorStore != "" && !strings.EqualFold(c.RAG.VectorStore, "qdrant") {
-		return fmt.Errorf("rag.vector_store must be empty or qdrant")
+	switch strings.ToLower(strings.TrimSpace(c.RAG.VectorStore)) {
+	case "", "qdrant", "pgvector":
+	default:
+		return fmt.Errorf("rag.vector_store must be empty, qdrant, or pgvector")
 	}
 	// Cross-field validation: when LLM is enabled, require base_url and api_key.
 	if c.LLM.Enabled {
@@ -341,13 +352,21 @@ func (c Config) Validate() error {
 	if c.LLM.Grounding.WarningRiskThreshold > c.LLM.Grounding.RejectRiskThreshold {
 		return fmt.Errorf("llm.grounding.warning_risk_threshold cannot exceed reject_risk_threshold")
 	}
-	// When RAG uses qdrant, require qdrant base_url and embedding api_key.
+	// When RAG uses qdrant, require qdrant base_url and embedding config.
 	if strings.EqualFold(c.RAG.VectorStore, "qdrant") {
 		if strings.TrimSpace(c.RAG.Qdrant.BaseURL) == "" {
 			return fmt.Errorf("rag.qdrant.base_url is required when rag.vector_store is qdrant")
 		}
-		if strings.TrimSpace(c.RAG.Embedding.APIKey) == "" {
-			return fmt.Errorf("rag.embedding.api_key is required when rag.vector_store is qdrant")
+		if err := c.validateVectorEmbedding(); err != nil {
+			return err
+		}
+	}
+	if strings.EqualFold(c.RAG.VectorStore, "pgvector") {
+		if strings.TrimSpace(c.RAG.PGVector.DSN) == "" {
+			return fmt.Errorf("rag.pgvector.dsn is required when rag.vector_store is pgvector")
+		}
+		if err := c.validateVectorEmbedding(); err != nil {
+			return err
 		}
 	}
 	// When Redis is enabled, require at least one address.
@@ -357,6 +376,19 @@ func (c Config) Validate() error {
 	// Validate retention days.
 	if c.Retention.TaskDays < 0 {
 		return fmt.Errorf("retention.task_days cannot be negative")
+	}
+	return nil
+}
+
+func (c Config) validateVectorEmbedding() error {
+	if strings.TrimSpace(c.RAG.Embedding.BaseURL) == "" {
+		return fmt.Errorf("rag.embedding.base_url is required when rag.vector_store is enabled")
+	}
+	if strings.TrimSpace(c.RAG.Embedding.APIKey) == "" {
+		return fmt.Errorf("rag.embedding.api_key is required when rag.vector_store is enabled")
+	}
+	if strings.TrimSpace(c.RAG.Embedding.Model) == "" {
+		return fmt.Errorf("rag.embedding.model is required when rag.vector_store is enabled")
 	}
 	return nil
 }
@@ -427,5 +459,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("rag.embedding.provider", "")
 	v.SetDefault("rag.embedding.model", "")
 	v.SetDefault("rag.qdrant.collection", "kubesage_runbooks")
+	v.SetDefault("rag.pgvector.table", "runbook_vectors")
 	v.SetDefault("log.level", "info")
 }

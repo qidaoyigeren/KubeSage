@@ -61,6 +61,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "kubesage.fullname" . }}
                   key: qdrant-api-key
+            - name: KUBESAGE_RAG_PGVECTOR_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kubesage.fullname" . }}
+                  key: rag-pgvector-dsn
             - name: KUBESAGE_NOTIFICATION_SLACK_WEBHOOK_URL
               valueFrom:
                 secretKeyRef:

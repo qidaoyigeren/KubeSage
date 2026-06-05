@@ -115,10 +115,14 @@ data:
         base_url: {{ .Values.config.rag.embedding.baseURL | quote }}
         api_key: ""
         model: {{ .Values.config.rag.embedding.model | quote }}
+        dimension: {{ .Values.config.rag.embedding.dimension }}
       qdrant:
         base_url: {{ .Values.config.rag.qdrant.baseURL | quote }}
         api_key: ""
         collection: {{ .Values.config.rag.qdrant.collection | quote }}
+      pgvector:
+        dsn: ""
+        table: {{ .Values.config.rag.pgvector.table | quote }}
     notification:
       slack_webhook_url: ""
       feishu_webhook_url: ""

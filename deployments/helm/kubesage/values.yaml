@@ -96,10 +96,14 @@ config:
       baseURL: ""
       apiKey: ""
       model: ""
+      dimension: 1536
     qdrant:
       baseURL: ""
       apiKey: ""
       collection: kubesage_runbooks
+    pgvector:
+      dsn: ""
+      table: runbook_vectors
   notification:
     slackWebhookURL: ""
     feishuWebhookURL: ""

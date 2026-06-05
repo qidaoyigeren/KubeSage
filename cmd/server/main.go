@@ -122,7 +122,7 @@ func main() {
 	var vectorRetriever rag.Retriever
 	if vectorIndexer != nil {
 		vectorRetriever = vectorIndexer
-		// Ensure Qdrant collection exists and index runbooks on startup.
+		// Ensure the configured vector store exists and index runbooks on startup.
 		go func() {
 			indexCtx, indexCancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer indexCancel()
