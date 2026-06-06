@@ -149,6 +149,98 @@ func TestHypothesisEngineDoesNotTreatFalseNodePressureAsSupport(t *testing.T) {
 	}
 }
 
+func TestHypothesisEngineDoesNotTreatAmbiguousWordsAsRootCauseEvidence(t *testing.T) {
+	engine := NewHypothesisEngine()
+	scores := engine.Update(1, nil, []diagnostic.EvidenceRecord{{
+		SourceType: "k8s_log",
+		Title:      "Normal startup",
+		Content:    "memory cache initialized; config loaded; oom_score_adj is 0",
+		Severity:   "info",
+		Timestamp:  time.Now(),
+	}})
+
+	for _, kind := range []string{"memory_limit_too_low", "application_memory_leak", "bad_config"} {
+		score := findScore(scores, kind)
+		if score == nil {
+			t.Fatalf("missing hypothesis %s", kind)
+		}
+		if len(score.SupportingRefs) != 0 || score.Status != model.HypothesisStatusRejected {
+			t.Fatalf("ambiguous words must not support %s: score=%.2f status=%s refs=%v", kind, score.Confidence, score.Status, score.SupportingRefs)
+		}
+	}
+}
+
+func TestHypothesisEngineDoesNotCountUnavailablePrometheusAsMemoryEvidence(t *testing.T) {
+	engine := NewHypothesisEngine()
+	scores := engine.Update(1, nil, []diagnostic.EvidenceRecord{
+		{
+			SourceType: "k8s_pod_status",
+			Title:      "OOM termination evidence",
+			Content:    "reason=OOMKilled exitCode=137",
+			Severity:   "critical",
+			Timestamp:  time.Now(),
+		},
+		{
+			SourceType: "prometheus",
+			Title:      "Prometheus unavailable",
+			Content:    "memory working set query skipped because base URL is not configured",
+			Severity:   "warning",
+			Timestamp:  time.Now(),
+		},
+	})
+
+	memory := findScore(scores, "memory_limit_too_low")
+	if memory == nil {
+		t.Fatal("missing memory hypothesis")
+	}
+	if memory.Status == model.HypothesisStatusConfirmed {
+		t.Fatalf("unavailable metrics must not confirm memory limit hypothesis: %.2f refs=%v", memory.Confidence, memory.SupportingRefs)
+	}
+	if !containsString(memory.MissingEvidence, "memory metrics") {
+		t.Fatalf("expected missing memory metrics, got %v", memory.MissingEvidence)
+	}
+}
+
+func TestLLMBlendCannotRaiseConfidenceOrInventEvidence(t *testing.T) {
+	evidence := []HypothesisScore{{
+		Type:           "bad_config",
+		Summary:        "Evidence-derived summary.",
+		Confidence:     0.60,
+		SupportingRefs: []string{"k8s_log:Previous logs"},
+	}}
+	llm := []HypothesisScore{{
+		Type:           "bad_config",
+		Summary:        "Unsupported LLM claim.",
+		Confidence:     1.0,
+		SupportingRefs: []string{"llm:invented"},
+	}}
+
+	blended := blendScores(evidence, llm, 0.85)
+	if blended[0].Confidence != 0.60 {
+		t.Fatalf("LLM must not raise evidence confidence, got %.2f", blended[0].Confidence)
+	}
+	if len(blended[0].SupportingRefs) != 1 || blended[0].SupportingRefs[0] != "k8s_log:Previous logs" {
+		t.Fatalf("LLM must not add evidence refs: %v", blended[0].SupportingRefs)
+	}
+	if blended[0].Summary != "Evidence-derived summary." {
+		t.Fatalf("LLM must not replace grounded summary: %q", blended[0].Summary)
+	}
+}
+
+func TestLLMBlendCanOnlyApplyBoundedPenalty(t *testing.T) {
+	evidence := []HypothesisScore{{
+		Type:           "bad_config",
+		Confidence:     0.80,
+		SupportingRefs: []string{"k8s_log:Previous logs"},
+	}}
+	llm := []HypothesisScore{{Type: "bad_config", Confidence: 0}}
+
+	blended := blendScores(evidence, llm, 0.85)
+	if blended[0].Confidence < 0.67 || blended[0].Confidence >= 0.80 {
+		t.Fatalf("expected bounded downward adjustment, got %.2f", blended[0].Confidence)
+	}
+}
+
 func findScore(scores []HypothesisScore, kind string) *HypothesisScore {
 	for i := range scores {
 		if scores[i].Type == kind {
