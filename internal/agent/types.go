@@ -11,6 +11,7 @@ import (
 
 const (
 	StagePlan         = "plan"
+	StagePreAnalysis  = "pre_analysis"
 	StageToolCall     = "tool_call"
 	StageObservation  = "observation"
 	StageReflection   = "reflection"
@@ -272,6 +273,7 @@ func (s *ReadOnlyToolState) GetCompletedTools() map[string]bool {
 
 type RunResult struct {
 	Report           *diagnostic.Report
+	PreAnalysis      *PreAnalysisDecision
 	DiagContext      *diagnostic.DiagnosticContext
 	RunbookHits      []RunbookHit
 	Hypotheses       []model.Hypothesis

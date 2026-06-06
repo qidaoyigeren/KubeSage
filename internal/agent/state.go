@@ -100,6 +100,15 @@ func (s *ToolState) EvidenceSnapshot() []diagnostic.EvidenceRecord {
 	return append([]diagnostic.EvidenceRecord(nil), s.EvidenceRecords...)
 }
 
+func (s *ToolState) SetExpectedFault(faultType string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Goal.ExpectedFault = faultType
+}
+
 func (s *ToolState) ToolMetadataSnapshot() []ToolMetadata {
 	if s == nil {
 		return nil
