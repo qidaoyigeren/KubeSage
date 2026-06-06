@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"kubesage/internal/diagnostic"
 	"kubesage/internal/model"
@@ -130,10 +131,12 @@ func (e *HypothesisEngine) Update(taskID uint, ctx *diagnostic.DiagnosticContext
 		candidates[i].Confidence = clamp(candidates[i].Confidence)
 	}
 
-	// LLM-assisted re-ranking: blend keyword scores with LLM scores.
+	// LLM scoring is advisory only. Evidence-derived scores remain authoritative:
+	// the LLM may reduce confidence when semantics conflict, but it cannot raise
+	// confidence or invent supporting evidence.
 	if e.llmScorer != nil {
 		if llmRanked, err := e.llmScorer.ScoreHypotheses(context.Background(), candidates); err == nil {
-			candidates = blendScores(candidates, llmRanked, 0.6)
+			candidates = blendScores(candidates, llmRanked, 0.85)
 		}
 	}
 
@@ -178,69 +181,76 @@ func (e *HypothesisEngine) ToModels(taskID uint, scores []HypothesisScore) []mod
 }
 
 type facts struct {
-	text       string
-	refsByKey  map[string][]string
-	sourceRefs map[string][]string
+	refsByKey map[string][]string
 }
 
 func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.EvidenceRecord) facts {
-	f := facts{refsByKey: map[string][]string{}, sourceRefs: map[string][]string{}}
+	f := facts{refsByKey: map[string][]string{}}
 	for i, record := range records {
 		if negativeDiagnosticEvidence(record) {
 			continue
 		}
 		ref := evidenceRef(record, i)
-		text := strings.ToLower(record.SourceType + " " + record.Title + " " + record.Content)
-		f.text += "\n" + text
-		f.sourceRefs[record.SourceType] = append(f.sourceRefs[record.SourceType], ref)
+		source := strings.ToLower(strings.TrimSpace(record.SourceType))
+		text := strings.ToLower(source + " " + record.Title + " " + record.Content)
+
+		if oomFailureSignal(text) {
+			addFactRef(&f, "oom_signal", ref)
+		}
+		if prometheusMemorySignal(source, text) {
+			addFactRef(&f, "prometheus_memory", ref)
+		}
+		if workingSetNearLimitSignal(source, text) {
+			addFactRef(&f, "working_set_limit", ref)
+		}
+		if memoryGrowthSignal(source, text) {
+			addFactRef(&f, "memory_growth", ref)
+		}
+		if configErrorSignal(text) {
+			addFactRef(&f, "config_error", ref)
+		}
+		if missingSecretOrConfigMapSignal(text) {
+			addFactRef(&f, "secret_configmap_missing", ref)
+		}
+		if pvcUnboundSignal(source, text) {
+			addFactRef(&f, "pvc_unbound", ref)
+		}
+
 		for _, key := range []string{
-			"oom", "oomkilled", "memory", "working set", "limit", "backoff", "crashloop", "config", "secret", "configmap",
-			"refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector", "pvc", "bound",
+			"backoff", "crashloop", "refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector",
 			"imagepull", "errimagepull", "imagepullbackoff", "unauthorized", "denied", "manifest",
 			"initerror", "initcontainer", "init container", "exitcode", "evicted", "eviction", "nodenotready", "notready",
 		} {
-			if key == "memory" && pressureFalseOnly(text, "memorypressure") {
-				continue
-			}
-			if key == "config" && !configErrorSignal(text) {
-				continue
-			}
 			if strings.Contains(text, key) {
-				f.refsByKey[key] = append(f.refsByKey[key], ref)
+				addFactRef(&f, key, ref)
 			}
 		}
 		for _, key := range []string{"memorypressure", "diskpressure", "pidpressure"} {
 			if positiveConditionSignal(text, key) {
-				f.refsByKey[key] = append(f.refsByKey[key], ref)
+				addFactRef(&f, key, ref)
 			}
 		}
 	}
 	if ctx != nil && ctx.Topology != nil && ctx.Topology.Node != nil {
 		node := ctx.Topology.Node
 		if node.MemoryPressure {
-			f.text += "\nnode memorypressure"
-			f.refsByKey["memorypressure"] = append(f.refsByKey["memorypressure"], "topology:node_memory_pressure")
+			addFactRef(&f, "memorypressure", "topology:node_memory_pressure")
 		}
 		if node.DiskPressure {
-			f.text += "\nnode diskpressure"
-			f.refsByKey["diskpressure"] = append(f.refsByKey["diskpressure"], "topology:node_disk_pressure")
+			addFactRef(&f, "diskpressure", "topology:node_disk_pressure")
 		}
 		if node.PIDPressure {
-			f.text += "\nnode pidpressure"
-			f.refsByKey["pidpressure"] = append(f.refsByKey["pidpressure"], "topology:node_pid_pressure")
+			addFactRef(&f, "pidpressure", "topology:node_pid_pressure")
 		}
 		if !node.Ready {
-			f.text += "\nnode notready"
-			f.refsByKey["notready"] = append(f.refsByKey["notready"], "topology:node_not_ready")
-			f.refsByKey["nodenotready"] = append(f.refsByKey["nodenotready"], "topology:node_not_ready")
+			addFactRef(&f, "notready", "topology:node_not_ready")
+			addFactRef(&f, "nodenotready", "topology:node_not_ready")
 		}
 	}
 	for _, pvc := range ctxPVCs(ctx) {
 		if pvc.Phase != "Bound" {
 			ref := "pvc:" + pvc.Name
-			f.refsByKey["pvc"] = append(f.refsByKey["pvc"], ref)
-			f.refsByKey["bound"] = append(f.refsByKey["bound"], ref)
-			f.text += "\npvc unbound"
+			addFactRef(&f, "pvc_unbound", ref)
 		}
 	}
 	return f
@@ -253,10 +263,10 @@ func negativeDiagnosticEvidence(record diagnostic.EvidenceRecord) bool {
 
 func (e *HypothesisEngine) scoreMemoryLimitTooLow(f facts) HypothesisScore {
 	s := base("memory_limit_too_low", "Container memory limit may be too low for observed workload.")
-	s.add(e.weight(s.Type, "oom", 0.25), refs(f, "oom", "oomkilled")...)
-	s.add(e.weight(s.Type, "working_set_limit", 0.20), refs(f, "working set", "limit")...)
-	s.add(e.weight(s.Type, "prometheus", 0.10), f.sourceRefs["prometheus"]...)
-	if !contains(f.text, "prometheus") {
+	s.add(e.weight(s.Type, "oom", 0.25), refs(f, "oom_signal")...)
+	s.add(e.weight(s.Type, "working_set_limit", 0.20), refs(f, "working_set_limit")...)
+	s.add(e.weight(s.Type, "prometheus", 0.10), refs(f, "prometheus_memory")...)
+	if len(refs(f, "prometheus_memory")) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "memory metrics")
 	}
 	return s
@@ -264,9 +274,11 @@ func (e *HypothesisEngine) scoreMemoryLimitTooLow(f facts) HypothesisScore {
 
 func (e *HypothesisEngine) scoreApplicationMemoryLeak(f facts) HypothesisScore {
 	s := base("application_memory_leak", "Application memory may grow until the container is killed.")
-	s.add(e.weight(s.Type, "oom", 0.20), refs(f, "oom", "oomkilled")...)
-	s.add(e.weight(s.Type, "memory", 0.10), refs(f, "memory")...)
-	s.MissingEvidence = append(s.MissingEvidence, "heap/profile or sustained memory growth evidence")
+	s.add(e.weight(s.Type, "oom", 0.20), refs(f, "oom_signal")...)
+	s.add(e.weight(s.Type, "memory", 0.10), refs(f, "memory_growth")...)
+	if len(refs(f, "memory_growth")) == 0 {
+		s.MissingEvidence = append(s.MissingEvidence, "heap/profile or sustained memory growth evidence")
+	}
 	return s
 }
 
@@ -281,7 +293,7 @@ func (e *HypothesisEngine) scoreNodeMemoryPressure(f facts) HypothesisScore {
 
 func (e *HypothesisEngine) scoreBadConfig(f facts) HypothesisScore {
 	s := base("bad_config", "Application startup may fail because of invalid configuration.")
-	s.add(e.weight(s.Type, "config", 0.25), refs(f, "config", "configmap")...)
+	s.add(e.weight(s.Type, "config", 0.25), refs(f, "config_error")...)
 	s.add(e.weight(s.Type, "backoff", 0.15), refs(f, "backoff", "crashloop")...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "logs or events mentioning configuration errors")
@@ -291,7 +303,7 @@ func (e *HypothesisEngine) scoreBadConfig(f facts) HypothesisScore {
 
 func (e *HypothesisEngine) scoreMissingSecretOrConfigMap(f facts) HypothesisScore {
 	s := base("missing_secret_or_configmap", "A referenced Secret or ConfigMap may be missing or incomplete.")
-	s.add(e.weight(s.Type, "secret_configmap", 0.30), refs(f, "secret", "configmap")...)
+	s.add(e.weight(s.Type, "secret_configmap", 0.30), refs(f, "secret_configmap_missing")...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "secret/configmap reference evidence")
 	}
@@ -319,7 +331,7 @@ func (e *HypothesisEngine) scoreProbeMisconfigured(f facts) HypothesisScore {
 
 func (e *HypothesisEngine) scorePVCUnbound(f facts) HypothesisScore {
 	s := base("pvc_unbound", "A PersistentVolumeClaim may be unbound and blocking scheduling/startup.")
-	s.add(e.weight(s.Type, "pvc_bound", 0.35), refs(f, "pvc", "bound")...)
+	s.add(e.weight(s.Type, "pvc_bound", 0.35), refs(f, "pvc_unbound")...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "pvc status")
 	}
@@ -410,6 +422,13 @@ func refs(f facts, keys ...string) []string {
 	return result
 }
 
+func addFactRef(f *facts, key, ref string) {
+	if f == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	f.refsByKey[key] = appendUnique(f.refsByKey[key], ref)
+}
+
 func evidenceRef(record diagnostic.EvidenceRecord, index int) string {
 	source := strings.TrimSpace(record.SourceType)
 	if source == "" {
@@ -429,10 +448,6 @@ func ctxPVCs(ctx *diagnostic.DiagnosticContext) []diagnostic.PVCBrief {
 	return ctx.PVCs
 }
 
-func contains(text, needle string) bool {
-	return strings.Contains(strings.ToLower(text), strings.ToLower(needle))
-}
-
 func positiveConditionSignal(text, key string) bool {
 	compact := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(text))
 	key = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(key))
@@ -442,33 +457,129 @@ func positiveConditionSignal(text, key string) bool {
 	return strings.Contains(compact, key+"=true") || strings.Contains(compact, key+":true") || strings.Contains(compact, key)
 }
 
-func pressureFalseOnly(text, key string) bool {
-	compact := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(text))
-	key = strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.ToLower(key))
-	return strings.Contains(compact, key+"=false") &&
-		!strings.Contains(compact, "memorylimit") &&
-		!strings.Contains(compact, "memoryrequest") &&
-		!strings.Contains(compact, "workingset") &&
-		!strings.Contains(compact, "oom")
+func oomFailureSignal(text string) bool {
+	text = strings.ToLower(text)
+	if strings.Contains(text, "reason=oomkilled") ||
+		strings.Contains(text, "reason: oomkilled") ||
+		strings.Contains(text, "oomkilled") ||
+		strings.Contains(text, "out of memory") ||
+		strings.Contains(text, "cannot allocate memory") {
+		return true
+	}
+	if strings.Contains(text, "oom_score") || strings.Contains(text, "oom score") {
+		return false
+	}
+	return containsStandaloneTerm(text, "oom")
 }
 
 func configErrorSignal(text string) bool {
-	compact := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(text))
+	text = strings.ToLower(text)
+	compact := strings.NewReplacer("_", "", "-", "", " ", "").Replace(text)
 	if strings.Contains(compact, "containerimageconfiguration") ||
 		strings.Contains(compact, "imagepull") ||
 		strings.Contains(compact, "errimagepull") {
 		return false
 	}
-	for _, needle := range []string{
-		"config",
-		"configuration",
-		"configmap",
-		"config.yaml",
-		"missingconfig",
-		"invalidconfig",
-		"parseerror",
+	hasConfig := strings.Contains(text, "config") ||
+		strings.Contains(text, "configuration") ||
+		strings.Contains(text, "configmap")
+	if !hasConfig {
+		return false
+	}
+	for _, failure := range []string{
+		"missing", "not found", "does not exist", "invalid", "malformed",
+		"parse error", "failed to parse", "failed to load", "failed to read",
+		"unknown field", "unmarshal", "required key", "permission denied",
 	} {
-		if strings.Contains(text, needle) || strings.Contains(compact, needle) {
+		if strings.Contains(text, failure) {
+			return true
+		}
+	}
+	return strings.Contains(compact, "missingconfig") ||
+		strings.Contains(compact, "invalidconfig") ||
+		strings.Contains(compact, "configparseerror")
+}
+
+func missingSecretOrConfigMapSignal(text string) bool {
+	text = strings.ToLower(text)
+	if !strings.Contains(text, "secret") && !strings.Contains(text, "configmap") {
+		return false
+	}
+	for _, failure := range []string{
+		"missing", "not found", "does not exist", "failed", "forbidden",
+		"required key", "key not found", "couldn't find key", "cannot find",
+	} {
+		if strings.Contains(text, failure) {
+			return true
+		}
+	}
+	return false
+}
+
+func prometheusMemorySignal(source, text string) bool {
+	if source != "prometheus" && source != "prometheus_trend" {
+		return false
+	}
+	if unavailableObservation(text) {
+		return false
+	}
+	return strings.Contains(text, "memory") &&
+		(strings.Contains(text, "working set") ||
+			strings.Contains(text, "working_set") ||
+			strings.Contains(text, "progressive_growth") ||
+			strings.Contains(text, "sudden_spike") ||
+			strings.Contains(text, "near limit"))
+}
+
+func workingSetNearLimitSignal(source, text string) bool {
+	if !prometheusMemorySignal(source, text) {
+		return false
+	}
+	return strings.Contains(text, "near limit") ||
+		strings.Contains(text, "limit ratio") ||
+		strings.Contains(text, "working set limit") ||
+		strings.Contains(text, "working_set_limit")
+}
+
+func memoryGrowthSignal(source, text string) bool {
+	if !prometheusMemorySignal(source, text) {
+		return false
+	}
+	return strings.Contains(text, "progressive_growth") ||
+		strings.Contains(text, "sustained growth") ||
+		strings.Contains(text, "steadily increasing")
+}
+
+func pvcUnboundSignal(source, text string) bool {
+	if source != "k8s_pvc" {
+		return false
+	}
+	if strings.Contains(text, "phase=bound") || strings.Contains(text, "phase: bound") {
+		return false
+	}
+	return strings.Contains(text, "unbound") ||
+		strings.Contains(text, "not bound") ||
+		strings.Contains(text, "phase=pending") ||
+		strings.Contains(text, "phase: pending")
+}
+
+func unavailableObservation(text string) bool {
+	for _, marker := range []string{
+		"unavailable", "skipped", "failed", "empty", "not configured",
+		"no samples", "no data",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsStandaloneTerm(text, term string) bool {
+	for _, token := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r) && r != '_'
+	}) {
+		if token == term {
 			return true
 		}
 	}
@@ -511,27 +622,28 @@ func clamp(v float64) float64 {
 	return v
 }
 
-// blendScores merges keyword-based and LLM-based hypothesis scores using a
-// weighted blend. keywordWeight is the weight for keyword scores (e.g. 0.6),
-// and (1 - keywordWeight) is used for LLM scores.
-func blendScores(keyword []HypothesisScore, llm []HypothesisScore, keywordWeight float64) []HypothesisScore {
+// blendScores applies a bounded LLM penalty to evidence-derived scores.
+// The LLM cannot raise confidence, add supporting refs, or replace the
+// evidence-grounded summary.
+func blendScores(evidence []HypothesisScore, llm []HypothesisScore, evidenceWeight float64) []HypothesisScore {
 	llmByType := map[string]HypothesisScore{}
 	for _, s := range llm {
 		llmByType[s.Type] = s
 	}
-	llmWeight := 1.0 - keywordWeight
-	for i := range keyword {
-		if llmScore, ok := llmByType[keyword[i].Type]; ok {
-			if len(keyword[i].SupportingRefs) == 0 && len(llmScore.SupportingRefs) == 0 {
+	if evidenceWeight < 0.8 || evidenceWeight > 1 {
+		evidenceWeight = 0.85
+	}
+	llmWeight := 1.0 - evidenceWeight
+	for i := range evidence {
+		if llmScore, ok := llmByType[evidence[i].Type]; ok {
+			if len(evidence[i].SupportingRefs) == 0 {
 				continue
 			}
-			keyword[i].Confidence = keyword[i].Confidence*keywordWeight + llmScore.Confidence*llmWeight
-			// Merge LLM supporting refs that are not already present.
-			keyword[i].SupportingRefs = appendUnique(keyword[i].SupportingRefs, llmScore.SupportingRefs...)
-			if llmScore.Summary != "" {
-				keyword[i].Summary = keyword[i].Summary + " [LLM: " + llmScore.Summary + "]"
+			adjusted := evidence[i].Confidence*evidenceWeight + clamp(llmScore.Confidence)*llmWeight
+			if adjusted < evidence[i].Confidence {
+				evidence[i].Confidence = adjusted
 			}
 		}
 	}
-	return keyword
+	return evidence
 }

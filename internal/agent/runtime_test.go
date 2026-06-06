@@ -192,7 +192,7 @@ func TestRuntimeConfirmedHypothesisEarlyStop(t *testing.T) {
 	}
 }
 
-func TestRuntimeConfirmsWhenRemainingEvidenceIsExhausted(t *testing.T) {
+func TestRuntimeDoesNotConfirmOOMLimitWhenMetricsAreUnavailable(t *testing.T) {
 	_, result, err := runRuntimeForTest(
 		t,
 		Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled", IncludeLogs: true, IncludeMetrics: true},
@@ -204,8 +204,8 @@ func TestRuntimeConfirmsWhenRemainingEvidenceIsExhausted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.StopReason != StopReasonConfirmedHypothesis {
-		t.Fatalf("expected exhausted high-confidence hypothesis to confirm, got %s", result.StopReason)
+	if result.StopReason == StopReasonConfirmedHypothesis {
+		t.Fatalf("log keywords without memory metrics must not confirm OOM limit hypothesis")
 	}
 }
 

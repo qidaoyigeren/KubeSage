@@ -378,8 +378,9 @@ func (c *OpenAICompatibleClient) ScoreHypotheses(ctx context.Context, candidates
 		Messages: []chatMessage{
 			{Role: "system", Content: strings.Join([]string{
 				"You are KubeSage's hypothesis scoring engine.",
-				"Given the current hypothesis candidates with keyword-based confidence scores,",
-				"re-rank them by adjusting confidence based on your understanding of Kubernetes故障诊断.",
+				"Given hypothesis candidates with evidence-derived confidence scores,",
+				"identify semantic conflicts that justify lowering confidence.",
+				"Do not raise confidence, invent evidence, or treat a keyword mention as proof of root cause.",
 				"Return JSON: {\"hypotheses\": [{\"type\": string, \"confidence\": float, \"summary\": string}]}",
 				"Only include hypotheses you want to adjust. Keep type names exactly as provided.",
 				"Confidence must be between 0 and 1.",

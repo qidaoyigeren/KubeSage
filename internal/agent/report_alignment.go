@@ -16,8 +16,8 @@ type ReportAlignmentResult struct {
 	Primary       string
 }
 
-// AlignReportWithHypotheses lets the Agent's confirmed primary hypothesis
-// reconcile the rule-analyzer report before remediation and persistence.
+// AlignReportWithHypotheses lets confirmed hypotheses refine a report without
+// displacing a deterministic analyzer result backed by structured evidence.
 func AlignReportWithHypotheses(report *diagnostic.Report, hypotheses []model.Hypothesis) ReportAlignmentResult {
 	if report == nil || len(hypotheses) == 0 {
 		return ReportAlignmentResult{}
@@ -29,6 +29,20 @@ func AlignReportWithHypotheses(report *diagnostic.Report, hypotheses []model.Hyp
 	alignedFault := hypothesisFaultType(primary.HypothesisType)
 	if alignedFault == "" || faultTypesEquivalent(report.FaultType, alignedFault) {
 		return ReportAlignmentResult{}
+	}
+
+	// Deterministic analyzers own the observed fault classification. A
+	// hypothesis may explain or refine that result, but must not replace it.
+	if analyzerPrimaryAuthoritative(report) {
+		var added bool
+		report.ContributingFactors, added = appendHypothesisFactor(report.ContributingFactors, *primary)
+		return ReportAlignmentResult{
+			Changed:       added,
+			Reason:        fmt.Sprintf("kept analyzer primary %s; attached hypothesis %s as a contributing explanation", report.FaultType, primary.HypothesisType),
+			OriginalFault: report.FaultType,
+			AlignedFault:  report.FaultType,
+			Primary:       primary.HypothesisType,
+		}
 	}
 
 	original := report.FaultType
@@ -123,11 +137,13 @@ func alignedSummary(faultType string, hypothesis model.Hypothesis) string {
 
 func alignedContributingFactors(existing []diagnostic.RootCauseFactor, originalPrimary *diagnostic.RootCauseFactor, hypotheses []model.Hypothesis, primaryType string) []diagnostic.RootCauseFactor {
 	result := append([]diagnostic.RootCauseFactor(nil), existing...)
-	if originalPrimary != nil && !faultTypesEquivalent(originalPrimary.FaultType, hypothesisFaultType(primaryType)) {
+	if originalPrimary != nil &&
+		!strings.EqualFold(strings.TrimSpace(originalPrimary.FaultType), "unknown") &&
+		!faultTypesEquivalent(originalPrimary.FaultType, hypothesisFaultType(primaryType)) {
 		displaced := *originalPrimary
-		displaced.ContributingRole = firstNonEmptyString(displaced.ContributingRole, "analyzer_primary")
+		displaced.ContributingRole = firstNonEmptyString(displaced.ContributingRole, "previous_assessment")
 		if displaced.ContributingRole == "primary" {
-			displaced.ContributingRole = "analyzer_primary"
+			displaced.ContributingRole = "previous_assessment"
 		}
 		result = append(result, displaced)
 	}
@@ -152,6 +168,92 @@ func alignedContributingFactors(existing []diagnostic.RootCauseFactor, originalP
 		}
 	}
 	return result
+}
+
+func appendHypothesisFactor(existing []diagnostic.RootCauseFactor, hypothesis model.Hypothesis) ([]diagnostic.RootCauseFactor, bool) {
+	faultType := hypothesisFaultType(hypothesis.HypothesisType)
+	if faultType == "" || contributingHasHypothesis(existing, hypothesis.HypothesisType, faultType) {
+		return existing, false
+	}
+	return append(existing, diagnostic.RootCauseFactor{
+		AnalyzerName:     "agent_hypothesis",
+		FaultType:        faultType,
+		Summary:          alignedSummary(faultType, hypothesis),
+		ConfidenceScore:  hypothesis.ConfidenceScore,
+		EvidenceRefs:     jsonTextItems(hypothesis.SupportingEvidenceRefs),
+		ContributingRole: "hypothesis_explanation",
+	}), true
+}
+
+func analyzerPrimaryAuthoritative(report *diagnostic.Report) bool {
+	if report == nil || strings.EqualFold(strings.TrimSpace(report.FaultType), "unknown") {
+		return false
+	}
+	if report.PrimaryRootCause != nil {
+		analyzerName := strings.TrimSpace(report.PrimaryRootCause.AnalyzerName)
+		if analyzerName != "" && !strings.EqualFold(analyzerName, "agent_hypothesis") {
+			return true
+		}
+	}
+	return analyzerHasStructuralEvidence(report)
+}
+
+func analyzerHasStructuralEvidence(report *diagnostic.Report) bool {
+	if report == nil {
+		return false
+	}
+	faultType := report.FaultType
+	if report.PrimaryRootCause != nil && strings.TrimSpace(report.PrimaryRootCause.FaultType) != "" {
+		faultType = report.PrimaryRootCause.FaultType
+	}
+	for _, evidence := range report.Evidences {
+		source := strings.ToLower(strings.TrimSpace(evidence.SourceType))
+		text := strings.ToLower(evidence.Title + " " + evidence.Content)
+		switch normalizeReportFault(faultType) {
+		case "oomkilled":
+			if source == "k8s_pod_status" && oomFailureSignal(text) {
+				return true
+			}
+		case "crashloopbackoff":
+			if (source == "k8s_pod_status" || source == "k8s_event") &&
+				(strings.Contains(text, "crashloopbackoff") || strings.Contains(text, "back-off restarting")) {
+				return true
+			}
+		case "imagepullbackoff":
+			if (source == "k8s_pod_status" || source == "k8s_event") &&
+				(strings.Contains(text, "imagepullbackoff") || strings.Contains(text, "errimagepull")) {
+				return true
+			}
+		case "initcontainererror", "initerror":
+			if source == "k8s_pod_status" &&
+				(strings.Contains(text, "init container") || strings.Contains(text, "initcontainer")) &&
+				(strings.Contains(text, "exitcode=") || strings.Contains(text, "waitingreason=") || strings.Contains(text, "crashloopbackoff")) {
+				return true
+			}
+		case "evicted":
+			if source == "k8s_pod_status" &&
+				(strings.Contains(text, "reason=evicted") || strings.Contains(text, "pod eviction status")) {
+				return true
+			}
+		case "nodenotready":
+			if (source == "k8s_topology" || source == "k8s_event") &&
+				(strings.Contains(text, "nodeready=false") || strings.Contains(text, "node notready")) {
+				return true
+			}
+		case "podpending":
+			if (source == "k8s_event" || source == "k8s_pvc" || source == "k8s_pod_status") &&
+				(strings.Contains(text, "failedscheduling") || strings.Contains(text, "unbound") || strings.Contains(text, "phase=pending")) {
+				return true
+			}
+		case "probefailed":
+			if (source == "k8s_event" || source == "k8s_pod_status") &&
+				strings.Contains(text, "probe") &&
+				(strings.Contains(text, "unhealthy") || strings.Contains(text, "failed")) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func contributingHasHypothesis(factors []diagnostic.RootCauseFactor, hypothesisType, faultType string) bool {

@@ -66,6 +66,45 @@ func executionSummary(report *diagnostic.Report, hypotheses []model.Hypothesis, 
 }
 
 func rootCauseFactors(report *diagnostic.Report, hypotheses []model.Hypothesis, chain []EvidenceRef) (*RootCauseFactor, []RootCauseFactor) {
+	if analyzerPrimaryAuthoritative(report) {
+		var primary RootCauseFactor
+		if report.PrimaryRootCause != nil {
+			primary = factorFromDiagnostic(*report.PrimaryRootCause)
+		} else {
+			primary = RootCauseFactor{
+				HypothesisType:  report.FaultType,
+				Summary:         report.RootCauseSummary,
+				ConfidenceScore: report.ConfidenceScore,
+				Status:          "primary",
+				EvidenceRefs:    rootCauseEvidenceRefs(report, chain),
+				Reason:          "deterministic analyzer result with structural evidence",
+			}
+		}
+
+		contributing := make([]RootCauseFactor, 0, len(report.ContributingFactors)+len(hypotheses))
+		for _, factor := range report.ContributingFactors {
+			// Rebuild Agent hypotheses from model rows below so the snapshot
+			// keeps their hypothesis type and missing-evidence fields.
+			if strings.EqualFold(factor.AnalyzerName, "agent_hypothesis") {
+				continue
+			}
+			contributing = append(contributing, factorFromDiagnostic(factor))
+		}
+		for _, hypothesis := range hypotheses {
+			if !isContributingFactor(hypothesis) {
+				continue
+			}
+			if normalizeReportFault(hypothesis.HypothesisType) == normalizeReportFault(primary.HypothesisType) {
+				continue
+			}
+			contributing = append(contributing, factorFromHypothesis(hypothesis, "evidence-grounded explanation; deterministic analyzer remains primary"))
+			if len(contributing) >= 5 {
+				break
+			}
+		}
+		return &primary, contributing
+	}
+
 	if len(hypotheses) == 0 {
 		if report == nil {
 			return nil, nil
