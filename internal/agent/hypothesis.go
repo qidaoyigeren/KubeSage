@@ -186,6 +186,9 @@ type facts struct {
 func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.EvidenceRecord) facts {
 	f := facts{refsByKey: map[string][]string{}, sourceRefs: map[string][]string{}}
 	for i, record := range records {
+		if negativeDiagnosticEvidence(record) {
+			continue
+		}
 		ref := evidenceRef(record, i)
 		text := strings.ToLower(record.SourceType + " " + record.Title + " " + record.Content)
 		f.text += "\n" + text
@@ -241,6 +244,11 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 		}
 	}
 	return f
+}
+
+func negativeDiagnosticEvidence(record diagnostic.EvidenceRecord) bool {
+	return strings.EqualFold(strings.TrimSpace(record.SourceType), "diagnostic_engine") &&
+		strings.EqualFold(strings.TrimSpace(record.Title), "No analyzer matched")
 }
 
 func (e *HypothesisEngine) scoreMemoryLimitTooLow(f facts) HypothesisScore {

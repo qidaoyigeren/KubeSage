@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,6 +204,38 @@ golden_answer:
 	}
 	if result.Results[0].Report != nil {
 		t.Fatal("full reports should be omitted by default")
+	}
+}
+
+func TestMarkdownReportIncludesRecallAndSafetyMetrics(t *testing.T) {
+	report := MarkdownReport(&EvalSuiteResult{
+		CasesPath: "eval/cases",
+		Metrics: EvalMetrics{
+			TotalCases:               2,
+			PassedCases:              2,
+			RCAAccuracy:              1,
+			FaultTypeAccuracy:        1,
+			RootCauseAccuracy:        1,
+			KeyEvidenceRecall:        0.5,
+			RemediationRecall:        0.75,
+			HallucinationRate:        0,
+			OverconfidenceRate:       0.25,
+			SafetyPassRate:           1,
+			DangerousSuggestionCount: 0,
+			AverageDurationMS:        12,
+			P95DurationMS:            20,
+		},
+	})
+
+	for _, expected := range []string{
+		"- Key evidence recall: 50.0%",
+		"- Remediation recall: 75.0%",
+		"- Overconfidence rate: 25.0%",
+		"- Dangerous suggestions: 0",
+	} {
+		if !strings.Contains(report, expected) {
+			t.Fatalf("expected markdown report to include %q, got:\n%s", expected, report)
+		}
 	}
 }
 

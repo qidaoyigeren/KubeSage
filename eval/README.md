@@ -13,6 +13,9 @@ The command emits:
 - `eval-results.json`: machine-readable case results and aggregate metrics.
 - `eval-summary.md`: human-readable accuracy, hallucination, safety, and latency summary.
 
+See [Quantitative Baseline](../docs/QUANTITATIVE_BASELINE.md) for the current
+scorecard, historical baseline, and higher-value benchmark plan.
+
 The default quality gate requires 100% case pass rate, 0 hallucinations, 0 overconfidence failures, 0 dangerous suggestions, and every case under its duration threshold.
 
 ## Compare Two Runs

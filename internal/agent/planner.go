@@ -46,14 +46,15 @@ func (p *RulePlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []T
 
 	switch fault {
 	case "oomkilled":
+		add("k8s.get_events", "检查 OOM 相关事件和终止信号", false, baseInput)
 		add("k8s.get_logs", "查看 OOM 重启前后的容器日志", false, baseInput)
 		add("prometheus.query_range", "查看故障窗口内的内存工作集趋势", false, map[string]interface{}{"query": "container_memory_working_set_bytes"})
 		add("loki.query_logs", "查看集中式日志中的 OOM 相关信息", false, baseInput)
 		add("k8s.get_topology", "检查工作负载和节点压力上下文", false, baseInput)
 	case "crashloopbackoff":
+		add("k8s.get_events", "检查 BackOff 和失败事件", false, baseInput)
 		add("k8s.get_logs", "通过 previous logs 判断是启动失败还是运行期崩溃", false, baseInput)
 		add("loki.query_logs", "查看集中式日志中的依赖或配置错误", false, baseInput)
-		add("k8s.get_events", "检查 BackOff 和失败事件", false, baseInput)
 		add("k8s.get_topology", "检查工作负载影响和同组 Pod 健康状态", false, baseInput)
 	case "probefailed":
 		add("k8s.get_events", "检查 Readiness/Liveness 探针事件", false, baseInput)
@@ -63,10 +64,17 @@ func (p *RulePlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []T
 	case "pending", "podpending":
 		add("k8s.get_events", "检查调度器失败事件", false, baseInput)
 		add("k8s.get_pvc", "直接检查 PVC 绑定状态", false, baseInput)
-		add("k8s.get_topology", "检查调度约束和节点上下文", false, baseInput)
+		add("k8s.get_topology", "检查调度约束和节点资源上下文", false, baseInput)
 	case "nodenotready":
 		add("k8s.get_topology", "检查节点健康和压力条件", true, baseInput)
 		add("k8s.get_events", "采集节点相关事件", false, baseInput)
+	case "imagepullbackoff", "errimagepull":
+		add("k8s.get_events", "检查镜像拉取失败事件（registry/tag/auth 详情）", false, baseInput)
+		add("k8s.get_topology", "检查节点网络和 registry 可达性上下文", false, baseInput)
+	case "evicted":
+		add("k8s.get_events", "检查驱逐相关事件（EvictionThreshold、资源压力）", false, baseInput)
+		add("prometheus.query_range", "查看驱逐前的节点资源使用趋势", false, map[string]interface{}{"query": "node_memory_MemAvailable_bytes"})
+		add("k8s.get_topology", "检查节点资源压力和驱逐影响范围", false, baseInput)
 	default:
 		add("k8s.get_events", "采集通用 Pod 事件", false, baseInput)
 		add("k8s.get_logs", "采集通用容器日志", false, baseInput)
@@ -329,15 +337,19 @@ func markUnavailable(plan *Plan, tool string) {
 func expectedObservations(fault string) []string {
 	switch fault {
 	case "oomkilled":
-		return []string{"终止原因", "内存限制", "内存指标", "previous logs", "节点压力"}
+		return []string{"OOM 事件", "终止原因", "内存限制", "内存指标", "previous logs", "节点压力"}
 	case "crashloopbackoff":
-		return []string{"最近终止状态", "previous logs", "事件", "配置或依赖线索"}
+		return []string{"BackOff 事件", "最近终止状态", "previous logs", "配置或依赖线索"}
 	case "probefailed":
 		return []string{"探针配置", "Unhealthy 事件", "健康检查端点日志", "Service Endpoint 影响"}
 	case "pending", "podpending":
 		return []string{"FailedScheduling 事件", "PVC 状态", "节点约束", "污点和选择器"}
 	case "nodenotready":
 		return []string{"节点 Ready 条件", "节点事件", "受影响 Pod 拓扑"}
+	case "imagepullbackoff", "errimagepull":
+		return []string{"镜像拉取失败事件", "Pod 镜像配置", "registry 可达性"}
+	case "evicted":
+		return []string{"驱逐事件", "节点资源压力指标", "驱逐影响范围"}
 	default:
 		return []string{"Pod 状态", "事件", "日志", "拓扑"}
 	}

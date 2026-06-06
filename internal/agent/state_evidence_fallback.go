@@ -48,6 +48,10 @@ func evidenceRequestsForPodState(pod *corev1.Pod) []evidenceRequest {
 		add("k8s.get_logs", "Pod status indicates OOMKilled; collect logs around the termination window")
 		add("prometheus.query_range", "Pod status indicates OOMKilled; collect memory metrics if Prometheus is available")
 		add("k8s.get_topology", "Pod status indicates OOMKilled; collect node pressure and workload context")
+	case strings.Contains(reasons, "evicted"):
+		add("k8s.get_events", "Pod status indicates eviction; collect Events for eviction reason and resource pressure details")
+		add("prometheus.query_range", "Pod status indicates eviction; collect node resource usage trends before eviction")
+		add("k8s.get_topology", "Pod status indicates eviction; collect node pressure and co-located workload context")
 	case pod.Status.Phase == corev1.PodPending:
 		add("k8s.get_events", "Pod is Pending; collect scheduler Events")
 		add("k8s.get_pvc", "Pod is Pending; inspect referenced PVCs")
