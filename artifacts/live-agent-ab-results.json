@@ -1,0 +1,2434 @@
+{
+  "generated_at": "2026-06-07T16:40:05.3603647+08:00",
+  "namespace": "eval-bank",
+  "cases_path": "eval/cases/core.yaml",
+  "methodology": [
+    "All evidence is collected from the live Kubernetes cluster; fixture files are not loaded.",
+    "Evaluation labels under kubesage.io are removed before diagnosis.",
+    "Rule and Direct LLM arms receive the same full live snapshot.",
+    "Agent receives only namespace and pod name, then selects registered read-only tools through Plan-Execute-Reflect.",
+    "Prometheus and Loki usage is counted only when live samples or log bytes are returned."
+  ],
+  "arms": {
+    "agent": {
+      "metrics": {
+        "total_cases": 15,
+        "passed_cases": 7,
+        "failed_cases": 8,
+        "rca_accuracy": 0.4666666666666667,
+        "fault_type_accuracy": 1,
+        "root_cause_accuracy": 0.7333333333333333,
+        "key_evidence_recall": 0.7333333333333333,
+        "remediation_recall": 1,
+        "hallucination_rate": 0,
+        "overconfidence_rate": 0.2,
+        "safety_pass_rate": 1,
+        "dangerous_suggestion_count": 0,
+        "average_duration_ms": 16715,
+        "p95_duration_ms": 24734
+      },
+      "total_tokens": 243925,
+      "average_tokens": 16261,
+      "total_llm_calls": 113,
+      "tool_calls": 72,
+      "tool_failures": 0,
+      "prometheus_case_hits": 1,
+      "loki_case_hits": 10,
+      "prometheus_tool_cases": 4,
+      "loki_tool_cases": 10
+    },
+    "direct_llm": {
+      "metrics": {
+        "total_cases": 15,
+        "passed_cases": 0,
+        "failed_cases": 15,
+        "rca_accuracy": 0,
+        "fault_type_accuracy": 0.5333333333333333,
+        "root_cause_accuracy": 0.6666666666666666,
+        "key_evidence_recall": 0,
+        "remediation_recall": 0.06666666666666667,
+        "hallucination_rate": 0.2,
+        "overconfidence_rate": 0.6666666666666666,
+        "safety_pass_rate": 1,
+        "dangerous_suggestion_count": 0,
+        "average_duration_ms": 3373,
+        "p95_duration_ms": 5595
+      },
+      "total_tokens": 59325,
+      "average_tokens": 3955,
+      "total_llm_calls": 15,
+      "tool_calls": 0,
+      "tool_failures": 0,
+      "prometheus_case_hits": 11,
+      "loki_case_hits": 10,
+      "prometheus_tool_cases": 0,
+      "loki_tool_cases": 0
+    },
+    "rule_baseline": {
+      "metrics": {
+        "total_cases": 15,
+        "passed_cases": 9,
+        "failed_cases": 6,
+        "rca_accuracy": 0.6,
+        "fault_type_accuracy": 1,
+        "root_cause_accuracy": 0.8,
+        "key_evidence_recall": 0.6666666666666666,
+        "remediation_recall": 1,
+        "hallucination_rate": 0,
+        "overconfidence_rate": 0.2,
+        "safety_pass_rate": 1,
+        "dangerous_suggestion_count": 0,
+        "average_duration_ms": 99,
+        "p95_duration_ms": 212
+      },
+      "total_tokens": 0,
+      "average_tokens": 0,
+      "total_llm_calls": 0,
+      "tool_calls": 0,
+      "tool_failures": 0,
+      "prometheus_case_hits": 11,
+      "loki_case_hits": 10,
+      "prometheus_tool_cases": 0,
+      "loki_tool_cases": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "oom-limit-too-low",
+      "name": "OOMKilled from low memory limit",
+      "expected_fault_type": "OOMKilled",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 210,
+        "loki_containers": 1,
+        "loki_bytes": 110,
+        "prometheus_queries": 6,
+        "prometheus_samples": 42,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 22857,
+          "usage": {
+            "calls": 9,
+            "prompt_tokens": 18851,
+            "completion_tokens": 2581,
+            "total_tokens": 21432,
+            "llm_latency_ms": 22718
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 210,
+            "loki_containers": 1,
+            "loki_bytes": 110,
+            "prometheus_queries": 1,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "prometheus.query_range",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_logs",
+              "prometheus.query_range",
+              "k8s.get_topology",
+              "runbook.search",
+              "remediation.generate_actions"
+            ],
+            "calls": 6,
+            "failures": 0,
+            "prometheus_used": true,
+            "loki_used": true
+          },
+          "stop_reason": "no_effective_tool",
+          "steps_executed": 5
+        },
+        "direct_llm": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "Container 'app' in pod 'oom-limit-too-low' is repeatedly OOMKilled due to memory limit (128Mi) being too low for its workload, as evidenced by logs showing 'out of memory while allocating request buffer' and container last state terminated with reason OOMKilled.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 5595,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3561,
+            "completion_tokens": 300,
+            "total_tokens": 3861,
+            "llm_latency_ms": 5595
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 210,
+            "loki_containers": 1,
+            "loki_bytes": 110,
+            "prometheus_queries": 6,
+            "prometheus_samples": 42,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "memoryLimit=128Mi"
+          ],
+          "missing_remediation": [
+            "previous logs"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 132,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 210,
+            "loki_containers": 1,
+            "loki_bytes": 110,
+            "prometheus_queries": 6,
+            "prometheus_samples": 42,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "oom-java-heap",
+      "name": "OOMKilled from Java heap pressure",
+      "expected_fault_type": "OOMKilled",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 148,
+        "loki_containers": 1,
+        "loki_bytes": 77,
+        "prometheus_queries": 6,
+        "prometheus_samples": 32,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 14854,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13638,
+            "completion_tokens": 1342,
+            "total_tokens": 14980,
+            "llm_latency_ms": 14705
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 148,
+            "loki_containers": 1,
+            "loki_bytes": 77,
+            "prometheus_queries": 1,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "prometheus.query_range",
+              "k8s.get_topology"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_logs",
+              "prometheus.query_range",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": true,
+            "loki_used": true
+          },
+          "stop_reason": "no_effective_tool",
+          "steps_executed": 4
+        },
+        "direct_llm": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "Pod oom-java-heap in namespace eval-bank is repeatedly OOMKilled due to Java heap space exhaustion. Container memory limit is 512Mi, request 256Mi, but the Java application requires more heap. Logs show 'java.lang.OutOfMemoryError: Java heap space'. Restart count is 341 and increasing.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": true,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 3257,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3551,
+            "completion_tokens": 307,
+            "total_tokens": 3858,
+            "llm_latency_ms": 3257
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 148,
+            "loki_containers": 1,
+            "loki_bytes": 77,
+            "prometheus_queries": 6,
+            "prometheus_samples": 32,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "memoryLimit=512Mi"
+          ],
+          "missing_remediation": [
+            "previous logs"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 103,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 148,
+            "loki_containers": 1,
+            "loki_bytes": 77,
+            "prometheus_queries": 6,
+            "prometheus_samples": 32,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "oom-sudden-spike",
+      "name": "OOMKilled with sudden memory spike",
+      "expected_fault_type": "OOMKilled",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 160,
+        "loki_containers": 1,
+        "loki_bytes": 85,
+        "prometheus_queries": 6,
+        "prometheus_samples": 22,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 16829,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13741,
+            "completion_tokens": 1767,
+            "total_tokens": 15508,
+            "llm_latency_ms": 16687
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 160,
+            "loki_containers": 1,
+            "loki_bytes": 85,
+            "prometheus_queries": 1,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "prometheus.query_range",
+              "k8s.get_topology"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_logs",
+              "prometheus.query_range",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": true,
+            "loki_used": true
+          },
+          "stop_reason": "no_effective_tool",
+          "steps_executed": 4,
+          "missing_evidence": [
+            "sudden_spike"
+          ]
+        },
+        "direct_llm": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "Pod oom-sudden-spike in namespace eval-bank is repeatedly OOMKilled due to a batch import causing a heap allocation spike, exceeding its 256Mi memory limit.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 3196,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3521,
+            "completion_tokens": 297,
+            "total_tokens": 3818,
+            "llm_latency_ms": 3196
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 160,
+            "loki_containers": 1,
+            "loki_bytes": 85,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "sudden_spike",
+            "memory_working_set_bytes"
+          ],
+          "missing_remediation": [
+            "previous logs"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 100,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 160,
+            "loki_containers": 1,
+            "loki_bytes": 85,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "sudden_spike"
+          ]
+        }
+      }
+    },
+    {
+      "id": "oom-no-metrics",
+      "name": "OOMKilled without metrics source",
+      "expected_fault_type": "OOMKilled",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 154,
+        "loki_containers": 1,
+        "loki_bytes": 82,
+        "prometheus_queries": 6,
+        "prometheus_samples": 42,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 24734,
+          "usage": {
+            "calls": 9,
+            "prompt_tokens": 18510,
+            "completion_tokens": 2719,
+            "total_tokens": 21229,
+            "llm_latency_ms": 24560
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 154,
+            "loki_containers": 1,
+            "loki_bytes": 82,
+            "prometheus_queries": 1,
+            "prometheus_samples": 4405,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_topology",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_topology",
+              "k8s.get_logs",
+              "prometheus.query_range",
+              "runbook.search",
+              "remediation.generate_actions"
+            ],
+            "calls": 6,
+            "failures": 0,
+            "prometheus_used": true,
+            "loki_used": true
+          },
+          "stop_reason": "no_effective_tool",
+          "steps_executed": 5
+        },
+        "direct_llm": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "Container 'app' in pod 'oom-no-metrics' is repeatedly killed due to memory limit exceeded (OOMKilled). The container has a memory limit of 256Mi and request of 128Mi, but the process exceeds the limit. Memory usage is stable around 3MB, suggesting the limit is too low for the workload.",
+          "confidence": 0.9,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": true,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 3095,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3547,
+            "completion_tokens": 291,
+            "total_tokens": 3838,
+            "llm_latency_ms": 3095
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 154,
+            "loki_containers": 1,
+            "loki_bytes": 82,
+            "prometheus_queries": 6,
+            "prometheus_samples": 42,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "exitCode=137",
+            "memoryLimit=256Mi"
+          ],
+          "missing_remediation": [
+            "previous logs"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "OOMKilled",
+          "root_cause_summary": "OOMKilled exitCode 137 memory limit out of memory: 容器最近一次退出由 OOMKilled 或退出码 137 触发，更倾向于内存 memory limit 不足、应用 heap 内存持续增长或突发内存分配。",
+          "confidence": 0.85,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 112,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 154,
+            "loki_containers": 1,
+            "loki_bytes": 82,
+            "prometheus_queries": 6,
+            "prometheus_samples": 42,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "crashloop-missing-config",
+      "name": "CrashLoopBackOff from missing config",
+      "expected_fault_type": "CrashLoopBackOff",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 156,
+        "loki_containers": 1,
+        "loki_bytes": 83,
+        "prometheus_queries": 6,
+        "prometheus_samples": 22,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff startup failure config parse error: 应用配置解析错误。",
+          "confidence": 0.91,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 16932,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13807,
+            "completion_tokens": 1322,
+            "total_tokens": 15129,
+            "llm_latency_ms": 15659
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 156,
+            "loki_containers": 1,
+            "loki_bytes": 83,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "k8s.get_pvc",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": true
+          },
+          "stop_reason": "llm_reflection_complete",
+          "steps_executed": 4
+        },
+        "direct_llm": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "Pod crashloop-missing-config is in CrashLoopBackOff because the container app fails to start due to missing config file /etc/app/config.yaml. The container exits with code 1 immediately after starting, as shown in logs and last state.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": true,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 2599,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3520,
+            "completion_tokens": 262,
+            "total_tokens": 3782,
+            "llm_latency_ms": 2599
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 156,
+            "loki_containers": 1,
+            "loki_bytes": 83,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "restartCount=5"
+          ],
+          "missing_remediation": [
+            "previous logs",
+            "ConfigMaps"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff startup failure config parse error: 应用配置解析错误。",
+          "confidence": 0.91,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 76,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 156,
+            "loki_containers": 1,
+            "loki_bytes": 83,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "crashloop-connection-refused",
+      "name": "CrashLoopBackOff from dependency connection refused",
+      "expected_fault_type": "CrashLoopBackOff",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 160,
+        "loki_containers": 1,
+        "loki_bytes": 85,
+        "prometheus_queries": 6,
+        "prometheus_samples": 22,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff restartCount=347 exitCode 1: 容器退出码为 1，更倾向应用启动失败、配置错误或依赖不可用。",
+          "confidence": 0.91,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 15766,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13407,
+            "completion_tokens": 1379,
+            "total_tokens": 14786,
+            "llm_latency_ms": 14491
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 115,
+            "loki_containers": 1,
+            "loki_bytes": 85,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": true
+          },
+          "stop_reason": "no_effective_tool",
+          "steps_executed": 4
+        },
+        "direct_llm": {
+          "actual_fault_type": "application_crash_loop_backoff",
+          "root_cause_summary": "Pod crashloop-connection-refused is in CrashLoopBackOff due to the application container repeatedly exiting with error code 1. The container logs show 'fatal: database connection refused during startup', indicating the application cannot connect to a required database service.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": false,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 3188,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3526,
+            "completion_tokens": 291,
+            "total_tokens": 3817,
+            "llm_latency_ms": 3188
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 160,
+            "loki_containers": 1,
+            "loki_bytes": 85,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "restartCount=4"
+          ],
+          "missing_remediation": [
+            "previous logs",
+            "ConfigMaps"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff startup failure dependency connection refused: 应用启动时依赖服务连接被拒绝。",
+          "confidence": 0.91,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 96,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 160,
+            "loki_containers": 1,
+            "loki_bytes": 85,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "crashloop-permission-denied",
+      "name": "CrashLoopBackOff from permission denied",
+      "expected_fault_type": "CrashLoopBackOff",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 115,
+        "loki_containers": 1,
+        "loki_bytes": 66,
+        "prometheus_queries": 6,
+        "prometheus_samples": 22,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff restartCount=348 exitCode 126 permission denied: 容器退出码为 126，可能是文件权限问题。",
+          "confidence": 0.91,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 18550,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13452,
+            "completion_tokens": 1428,
+            "total_tokens": 14880,
+            "llm_latency_ms": 17287
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 115,
+            "loki_containers": 1,
+            "loki_bytes": 66,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": true
+          },
+          "stop_reason": "no_effective_tool",
+          "steps_executed": 4
+        },
+        "direct_llm": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "Container 'app' in pod 'crashloop-permission-denied' exits with exit code 126 due to 'permission denied' error when executing /app/run.sh, causing repeated restarts (348 restarts) and CrashLoopBackOff.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 3027,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3565,
+            "completion_tokens": 315,
+            "total_tokens": 3880,
+            "llm_latency_ms": 3027
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 115,
+            "loki_containers": 1,
+            "loki_bytes": 66,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "restartCount=3",
+            "exitCode=126"
+          ],
+          "missing_remediation": [
+            "previous logs",
+            "ConfigMaps"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff restartCount=348 exitCode 126 permission denied: 容器退出码为 126，可能是文件权限问题。",
+          "confidence": 0.91,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 104,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 115,
+            "loki_containers": 1,
+            "loki_bytes": 66,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "crashloop-panic",
+      "name": "CrashLoopBackOff from application panic",
+      "expected_fault_type": "CrashLoopBackOff",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 115,
+        "loki_containers": 1,
+        "loki_bytes": 66,
+        "prometheus_queries": 6,
+        "prometheus_samples": 22,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff startup failure panic fatal exitCode 2: 应用启动时发生 panic 或 fatal 错误。",
+          "confidence": 0.91,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 16931,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13318,
+            "completion_tokens": 1333,
+            "total_tokens": 14651,
+            "llm_latency_ms": 15665
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 115,
+            "loki_containers": 1,
+            "loki_bytes": 66,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": true
+          },
+          "stop_reason": "no_effective_tool",
+          "steps_executed": 4
+        },
+        "direct_llm": {
+          "actual_fault_type": "application_crash_loop_backoff",
+          "root_cause_summary": "Pod crashloop-panic in namespace eval-bank is in CrashLoopBackOff due to a nil pointer dereference panic in the application container. The container exits with error code 2 repeatedly, and logs show 'panic: nil pointer dereference'. Restarts are increasing (348 total, 4 in last hour).",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": false,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 2821,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3546,
+            "completion_tokens": 285,
+            "total_tokens": 3831,
+            "llm_latency_ms": 2821
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 115,
+            "loki_containers": 1,
+            "loki_bytes": 66,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "fatal",
+            "restartCount=7"
+          ],
+          "missing_remediation": [
+            "previous logs",
+            "ConfigMaps"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "CrashLoopBackOff",
+          "root_cause_summary": "CrashLoopBackOff startup failure panic fatal exitCode 2: 应用启动时发生 panic 或 fatal 错误。",
+          "confidence": 0.91,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 212,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 115,
+            "loki_containers": 1,
+            "loki_bytes": 66,
+            "prometheus_queries": 6,
+            "prometheus_samples": 22,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "pending-insufficient-cpu",
+      "name": "PodPending from insufficient CPU",
+      "expected_fault_type": "PodPending",
+      "live_snapshot": {
+        "events": 2,
+        "kubernetes_log_bytes": 0,
+        "loki_containers": 0,
+        "loki_bytes": 0,
+        "prometheus_queries": 6,
+        "prometheus_samples": 0,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "PodPending",
+          "root_cause_summary": "PodPending FailedScheduling Insufficient cpu requests: 调度失败原因包含 Insufficient cpu，集群可用 CPU 不满足 Pod requests。",
+          "confidence": 0.7799999999999999,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 12809,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13202,
+            "completion_tokens": 887,
+            "total_tokens": 14089,
+            "llm_latency_ms": 12724
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_topology",
+              "prometheus.query_range",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 4,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "stop_reason": "llm_reflection_complete",
+          "steps_executed": 3
+        },
+        "direct_llm": {
+          "actual_fault_type": "resource_insufficiency",
+          "root_cause_summary": "Pod 'pending-insufficient-cpu' is unschedulable because the only node 'kubesage-control-plane' has insufficient CPU resources. The pod requests 100 CPUs (likely a misconfiguration) but the node has only 32 allocatable CPUs. No other nodes are available.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": false,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 3155,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 2268,
+            "completion_tokens": 306,
+            "total_tokens": 2574,
+            "llm_latency_ms": 3155
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "cpuRequest=4"
+          ],
+          "missing_remediation": [
+            "requests",
+            "kubectl describe node"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "PodPending",
+          "root_cause_summary": "PodPending FailedScheduling Insufficient cpu requests: 调度失败原因包含 Insufficient cpu，集群可用 CPU 不满足 Pod requests。",
+          "confidence": 0.8099999999999999,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 69,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "pending-unbound-pvc",
+      "name": "PodPending from unbound PVC",
+      "expected_fault_type": "PodPending",
+      "live_snapshot": {
+        "events": 2,
+        "kubernetes_log_bytes": 0,
+        "loki_containers": 0,
+        "loki_bytes": 0,
+        "prometheus_queries": 6,
+        "prometheus_samples": 0,
+        "prometheus_query_failures": 0,
+        "pvcs": 1,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "PodPending",
+          "root_cause_summary": "PodPending unbound PersistentVolumeClaim PVC not Bound: Pod 依赖的 PVC 未绑定，导致无法调度。",
+          "confidence": 0.7799999999999999,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 10611,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 12933,
+            "completion_tokens": 758,
+            "total_tokens": 13691,
+            "llm_latency_ms": 10545
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_pvc",
+              "k8s.get_topology"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_pvc",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "stop_reason": "llm_reflection_complete",
+          "steps_executed": 4,
+          "missing_evidence": [
+            "storageClass=slow"
+          ]
+        },
+        "direct_llm": {
+          "actual_fault_type": "PersistentVolumeClaimUnschedulable",
+          "root_cause_summary": "Pod 'pending-unbound-pvc' is stuck in Pending because its PVC 'pending-unbound-pvc-data' is unbound and uses storage class 'kubesage-fault-bank-no-provisioner' with Immediate binding mode, but no matching PV exists and no provisioner is available to dynamically provision one.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": false,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 3485,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 2276,
+            "completion_tokens": 333,
+            "total_tokens": 2609,
+            "llm_latency_ms": 3485
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 1,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "storageClass=slow"
+          ],
+          "missing_remediation": [
+            "kubectl describe node"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "PodPending",
+          "root_cause_summary": "PodPending unbound PersistentVolumeClaim PVC Pending: Pod 依赖的 PVC 未处于 Bound 状态，导致无法调度或启动。",
+          "confidence": 0.86,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 68,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 1,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "storageClass=slow"
+          ]
+        }
+      }
+    },
+    {
+      "id": "pending-untolerated-taint",
+      "name": "PodPending from untolerated node taint",
+      "expected_fault_type": "PodPending",
+      "live_snapshot": {
+        "events": 2,
+        "kubernetes_log_bytes": 0,
+        "loki_containers": 0,
+        "loki_bytes": 0,
+        "prometheus_queries": 6,
+        "prometheus_samples": 0,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "PodPending",
+          "root_cause_summary": "PodPending FailedScheduling: Pod 处于 Pending，调度器暂未找到满足约束的节点。",
+          "confidence": 0.7799999999999999,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 11876,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13051,
+            "completion_tokens": 846,
+            "total_tokens": 13897,
+            "llm_latency_ms": 11766
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_topology",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 4,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "stop_reason": "llm_reflection_complete",
+          "steps_executed": 3
+        },
+        "direct_llm": {
+          "actual_fault_type": "unschedulable_pod",
+          "root_cause_summary": "Pod 'pending-untolerated-taint' is unschedulable because no node matches its node affinity/selector, and no preemption is possible. The only node 'kubesage-control-plane' is ready but does not satisfy the affinity/selector constraints.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": false,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 3041,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 2319,
+            "completion_tokens": 307,
+            "total_tokens": 2626,
+            "llm_latency_ms": 3041
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "FailedScheduling",
+            "untolerated taint",
+            "tolerations=[]"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "PodPending",
+          "root_cause_summary": "PodPending FailedScheduling: Pod 处于 Pending，调度器暂未找到满足约束的节点。",
+          "confidence": 0.8099999999999999,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 60,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 2,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "untolerated taint"
+          ]
+        }
+      }
+    },
+    {
+      "id": "imagepull-tag-not-found",
+      "name": "ImagePullBackOff from missing tag",
+      "expected_fault_type": "ImagePullBackOff",
+      "live_snapshot": {
+        "events": 8,
+        "kubernetes_log_bytes": 0,
+        "loki_containers": 0,
+        "loki_bytes": 0,
+        "prometheus_queries": 6,
+        "prometheus_samples": 28,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "ImagePullBackOff",
+          "root_cause_summary": "ImagePullBackOff: 容器镜像无法拉取，常见原因是镜像名或标签错误、镜像仓库不可访问，或 imagePullSecret 配置异常。",
+          "confidence": 0.82,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 13044,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13097,
+            "completion_tokens": 1056,
+            "total_tokens": 14153,
+            "llm_latency_ms": 12948
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "remediation.generate_actions"
+            ],
+            "calls": 3,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "stop_reason": "llm_reflection_complete",
+          "steps_executed": 2,
+          "missing_evidence": [
+            "manifest unknown"
+          ]
+        },
+        "direct_llm": {
+          "actual_fault_type": "ImagePullBackOff",
+          "root_cause_summary": "Pod 'imagepull-tag-not-found' in namespace 'eval-bank' is stuck in ImagePullBackOff because the container image 'registry.example.com/app:missing' cannot be pulled. The DNS lookup for 'registry.example.com' fails (no such host), indicating the registry hostname is unresolvable.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 3939,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3377,
+            "completion_tokens": 341,
+            "total_tokens": 3718,
+            "llm_latency_ms": 3939
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 28,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "manifest unknown"
+          ],
+          "missing_remediation": [
+            "image repository",
+            "imagePullSecrets"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "ImagePullBackOff",
+          "root_cause_summary": "ImagePullBackOff: 容器镜像无法拉取，常见原因是镜像名或标签错误、镜像仓库不可访问，或 imagePullSecret 配置异常。",
+          "confidence": 0.82,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 91,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 8,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 28,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "manifest unknown"
+          ]
+        }
+      }
+    },
+    {
+      "id": "imagepull-unauthorized",
+      "name": "ImagePullBackOff from registry auth failure",
+      "expected_fault_type": "ImagePullBackOff",
+      "live_snapshot": {
+        "events": 10,
+        "kubernetes_log_bytes": 0,
+        "loki_containers": 0,
+        "loki_bytes": 0,
+        "prometheus_queries": 6,
+        "prometheus_samples": 28,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "ImagePullBackOff",
+          "root_cause_summary": "ImagePullBackOff: 容器镜像无法拉取，常见原因是镜像名或标签错误、镜像仓库不可访问，或 imagePullSecret 配置异常。",
+          "confidence": 0.85,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 16527,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13294,
+            "completion_tokens": 1236,
+            "total_tokens": 14530,
+            "llm_latency_ms": 16339
+          },
+          "sources": {
+            "events": 10,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "remediation.generate_actions"
+            ],
+            "calls": 3,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "stop_reason": "llm_reflection_complete",
+          "steps_executed": 2,
+          "missing_evidence": [
+            "registry authentication"
+          ]
+        },
+        "direct_llm": {
+          "actual_fault_type": "ImagePullBackOff",
+          "root_cause_summary": "Pod 'imagepull-unauthorized' in namespace 'eval-bank' is stuck in ImagePullBackOff because the image 'private.registry.example.com/app:v1' cannot be pulled due to DNS resolution failure for the registry hostname 'private.registry.example.com'. Additionally, there are repeated warnings about failing to retrieve image pull secret 'regcred', indicating missing or misconfigured pull secrets.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 3757,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 3524,
+            "completion_tokens": 373,
+            "total_tokens": 3897,
+            "llm_latency_ms": 3757
+          },
+          "sources": {
+            "events": 10,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 28,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "unauthorized",
+            "registry authentication"
+          ],
+          "missing_remediation": [
+            "registry credentials",
+            "imagePullSecrets"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "ImagePullBackOff",
+          "root_cause_summary": "ImagePullBackOff: 容器镜像无法拉取，常见原因是镜像名或标签错误、镜像仓库不可访问，或 imagePullSecret 配置异常。",
+          "confidence": 0.85,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 93,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 10,
+            "kubernetes_log_bytes": 0,
+            "loki_containers": 0,
+            "loki_bytes": 0,
+            "prometheus_queries": 6,
+            "prometheus_samples": 28,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "unauthorized",
+            "registry authentication"
+          ]
+        }
+      }
+    },
+    {
+      "id": "probe-readiness-404",
+      "name": "ProbeFailed from readiness 404",
+      "expected_fault_type": "ProbeFailed",
+      "live_snapshot": {
+        "events": 6,
+        "kubernetes_log_bytes": 1610,
+        "loki_containers": 1,
+        "loki_bytes": 1697,
+        "prometheus_queries": 6,
+        "prometheus_samples": 0,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "CrashLoopBackOff,ProbeFailed",
+          "root_cause_summary": "Primary root cause: CrashLoopBackOff: 容器反复启动失败，命中 CrashLoopBackOff 或最近一次 terminated 状态。\nContributing factor: readiness probe failed: Readiness probe 失败会使 Pod 暂时不接收流量，检查 health path 和初始启动延迟。",
+          "confidence": 0.792,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 13899,
+          "usage": {
+            "calls": 7,
+            "prompt_tokens": 13614,
+            "completion_tokens": 1240,
+            "total_tokens": 14854,
+            "llm_latency_ms": 12617
+          },
+          "sources": {
+            "events": 6,
+            "kubernetes_log_bytes": 1610,
+            "loki_containers": 1,
+            "loki_bytes": 1697,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "remediation.generate_actions"
+            ],
+            "calls": 5,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": true
+          },
+          "stop_reason": "llm_reflection_complete",
+          "steps_executed": 4
+        },
+        "direct_llm": {
+          "actual_fault_type": "misconfigured_readiness_probe",
+          "root_cause_summary": "The application does not expose a /healthz endpoint, causing the readiness probe to always fail with HTTP 404. The pod is running but never becomes Ready.",
+          "confidence": 0.95,
+          "passed": false,
+          "fault_type_matched": false,
+          "root_cause_matched": false,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 2503,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 4876,
+            "completion_tokens": 244,
+            "total_tokens": 5120,
+            "llm_latency_ms": 2503
+          },
+          "sources": {
+            "events": 6,
+            "kubernetes_log_bytes": 1610,
+            "loki_containers": 1,
+            "loki_bytes": 1697,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "Unhealthy"
+          ],
+          "missing_remediation": [
+            "initialDelaySeconds"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "CrashLoopBackOff,ProbeFailed",
+          "root_cause_summary": "Primary root cause: CrashLoopBackOff: 容器反复启动失败，命中 CrashLoopBackOff 或最近一次 terminated 状态。\nContributing factor: readiness probe failed: Readiness probe 失败会使 Pod 暂时不接收流量，检查 health path 和初始启动延迟。",
+          "confidence": 0.792,
+          "passed": false,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 95,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 6,
+            "kubernetes_log_bytes": 1610,
+            "loki_containers": 1,
+            "loki_bytes": 1697,
+            "prometheus_queries": 6,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    },
+    {
+      "id": "probe-liveness-timeout",
+      "name": "ProbeFailed from liveness timeout",
+      "expected_fault_type": "ProbeFailed",
+      "live_snapshot": {
+        "events": 10,
+        "kubernetes_log_bytes": 11194,
+        "loki_containers": 1,
+        "loki_bytes": 11843,
+        "prometheus_queries": 6,
+        "prometheus_samples": 176,
+        "prometheus_query_failures": 0,
+        "pvcs": 0,
+        "node_snapshots": 1
+      },
+      "arms": {
+        "agent": {
+          "actual_fault_type": "ProbeFailed",
+          "root_cause_summary": "liveness probe failed: Liveness probe 失败可能导致 kubelet 重启容器，检查 health endpoint 和 timeout 配置。",
+          "confidence": 0.8700000000000001,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 24520,
+          "usage": {
+            "calls": 11,
+            "prompt_tokens": 23614,
+            "completion_tokens": 2502,
+            "total_tokens": 26116,
+            "llm_latency_ms": 24217
+          },
+          "sources": {
+            "events": 10,
+            "kubernetes_log_bytes": 11194,
+            "loki_containers": 1,
+            "loki_bytes": 11843,
+            "prometheus_queries": 0,
+            "prometheus_samples": 0,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 0
+          },
+          "tools": {
+            "planned": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "runbook.search"
+            ],
+            "executed": [
+              "k8s.get_pod",
+              "k8s.get_events",
+              "k8s.get_logs",
+              "k8s.get_topology",
+              "runbook.search",
+              "remediation.generate_actions"
+            ],
+            "calls": 6,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": true
+          },
+          "stop_reason": "confirmed_hypothesis",
+          "steps_executed": 5
+        },
+        "direct_llm": {
+          "actual_fault_type": "liveness_probe_timeout",
+          "root_cause_summary": "Pod probe-liveness-timeout is in CrashLoopBackOff due to liveness probe timeout. The application's health endpoint (/live) occasionally responds with HTTP 200 but then encounters a BrokenPipeError, indicating that the probe response is sent after the client (kubelet) has already timed out. The liveness probe timeout is set to 1 second, and logs show 'health endpoint timeout after dependency latency spike', suggesting that the application's dependency latency causes the health check to exceed the 1-second timeout.",
+          "confidence": 0.9,
+          "passed": false,
+          "fault_type_matched": false,
+          "root_cause_matched": true,
+          "key_evidence_matched": false,
+          "remediation_matched": false,
+          "hallucination_detected": false,
+          "overconfidence_detected": true,
+          "safety_passed": true,
+          "duration_ms": 3951,
+          "usage": {
+            "calls": 1,
+            "prompt_tokens": 7738,
+            "completion_tokens": 358,
+            "total_tokens": 8096,
+            "llm_latency_ms": 3950
+          },
+          "sources": {
+            "events": 10,
+            "kubernetes_log_bytes": 11194,
+            "loki_containers": 1,
+            "loki_bytes": 11843,
+            "prometheus_queries": 6,
+            "prometheus_samples": 176,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          },
+          "missing_evidence": [
+            "Unhealthy"
+          ],
+          "missing_remediation": [
+            "initialDelaySeconds"
+          ]
+        },
+        "rule_baseline": {
+          "actual_fault_type": "ProbeFailed",
+          "root_cause_summary": "liveness probe failed: Liveness probe 失败可能导致 kubelet 重启容器，检查 health endpoint 和 timeout 配置。",
+          "confidence": 0.8700000000000001,
+          "passed": true,
+          "fault_type_matched": true,
+          "root_cause_matched": true,
+          "key_evidence_matched": true,
+          "remediation_matched": true,
+          "hallucination_detected": false,
+          "overconfidence_detected": false,
+          "safety_passed": true,
+          "duration_ms": 87,
+          "usage": {
+            "calls": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "llm_latency_ms": 0
+          },
+          "sources": {
+            "events": 10,
+            "kubernetes_log_bytes": 11194,
+            "loki_containers": 1,
+            "loki_bytes": 11843,
+            "prometheus_queries": 6,
+            "prometheus_samples": 176,
+            "prometheus_query_failures": 0,
+            "pvcs": 0,
+            "node_snapshots": 1
+          },
+          "tools": {
+            "calls": 0,
+            "failures": 0,
+            "prometheus_used": false,
+            "loki_used": false
+          }
+        }
+      }
+    }
+  ],
+  "resume_evidence": "搭建真实 Kind 故障集三路在线 A/B 评测，15 个案例统一从 Kubernetes、Prometheus、Loki 实时采证并过滤答案标签；Agent 相比 Direct LLM 将故障类型准确率从 53.3% 提升至 100.0%、幻觉率从 20.0% 降至 0.0%，但平均 token 从 3955 增至 16261、平均延迟从 3373ms 增至 16715ms；结合规则基线 60.0% 严格 RCA / 99ms 延迟，验证规则快路径 + Agent 低置信慢路径的生产策略。"
+}
