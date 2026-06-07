@@ -108,6 +108,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	stepsExecuted := 0
 	lastReflection := ReflectionResult{ShouldContinue: true}
 	hasLastReflection := false
+	var preAnalysis *PreAnalysisDecision
 
 	for stopReason == "" {
 		if err := ctx.Err(); err != nil {
@@ -118,12 +119,12 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			stopReason = StopReasonMaxSteps
 			break
 		}
+		if preAnalysis != nil {
+			applyTargetedEvidencePlan(&plan, state, preAnalysis)
+		}
 		steps := nextPlanSteps(&plan)
 		if len(steps) == 0 {
-			if enforceProbeEvidenceFallback(&plan, state) {
-				continue
-			}
-			if enforceStateDrivenEvidenceFallback(&plan, state) {
+			if enforceRuntimeEvidencePlan(&plan, state, preAnalysis) {
 				continue
 			}
 			stopReason = StopReasonPlanComplete
@@ -178,6 +179,12 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 				stopReason = StopReasonCriticalToolFailed
 			}
 		}
+		if preAnalysis == nil && stopReason == "" && shouldRunPreAnalyzer(executions) && state.DiagnosticContext != nil && state.DiagnosticContext.Pod != nil {
+			decision, preErr := r.runPreAnalyzer(ctx, recorder, &plan, state)
+			if preErr == nil && decision != nil {
+				preAnalysis = decision
+			}
+		}
 		hypothesisCtx, hypothesisSpan := observability.Tracer().Start(ctx, "agent.hypothesis_update")
 		latestScores = r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, allEvidence)
 		span.AddEvent("agent.hypothesis.updated", trace.WithAttributes(attribute.Int("agent.hypothesis.count", len(latestScores))))
@@ -215,7 +222,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 					Reason: reflection.Reason,
 				})
 				// Append any new steps suggested by LLM reflection.
-				if reflection.ShouldContinue {
+				if reflection.ShouldContinue && preAnalysis == nil {
 					for _, newStep := range reflection.NewSteps {
 						if redundantReflectionStep(&plan, state, newStep) {
 							continue
@@ -228,15 +235,15 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 						plan.Steps = append(plan.Steps, newStep)
 					}
 				}
-				if enforceProbeEvidenceFallback(&plan, state) {
-					continue
-				}
-				if enforceStateDrivenEvidenceFallback(&plan, state) {
+				if enforceRuntimeEvidencePlan(&plan, state, preAnalysis) {
 					continue
 				}
 				if !reflection.ShouldContinue {
 					if convergence.Converged {
-						if ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
+						if hasPendingTargetedEvidence(&plan) {
+							continue
+						}
+						if preAnalysis == nil && ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
 							recorder.record(ctx, stepRecord{
 								Stage:  StageReflection,
 								Status: model.AgentStepStatusSuccess,
@@ -256,18 +263,17 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if stopReason != "" {
 			break
 		}
-		if enforceProbeEvidenceFallback(&plan, state) {
+		if enforceRuntimeEvidencePlan(&plan, state, preAnalysis) {
 			continue
 		}
-		appendDistinguishingEvidence(&plan, state, convergence)
+		if preAnalysis == nil {
+			appendDistinguishingEvidence(&plan, state, convergence)
+		}
 		if convergence.Converged {
-			if enforceProbeEvidenceFallback(&plan, state) {
+			if hasPendingTargetedEvidence(&plan) {
 				continue
 			}
-			if enforceStateDrivenEvidenceFallback(&plan, state) {
-				continue
-			}
-			if ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
+			if preAnalysis == nil && ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
 				recorder.record(ctx, stepRecord{
 					Stage:  StageReflection,
 					Status: model.AgentStepStatusSuccess,
@@ -279,17 +285,16 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			stopReason = StopReasonConfirmedHypothesis
 			break
 		}
-		for _, execution := range executions {
-			if !execution.MissingTool {
-				r.planner.AdjustPlan(&plan, state, execution.Result, latestScores)
+		if preAnalysis == nil {
+			for _, execution := range executions {
+				if !execution.MissingTool {
+					r.planner.AdjustPlan(&plan, state, execution.Result, latestScores)
+				}
 			}
 		}
 		dropCompletedSnapshotSteps(&plan, state)
 		if nextPlanStep(&plan) == nil {
-			if enforceProbeEvidenceFallback(&plan, state) {
-				continue
-			}
-			if enforceStateDrivenEvidenceFallback(&plan, state) {
+			if enforceRuntimeEvidencePlan(&plan, state, preAnalysis) {
 				continue
 			}
 			if ok, reason := shouldConfirmWithExhaustedEvidence(&plan, state, convergence, confirmedThreshold(r.hypotheses)); ok {
@@ -402,6 +407,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 
 	return &RunResult{
 		Report:           report,
+		PreAnalysis:      preAnalysis,
 		DiagContext:      state.DiagnosticContext,
 		RunbookHits:      state.RunbookHits,
 		Hypotheses:       hypothesisModels,
@@ -412,6 +418,80 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		PlanSummary:      initialPlanSummary,
 		PlannedToolNames: initialPlannedTools,
 	}, nil
+}
+
+func shouldRunPreAnalyzer(executions []planExecution) bool {
+	for _, execution := range executions {
+		if execution.MissingTool || !execution.Result.Success {
+			continue
+		}
+		if execution.Result.StateDelta != nil && execution.Result.StateDelta.DiagnosticContext != nil {
+			return true
+		}
+		switch canonicalToolName(execution.Step.ToolName) {
+		case "k8s.get_pod", "k8s.get_events", "k8s.get_logs", "k8s.get_topology", "k8s.get_pvc":
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runtime) runPreAnalyzer(ctx context.Context, recorder *stepRecorder, plan *Plan, state *ToolState) (*PreAnalysisDecision, error) {
+	analyzeCtx, span := observability.Tracer().Start(ctx, "agent.pre_analyzer")
+	report, err := r.analyzer.Diagnose(state.DiagnosticContext)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		recorder.record(analyzeCtx, stepRecord{
+			Stage:  StagePreAnalysis,
+			Status: model.AgentStepStatusFailed,
+			Reason: "pre-analyzer failed; retained the existing evidence plan",
+			Output: map[string]interface{}{"error": err.Error()},
+		})
+		span.End()
+		return nil, err
+	}
+	if report == nil {
+		err = fmt.Errorf("pre-analyzer returned a nil report")
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		recorder.record(analyzeCtx, stepRecord{
+			Stage:  StagePreAnalysis,
+			Status: model.AgentStepStatusFailed,
+			Reason: "pre-analyzer returned no result; retained the existing evidence plan",
+			Output: map[string]interface{}{"error": err.Error()},
+		})
+		span.End()
+		return nil, err
+	}
+
+	decision := buildPreAnalysisDecision(report, state)
+	output := map[string]interface{}{
+		"locked":          decision != nil,
+		"candidate_fault": report.FaultType,
+		"confidence":      report.ConfidenceScore,
+	}
+	reason := "pre-analyzer result lacked a matching structured signal; retained the existing evidence plan"
+	if decision != nil {
+		state.SetExpectedFault(decision.FaultType)
+		rewrite := applyTargetedEvidencePlan(plan, state, decision)
+		output["decision"] = decision
+		output["scheduled_tools"] = rewrite.scheduled
+		output["skipped_tools"] = rewrite.skipped
+		reason = "locked the structured fault classification and generated a targeted evidence plan"
+		span.SetAttributes(
+			attribute.String("diagnosis.pre_analysis.fault_type", decision.FaultType),
+			attribute.Int("diagnosis.pre_analysis.evidence_tools", len(decision.EvidenceTools)),
+		)
+	}
+	recorder.record(analyzeCtx, stepRecord{
+		Stage:  StagePreAnalysis,
+		Status: model.AgentStepStatusSuccess,
+		Output: output,
+		Reason: reason,
+	})
+	span.End()
+	return decision, nil
 }
 
 type planExecution struct {

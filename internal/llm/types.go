@@ -30,6 +30,13 @@ type UsageReporter interface {
 	LastUsage() UsageRecord
 }
 
+// CumulativeUsageReporter reports all chat calls made through one client
+// instance. It is useful for measuring multi-call Agent workflows.
+type CumulativeUsageReporter interface {
+	CumulativeUsage() UsageRecord
+	UsageCallCount() int
+}
+
 // Prompt stores the system and user messages sent to the chat API.
 type Prompt struct {
 	System string
