@@ -2,7 +2,9 @@ package agent
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strings"
 )
 
 const (
@@ -82,7 +84,19 @@ const convergenceMinConfidence = 0.75
 func rankedHypotheses(scores []HypothesisScore) []HypothesisScore {
 	ranked := append([]HypothesisScore(nil), scores...)
 	sort.SliceStable(ranked, func(i, j int) bool {
-		return ranked[i].Confidence > ranked[j].Confidence
+		diff := ranked[i].Confidence - ranked[j].Confidence
+		if math.Abs(diff) > primaryConfidenceTieEpsilon {
+			return diff > 0
+		}
+		leftSpecificity := hypothesisSpecificityRank(ranked[i].Type)
+		rightSpecificity := hypothesisSpecificityRank(ranked[j].Type)
+		if leftSpecificity != rightSpecificity {
+			return leftSpecificity > rightSpecificity
+		}
+		if len(ranked[i].SupportingRefs) != len(ranked[j].SupportingRefs) {
+			return len(ranked[i].SupportingRefs) > len(ranked[j].SupportingRefs)
+		}
+		return strings.Compare(ranked[i].Type, ranked[j].Type) < 0
 	})
 	return ranked
 }

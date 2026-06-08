@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	"kubesage/internal/diagnostic"
 	"kubesage/internal/model"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestHypothesisEngineScoresEvidenceRefs(t *testing.T) {
@@ -90,8 +94,9 @@ func TestHypothesisEnginePrefersInitContainerCrashOverBadConfig(t *testing.T) {
 	if initCrash.Status != model.HypothesisStatusConfirmed {
 		t.Fatalf("expected confirmed init_container_crash, got %s score %.2f", initCrash.Status, initCrash.Confidence)
 	}
-	if initCrash.Confidence <= badConfig.Confidence {
-		t.Fatalf("expected init container crash to outrank bad config, init=%.2f bad_config=%.2f", initCrash.Confidence, badConfig.Confidence)
+	ranked := rankedHypotheses(scores)
+	if len(ranked) == 0 || ranked[0].Type != "init_container_crash" {
+		t.Fatalf("expected init container crash to outrank bad config, ranked=%#v", ranked)
 	}
 }
 
@@ -198,6 +203,163 @@ func TestHypothesisEngineDoesNotCountUnavailablePrometheusAsMemoryEvidence(t *te
 	}
 	if !containsString(memory.MissingEvidence, "memory metrics") {
 		t.Fatalf("expected missing memory metrics, got %v", memory.MissingEvidence)
+	}
+}
+
+func TestEveryHypothesisCanConfirmWithRequiredEvidence(t *testing.T) {
+	now := time.Now()
+	probePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-0", Namespace: "default"},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name:           "app",
+			ReadinessProbe: &corev1.Probe{},
+		}}},
+	}
+	cases := []struct {
+		name    string
+		kind    string
+		ctx     *diagnostic.DiagnosticContext
+		records []diagnostic.EvidenceRecord
+	}{
+		{
+			name: "memory limit too low", kind: "memory_limit_too_low",
+			records: []diagnostic.EvidenceRecord{{SourceType: "prometheus", Title: "OOM memory working set near limit", Content: "reason=OOMKilled memory working set near limit", Timestamp: now}},
+		},
+		{
+			name: "application memory leak", kind: "application_memory_leak",
+			records: []diagnostic.EvidenceRecord{{SourceType: "prometheus_trend", Title: "Memory trend", Content: "reason=OOMKilled memory working set progressive_growth", Timestamp: now}},
+		},
+		{
+			name: "node memory pressure", kind: "node_memory_pressure",
+			ctx: &diagnostic.DiagnosticContext{Topology: &diagnostic.TopologyInfo{Node: &diagnostic.NodeHealth{
+				Name: "node-a", Ready: true, MemoryPressure: true,
+			}}},
+		},
+		{
+			name: "bad config", kind: "bad_config",
+			records: []diagnostic.EvidenceRecord{
+				{SourceType: "k8s_log", Title: "Previous logs", Content: "fatal: missing config file", Timestamp: now},
+				{SourceType: "k8s_event", Title: "BackOff", Content: "Back-off restarting failed container", Timestamp: now},
+			},
+		},
+		{
+			name: "missing secret or configmap", kind: "missing_secret_or_configmap",
+			records: []diagnostic.EvidenceRecord{{SourceType: "k8s_event", Title: "FailedMount", Content: `secret "api-key" not found`, Timestamp: now}},
+		},
+		{
+			name: "dependency unavailable", kind: "dependency_unavailable",
+			records: []diagnostic.EvidenceRecord{
+				{SourceType: "k8s_log", Title: "Previous logs", Content: "database connection refused", Timestamp: now},
+				{SourceType: "k8s_event", Title: "BackOff", Content: "Back-off restarting failed container", Timestamp: now},
+			},
+		},
+		{
+			name: "probe misconfigured", kind: "probe_misconfigured",
+			ctx:     &diagnostic.DiagnosticContext{PodName: "api-0", Pod: probePod},
+			records: []diagnostic.EvidenceRecord{{SourceType: "k8s_event", Title: "Unhealthy", Content: "Readiness probe failed: HTTP status 404", Timestamp: now}},
+		},
+		{
+			name: "pvc unbound", kind: "pvc_unbound",
+			ctx: &diagnostic.DiagnosticContext{PVCs: []diagnostic.PVCBrief{{Name: "data", Phase: "Pending"}}},
+		},
+		{
+			name: "scheduling constraint", kind: "scheduling_constraint",
+			records: []diagnostic.EvidenceRecord{{SourceType: "k8s_event", Title: "FailedScheduling", Content: "untolerated taint dedicated=infra", Timestamp: now}},
+		},
+		{
+			name: "image pull failed", kind: "image_pull_failed",
+			records: []diagnostic.EvidenceRecord{{SourceType: "k8s_event", Title: "Failed", Content: "ImagePullBackOff: registry unauthorized", Timestamp: now}},
+		},
+		{
+			name: "init container crash", kind: "init_container_crash",
+			records: []diagnostic.EvidenceRecord{{SourceType: "k8s_pod_status", Title: "Init status", Content: "init container init-db InitError exitCode=1", Timestamp: now}},
+		},
+		{
+			name: "node eviction", kind: "node_eviction",
+			records: []diagnostic.EvidenceRecord{{SourceType: "k8s_event", Title: "Evicted", Content: "pod eviction due to memoryPressure=true", Timestamp: now}},
+		},
+		{
+			name: "node not ready", kind: "node_not_ready",
+			ctx: &diagnostic.DiagnosticContext{Topology: &diagnostic.TopologyInfo{Node: &diagnostic.NodeHealth{
+				Name: "node-a", Ready: false,
+			}}},
+		},
+	}
+
+	engine := NewHypothesisEngine()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			score := findScore(engine.Update(1, tc.ctx, tc.records), tc.kind)
+			if score == nil {
+				t.Fatalf("missing hypothesis %s", tc.kind)
+			}
+			if score.Status != model.HypothesisStatusConfirmed || score.Confidence < engine.config.ConfirmedThreshold {
+				t.Fatalf("required evidence must confirm %s: score=%.2f status=%s missing=%v", tc.kind, score.Confidence, score.Status, score.MissingEvidence)
+			}
+			if len(score.MissingEvidence) != 0 {
+				t.Fatalf("complete evidence should not remain missing for %s: %v", tc.kind, score.MissingEvidence)
+			}
+		})
+	}
+}
+
+func TestMissingRequiredEvidenceCannotConfirmAnyHypothesis(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name    string
+		kind    string
+		ctx     *diagnostic.DiagnosticContext
+		records []diagnostic.EvidenceRecord
+	}{
+		{name: "memory limit lacks metrics", kind: "memory_limit_too_low", records: []diagnostic.EvidenceRecord{{SourceType: "k8s_pod_status", Title: "Termination", Content: "reason=OOMKilled exitCode=137", Timestamp: now}}},
+		{name: "memory leak lacks growth", kind: "application_memory_leak", records: []diagnostic.EvidenceRecord{{SourceType: "k8s_pod_status", Title: "Termination", Content: "reason=OOMKilled", Timestamp: now}}},
+		{name: "node pressure explicitly false", kind: "node_memory_pressure", ctx: &diagnostic.DiagnosticContext{Topology: &diagnostic.TopologyInfo{Node: &diagnostic.NodeHealth{Name: "node-a", Ready: true}}}},
+		{name: "config lacks restart impact", kind: "bad_config", records: []diagnostic.EvidenceRecord{{SourceType: "k8s_log", Title: "Log", Content: "missing config file", Timestamp: now}}},
+		{name: "secret has no missing reference", kind: "missing_secret_or_configmap"},
+		{name: "dependency lacks workload impact", kind: "dependency_unavailable", records: []diagnostic.EvidenceRecord{{SourceType: "k8s_log", Title: "Log", Content: "connection refused", Timestamp: now}}},
+		{name: "probe lacks spec", kind: "probe_misconfigured", records: []diagnostic.EvidenceRecord{{SourceType: "k8s_event", Title: "Unhealthy", Content: "Readiness probe failed", Timestamp: now}}},
+		{name: "pvc has no pending status", kind: "pvc_unbound", ctx: &diagnostic.DiagnosticContext{PVCs: []diagnostic.PVCBrief{{Name: "data", Phase: "Bound"}}}},
+		{name: "scheduler has no failure event", kind: "scheduling_constraint"},
+		{name: "image auth lacks pull failure", kind: "image_pull_failed", records: []diagnostic.EvidenceRecord{{SourceType: "k8s_event", Title: "Registry", Content: "registry unauthorized", Timestamp: now}}},
+		{name: "exit code lacks init context", kind: "init_container_crash", records: []diagnostic.EvidenceRecord{{SourceType: "k8s_pod_status", Title: "Container", Content: "exitCode=1", Timestamp: now}}},
+		{name: "pressure lacks eviction", kind: "node_eviction", ctx: &diagnostic.DiagnosticContext{Topology: &diagnostic.TopologyInfo{Node: &diagnostic.NodeHealth{Name: "node-a", Ready: true, MemoryPressure: true}}}},
+		{name: "ready node contradicts not ready", kind: "node_not_ready", ctx: &diagnostic.DiagnosticContext{Topology: &diagnostic.TopologyInfo{Node: &diagnostic.NodeHealth{Name: "node-a", Ready: true, MemoryPressure: true}}}},
+	}
+
+	engine := NewHypothesisEngine()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			score := findScore(engine.Update(1, tc.ctx, tc.records), tc.kind)
+			if score == nil {
+				t.Fatalf("missing hypothesis %s", tc.kind)
+			}
+			if score.Status == model.HypothesisStatusConfirmed || score.Confidence >= engine.config.ConfirmedThreshold {
+				t.Fatalf("incomplete evidence must not confirm %s: score=%.2f status=%s refs=%v", tc.kind, score.Confidence, score.Status, score.SupportingRefs)
+			}
+			if len(score.MissingEvidence) == 0 {
+				t.Fatalf("expected required evidence gap for %s", tc.kind)
+			}
+		})
+	}
+}
+
+func TestHypothesisWeightScaleDoesNotChangeNormalizedScore(t *testing.T) {
+	records := []diagnostic.EvidenceRecord{{
+		SourceType: "k8s_pod_status",
+		Title:      "Termination",
+		Content:    "reason=OOMKilled exitCode=137",
+		Timestamp:  time.Now(),
+	}}
+	defaultScore := findScore(NewHypothesisEngine().Update(1, nil, records), "application_memory_leak")
+	scaled := HypothesisScoringConfig{Weights: map[string]map[string]float64{
+		"application_memory_leak": {"oom": 2.0, "memory": 1.0},
+	}}
+	scaledScore := findScore(NewHypothesisEngine(scaled).Update(1, nil, records), "application_memory_leak")
+	if defaultScore == nil || scaledScore == nil {
+		t.Fatal("missing application_memory_leak hypothesis")
+	}
+	if math.Abs(defaultScore.Confidence-scaledScore.Confidence) > 1e-9 {
+		t.Fatalf("proportional weights should preserve normalized score: default=%.4f scaled=%.4f", defaultScore.Confidence, scaledScore.Confidence)
 	}
 }
 

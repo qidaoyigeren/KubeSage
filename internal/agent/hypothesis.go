@@ -11,6 +11,8 @@ import (
 	"kubesage/internal/diagnostic"
 	"kubesage/internal/model"
 	"kubesage/internal/observability"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // LLMHypothesisScorer optionally re-ranks hypothesis candidates using an LLM.
@@ -67,7 +69,7 @@ func DefaultHypothesisScoringConfig() HypothesisScoringConfig {
 			"bad_config":                  {"config": 0.30, "backoff": 0.20},
 			"missing_secret_or_configmap": {"secret_configmap": 0.30},
 			"dependency_unavailable":      {"refused_timeout": 0.25, "backoff_probe": 0.10},
-			"probe_misconfigured":         {"probe_unhealthy": 0.45},
+			"probe_misconfigured":         {"probe_unhealthy": 0.30, "probe_spec": 0.15},
 			"pvc_unbound":                 {"pvc_bound": 0.45},
 			"scheduling_constraint":       {"scheduler": 0.45},
 			// New hypothesis types for expanded analyzer coverage.
@@ -125,9 +127,6 @@ func (e *HypothesisEngine) Update(taskID uint, ctx *diagnostic.DiagnosticContext
 		e.scoreNodeNotReady(facts),
 	}
 	for i := range candidates {
-		if len(candidates[i].SupportingRefs) == 0 {
-			candidates[i].Confidence = 0.15
-		}
 		candidates[i].Confidence = clamp(candidates[i].Confidence)
 	}
 
@@ -148,7 +147,11 @@ func (e *HypothesisEngine) Update(taskID uint, ctx *diagnostic.DiagnosticContext
 		case candidates[i].Confidence <= e.config.RejectedThreshold || (len(candidates[i].ContradictingRefs) > 0 && len(candidates[i].SupportingRefs) == 0):
 			candidates[i].Status = model.HypothesisStatusRejected
 			if candidates[i].RejectedReason == "" {
-				candidates[i].RejectedReason = "insufficient supporting evidence or contradicting observations"
+				if len(candidates[i].ContradictingRefs) > 0 {
+					candidates[i].RejectedReason = "explicit structured evidence contradicts this hypothesis"
+				} else {
+					candidates[i].RejectedReason = "insufficient supporting evidence"
+				}
 			}
 		default:
 			candidates[i].Status = model.HypothesisStatusActive
@@ -215,9 +218,18 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 		if pvcUnboundSignal(source, text) {
 			addFactRef(&f, "pvc_unbound", ref)
 		}
+		if probeFailureSignal(source, text) {
+			addFactRef(&f, "probe_failure", ref)
+		}
+		if probeSpecSignal(source, text) {
+			addFactRef(&f, "probe_spec", ref)
+		}
+		if source == "k8s_topology" {
+			addFactRef(&f, "topology_context", ref)
+		}
 
 		for _, key := range []string{
-			"backoff", "crashloop", "refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector",
+			"backoff", "crashloop", "refused", "timeout", "failedscheduling", "taint", "selector",
 			"imagepull", "errimagepull", "imagepullbackoff", "unauthorized", "denied", "manifest",
 			"initerror", "initcontainer", "init container", "exitcode", "evicted", "eviction", "nodenotready", "notready",
 		} {
@@ -231,10 +243,14 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 			}
 		}
 	}
+	addStructuredContextFacts(&f, ctx)
 	if ctx != nil && ctx.Topology != nil && ctx.Topology.Node != nil {
 		node := ctx.Topology.Node
+		addFactRef(&f, "topology_context", "topology:node_context")
 		if node.MemoryPressure {
 			addFactRef(&f, "memorypressure", "topology:node_memory_pressure")
+		} else {
+			addFactRef(&f, "memorypressure_false", "topology:node_memory_pressure_false")
 		}
 		if node.DiskPressure {
 			addFactRef(&f, "diskpressure", "topology:node_disk_pressure")
@@ -245,6 +261,8 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 		if !node.Ready {
 			addFactRef(&f, "notready", "topology:node_not_ready")
 			addFactRef(&f, "nodenotready", "topology:node_not_ready")
+		} else {
+			addFactRef(&f, "node_ready", "topology:node_ready")
 		}
 	}
 	for _, pvc := range ctxPVCs(ctx) {
@@ -256,138 +274,177 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 	return f
 }
 
+func addStructuredContextFacts(f *facts, ctx *diagnostic.DiagnosticContext) {
+	if f == nil || ctx == nil {
+		return
+	}
+	if ctx.Pod != nil {
+		podRef := "pod:" + firstNonEmptyString(ctx.PodName, ctx.Pod.Name)
+		for _, container := range ctx.Pod.Spec.Containers {
+			if container.ReadinessProbe != nil || container.LivenessProbe != nil || container.StartupProbe != nil {
+				addFactRef(f, "probe_spec", podRef+":probe_spec:"+container.Name)
+			}
+		}
+		for _, status := range ctx.Pod.Status.ContainerStatuses {
+			addContainerStateFacts(f, podRef+":container:"+status.Name, status.State, false)
+			addContainerStateFacts(f, podRef+":container:"+status.Name+":last", status.LastTerminationState, false)
+		}
+		for _, status := range ctx.Pod.Status.InitContainerStatuses {
+			addContainerStateFacts(f, podRef+":init:"+status.Name, status.State, true)
+			addContainerStateFacts(f, podRef+":init:"+status.Name+":last", status.LastTerminationState, true)
+		}
+		if strings.EqualFold(strings.TrimSpace(ctx.Pod.Status.Reason), "Evicted") {
+			addFactRef(f, "evicted", podRef+":status_reason")
+			addFactRef(f, "eviction", podRef+":status_reason")
+		}
+	}
+	for i, trend := range ctx.MetricTrends {
+		if trend.SampleCount <= 0 || strings.EqualFold(trend.Classification, "query_failed") {
+			continue
+		}
+		metric := strings.ToLower(trend.Metric)
+		if !strings.Contains(metric, "memory") {
+			continue
+		}
+		ref := fmt.Sprintf("metric_trend:%s:%d", trend.Classification, i+1)
+		addFactRef(f, "prometheus_memory", ref)
+		if strings.EqualFold(trend.Classification, "progressive_growth") {
+			addFactRef(f, "memory_growth", ref)
+		}
+	}
+}
+
+func addContainerStateFacts(f *facts, ref string, state corev1.ContainerState, initContainer bool) {
+	if state.Waiting != nil {
+		reason := strings.ToLower(strings.TrimSpace(state.Waiting.Reason))
+		switch reason {
+		case "crashloopbackoff":
+			addFactRef(f, "crashloop", ref)
+			addFactRef(f, "backoff", ref)
+		case "imagepullbackoff", "errimagepull":
+			addFactRef(f, "imagepull", ref)
+			addFactRef(f, reason, ref)
+		}
+		if initContainer && reason != "" && reason != "podinitializing" {
+			addFactRef(f, "initcontainer", ref)
+			addFactRef(f, "initerror", ref)
+		}
+	}
+	if state.Terminated == nil {
+		return
+	}
+	reason := strings.ToLower(strings.TrimSpace(state.Terminated.Reason))
+	if reason == "oomkilled" {
+		addFactRef(f, "oom_signal", ref)
+	}
+	if state.Terminated.ExitCode != 0 {
+		addFactRef(f, "exitcode", ref)
+	}
+	if initContainer && (state.Terminated.ExitCode != 0 || (reason != "" && reason != "completed")) {
+		addFactRef(f, "initcontainer", ref)
+		addFactRef(f, "initerror", ref)
+	}
+}
+
 func negativeDiagnosticEvidence(record diagnostic.EvidenceRecord) bool {
 	return strings.EqualFold(strings.TrimSpace(record.SourceType), "diagnostic_engine") &&
 		strings.EqualFold(strings.TrimSpace(record.Title), "No analyzer matched")
 }
 
 func (e *HypothesisEngine) scoreMemoryLimitTooLow(f facts) HypothesisScore {
-	s := base("memory_limit_too_low", "Container memory limit may be too low for observed workload.")
-	s.add(e.weight(s.Type, "oom", 0.25), refs(f, "oom_signal")...)
-	s.add(e.weight(s.Type, "working_set_limit", 0.20), refs(f, "working_set_limit")...)
-	s.add(e.weight(s.Type, "prometheus", 0.10), refs(f, "prometheus_memory")...)
-	if len(refs(f, "prometheus_memory")) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "memory metrics")
-	}
-	return s
+	s := newHypothesisScore("memory_limit_too_low", "Container memory limit may be too low for observed workload.")
+	s.required(e.weight(s.score.Type, "oom", 0.25), "container termination status", refs(f, "oom_signal")...)
+	s.required(e.weight(s.score.Type, "working_set_limit", 0.20), "memory metrics", refs(f, "working_set_limit")...)
+	s.optional(e.weight(s.score.Type, "prometheus", 0.10), refs(f, "prometheus_memory")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreApplicationMemoryLeak(f facts) HypothesisScore {
-	s := base("application_memory_leak", "Application memory may grow until the container is killed.")
-	s.add(e.weight(s.Type, "oom", 0.20), refs(f, "oom_signal")...)
-	s.add(e.weight(s.Type, "memory", 0.10), refs(f, "memory_growth")...)
-	if len(refs(f, "memory_growth")) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "heap/profile or sustained memory growth evidence")
-	}
-	return s
+	s := newHypothesisScore("application_memory_leak", "Application memory may grow until the container is killed.")
+	s.required(e.weight(s.score.Type, "oom", 0.20), "container termination status", refs(f, "oom_signal")...)
+	s.required(e.weight(s.score.Type, "memory", 0.10), "heap/profile or sustained memory growth evidence", refs(f, "memory_growth")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreNodeMemoryPressure(f facts) HypothesisScore {
-	s := base("node_memory_pressure", "Node-level memory pressure may contribute to pod instability.")
-	s.add(e.weight(s.Type, "memorypressure", 0.35), refs(f, "memorypressure")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "node pressure observation")
-	}
-	return s
+	s := newHypothesisScore("node_memory_pressure", "Node-level memory pressure may contribute to pod instability.")
+	s.required(e.weight(s.score.Type, "memorypressure", 0.35), "node pressure observation", refs(f, "memorypressure")...)
+	s.requiredContext(e.weight(s.score.Type, "k8s_topology", 0.10), "topology context", refs(f, "topology_context")...)
+	s.contradict(refs(f, "memorypressure_false")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreBadConfig(f facts) HypothesisScore {
-	s := base("bad_config", "Application startup may fail because of invalid configuration.")
-	s.add(e.weight(s.Type, "config", 0.25), refs(f, "config_error")...)
-	s.add(e.weight(s.Type, "backoff", 0.15), refs(f, "backoff", "crashloop")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "logs or events mentioning configuration errors")
-	}
-	return s
+	s := newHypothesisScore("bad_config", "Application startup may fail because of invalid configuration.")
+	s.required(e.weight(s.score.Type, "config", 0.25), "logs or events mentioning configuration errors", refs(f, "config_error")...)
+	s.required(e.weight(s.score.Type, "backoff", 0.15), "restart or backoff evidence", refs(f, "backoff", "crashloop")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreMissingSecretOrConfigMap(f facts) HypothesisScore {
-	s := base("missing_secret_or_configmap", "A referenced Secret or ConfigMap may be missing or incomplete.")
-	s.add(e.weight(s.Type, "secret_configmap", 0.30), refs(f, "secret_configmap_missing")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "secret/configmap reference evidence")
-	}
-	return s
+	s := newHypothesisScore("missing_secret_or_configmap", "A referenced Secret or ConfigMap may be missing or incomplete.")
+	s.required(e.weight(s.score.Type, "secret_configmap", 0.30), "secret/configmap reference evidence", refs(f, "secret_configmap_missing")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreDependencyUnavailable(f facts) HypothesisScore {
-	s := base("dependency_unavailable", "A downstream dependency may be unavailable during startup or health checks.")
-	s.add(e.weight(s.Type, "refused_timeout", 0.25), refs(f, "refused", "timeout")...)
-	s.add(e.weight(s.Type, "backoff_probe", 0.10), refs(f, "backoff", "probe")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "dependency timeout/refused log evidence")
-	}
-	return s
+	s := newHypothesisScore("dependency_unavailable", "A downstream dependency may be unavailable during startup or health checks.")
+	s.required(e.weight(s.score.Type, "refused_timeout", 0.25), "dependency timeout/refused log evidence", refs(f, "refused", "timeout")...)
+	s.required(e.weight(s.score.Type, "backoff_probe", 0.10), "restart or probe impact evidence", refs(f, "backoff", "probe_failure")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreProbeMisconfigured(f facts) HypothesisScore {
-	s := base("probe_misconfigured", "Readiness or liveness probe settings may not match the application.")
-	s.add(e.weight(s.Type, "probe_unhealthy", 0.30), refs(f, "probe", "unhealthy")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "probe events and probe spec")
-	}
-	return s
+	s := newHypothesisScore("probe_misconfigured", "Readiness or liveness probe settings may not match the application.")
+	s.required(e.weight(s.score.Type, "probe_unhealthy", 0.30), "probe failure events", refs(f, "probe_failure")...)
+	s.required(e.weight(s.score.Type, "probe_spec", 0.15), "probe spec", refs(f, "probe_spec")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scorePVCUnbound(f facts) HypothesisScore {
-	s := base("pvc_unbound", "A PersistentVolumeClaim may be unbound and blocking scheduling/startup.")
-	s.add(e.weight(s.Type, "pvc_bound", 0.35), refs(f, "pvc_unbound")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "pvc status")
-	}
-	return s
+	s := newHypothesisScore("pvc_unbound", "A PersistentVolumeClaim may be unbound and blocking scheduling/startup.")
+	s.required(e.weight(s.score.Type, "pvc_bound", 0.35), "pvc status", refs(f, "pvc_unbound")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreSchedulingConstraint(f facts) HypothesisScore {
-	s := base("scheduling_constraint", "Scheduling constraints may prevent the pod from running.")
-	s.add(e.weight(s.Type, "scheduler", 0.30), refs(f, "failedscheduling", "taint", "selector")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "scheduler events")
-	}
-	return s
+	s := newHypothesisScore("scheduling_constraint", "Scheduling constraints may prevent the pod from running.")
+	s.required(e.weight(s.score.Type, "scheduler", 0.30), "scheduler events", refs(f, "failedscheduling", "taint", "selector")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreImagePullFailed(f facts) HypothesisScore {
-	s := base("image_pull_failed", "Container image cannot be pulled due to wrong name, missing tag, or registry authentication failure.")
-	s.add(e.weight(s.Type, "imagepull", 0.35), refs(f, "imagepull", "errimagepull", "imagepullbackoff")...)
-	s.add(e.weight(s.Type, "registry_auth", 0.15), refs(f, "unauthorized", "denied", "manifest")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "image pull events")
-	}
-	return s
+	s := newHypothesisScore("image_pull_failed", "Container image cannot be pulled due to wrong name, missing tag, or registry authentication failure.")
+	s.required(e.weight(s.score.Type, "imagepull", 0.35), "image pull events", refs(f, "imagepull", "errimagepull", "imagepullbackoff")...)
+	s.optional(e.weight(s.score.Type, "registry_auth", 0.15), refs(f, "unauthorized", "denied", "manifest")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreInitContainerCrash(f facts) HypothesisScore {
-	s := base("init_container_crash", "An init container is failing, possibly due to dependency issues or misconfiguration.")
+	s := newHypothesisScore("init_container_crash", "An init container is failing, possibly due to dependency issues or misconfiguration.")
 	initRefs := refs(f, "initerror", "initcontainer", "init container")
-	s.add(e.weight(s.Type, "init_error", 0.30), initRefs...)
+	s.required(e.weight(s.score.Type, "init_error", 0.30), "init container status and logs", initRefs...)
 	if len(initRefs) > 0 {
-		s.add(e.weight(s.Type, "init_exit", 0.15), refs(f, "exitcode")...)
+		s.optional(e.weight(s.score.Type, "init_exit", 0.15), refs(f, "exitcode")...)
+	} else {
+		s.optional(e.weight(s.score.Type, "init_exit", 0.15))
 	}
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "init container status and logs")
-	}
-	return s
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreNodeEviction(f facts) HypothesisScore {
-	s := base("node_eviction", "Pod was evicted due to node resource pressure (memory, disk, or PID).")
-	s.add(e.weight(s.Type, "evicted", 0.35), refs(f, "evicted", "eviction")...)
-	s.add(e.weight(s.Type, "node_pressure", 0.15), refs(f, "memorypressure", "diskpressure", "pidpressure")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "eviction events and node pressure conditions")
-	}
-	return s
+	s := newHypothesisScore("node_eviction", "Pod was evicted due to node resource pressure (memory, disk, or PID).")
+	s.required(e.weight(s.score.Type, "evicted", 0.35), "eviction events", refs(f, "evicted", "eviction")...)
+	s.optional(e.weight(s.score.Type, "node_pressure", 0.15), refs(f, "memorypressure", "diskpressure", "pidpressure")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) scoreNodeNotReady(f facts) HypothesisScore {
-	s := base("node_not_ready", "The node hosting this pod is in NotReady state, causing pod instability.")
-	s.add(e.weight(s.Type, "nodenotready", 0.40), refs(f, "nodenotready", "notready")...)
-	s.add(e.weight(s.Type, "node_pressure", 0.10), refs(f, "memorypressure", "diskpressure")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "node Ready condition and pressure events")
-	}
-	return s
+	s := newHypothesisScore("node_not_ready", "The node hosting this pod is in NotReady state, causing pod instability.")
+	s.required(e.weight(s.score.Type, "nodenotready", 0.40), "node Ready condition", refs(f, "nodenotready", "notready")...)
+	s.optional(e.weight(s.score.Type, "node_pressure", 0.10), refs(f, "memorypressure", "diskpressure")...)
+	s.contradict(refs(f, "node_ready")...)
+	return s.finish(e.config)
 }
 
 func (e *HypothesisEngine) weight(hypothesis, key string, fallback float64) float64 {
@@ -402,16 +459,94 @@ func (e *HypothesisEngine) weight(hypothesis, key string, fallback float64) floa
 	return fallback
 }
 
-func base(kind, summary string) HypothesisScore {
-	return HypothesisScore{Type: kind, Summary: summary, Confidence: 0.30}
+const (
+	hypothesisPriorConfidence = 0.10
+	requiredEvidenceCapGap    = 0.05
+	confirmedEvidenceFloorGap = 0.05
+)
+
+// hypothesisScoreBuilder treats configured weights as relative evidence
+// strength inside one hypothesis. This avoids comparing raw weight sums across
+// hypotheses while preserving their domain-specific evidence priorities.
+type hypothesisScoreBuilder struct {
+	score           HypothesisScore
+	matchedWeight   float64
+	totalWeight     float64
+	requiredMissing bool
 }
 
-func (s *HypothesisScore) add(weight float64, refs ...string) {
-	if len(refs) == 0 {
+func newHypothesisScore(kind, summary string) *hypothesisScoreBuilder {
+	return &hypothesisScoreBuilder{
+		score: HypothesisScore{Type: kind, Summary: summary},
+	}
+}
+
+func (s *hypothesisScoreBuilder) required(weight float64, missing string, evidenceRefs ...string) {
+	s.add(weight, evidenceRefs...)
+	if len(evidenceRefs) == 0 {
+		s.requiredMissing = true
+		s.score.MissingEvidence = appendUnique(s.score.MissingEvidence, missing)
+	}
+}
+
+func (s *hypothesisScoreBuilder) requiredContext(weight float64, missing string, evidenceRefs ...string) {
+	if weight < 0 {
+		weight = 0
+	}
+	s.totalWeight += weight
+	if len(evidenceRefs) == 0 {
+		s.requiredMissing = true
+		s.score.MissingEvidence = appendUnique(s.score.MissingEvidence, missing)
 		return
 	}
-	s.Confidence += weight
-	s.SupportingRefs = appendUnique(s.SupportingRefs, refs...)
+	s.matchedWeight += weight
+}
+
+func (s *hypothesisScoreBuilder) optional(weight float64, evidenceRefs ...string) {
+	s.add(weight, evidenceRefs...)
+}
+
+func (s *hypothesisScoreBuilder) add(weight float64, evidenceRefs ...string) {
+	if weight < 0 {
+		weight = 0
+	}
+	s.totalWeight += weight
+	if len(evidenceRefs) == 0 {
+		return
+	}
+	s.matchedWeight += weight
+	s.score.SupportingRefs = appendUnique(s.score.SupportingRefs, evidenceRefs...)
+}
+
+func (s *hypothesisScoreBuilder) contradict(evidenceRefs ...string) {
+	s.score.ContradictingRefs = appendUnique(s.score.ContradictingRefs, evidenceRefs...)
+}
+
+func (s *hypothesisScoreBuilder) finish(config HypothesisScoringConfig) HypothesisScore {
+	confirmedThreshold := config.ConfirmedThreshold
+	if confirmedThreshold <= 0 {
+		confirmedThreshold = 0.75
+	}
+	rejectedThreshold := config.RejectedThreshold
+	if rejectedThreshold <= 0 {
+		rejectedThreshold = 0.20
+	}
+
+	confidence := hypothesisPriorConfidence
+	if s.totalWeight > 0 && len(s.score.SupportingRefs) > 0 {
+		evidenceRatio := clamp(s.matchedWeight / s.totalWeight)
+		confidence = hypothesisPriorConfidence + (1-hypothesisPriorConfidence)*evidenceRatio
+	}
+	if s.requiredMissing {
+		confidence = minFloat(confidence, confirmedThreshold-requiredEvidenceCapGap)
+	} else if len(s.score.SupportingRefs) > 0 {
+		confidence = maxFloat(confidence, confirmedThreshold+confirmedEvidenceFloorGap)
+	}
+	if len(s.score.ContradictingRefs) > 0 {
+		confidence = minFloat(confidence, rejectedThreshold)
+	}
+	s.score.Confidence = clamp(confidence)
+	return s.score
 }
 
 func refs(f facts, keys ...string) []string {
@@ -563,6 +698,38 @@ func pvcUnboundSignal(source, text string) bool {
 		strings.Contains(text, "phase: pending")
 }
 
+func probeFailureSignal(source, text string) bool {
+	text = strings.ToLower(text)
+	if strings.Contains(text, "probe failed") ||
+		strings.Contains(text, "readiness probe failure") ||
+		strings.Contains(text, "liveness probe failure") ||
+		strings.Contains(text, "startup probe failure") {
+		return true
+	}
+	return source == "k8s_event" &&
+		strings.Contains(text, "unhealthy") &&
+		strings.Contains(text, "probe")
+}
+
+func probeSpecSignal(source, text string) bool {
+	if source != "k8s_pod" && source != "k8s_pod_status" {
+		return false
+	}
+	compact := strings.NewReplacer("_", "", "-", "", " ", "").Replace(strings.ToLower(text))
+	hasProbe := strings.Contains(compact, "readinessprobe") ||
+		strings.Contains(compact, "livenessprobe") ||
+		strings.Contains(compact, "startupprobe")
+	if !hasProbe {
+		return false
+	}
+	return strings.Contains(compact, "path=") ||
+		strings.Contains(compact, "port=") ||
+		strings.Contains(compact, "timeoutseconds") ||
+		strings.Contains(compact, "initialdelayseconds") ||
+		strings.Contains(compact, "periodseconds") ||
+		strings.Contains(compact, "failurethreshold")
+}
+
 func unavailableObservation(text string) bool {
 	for _, marker := range []string{
 		"unavailable", "skipped", "failed", "empty", "not configured",
@@ -620,6 +787,20 @@ func clamp(v float64) float64 {
 		return 1
 	}
 	return v
+}
+
+func minFloat(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // blendScores applies a bounded LLM penalty to evidence-derived scores.
