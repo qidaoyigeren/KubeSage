@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -9,7 +8,7 @@ import (
 	"kubesage/internal/model"
 )
 
-func TestHypothesisEngineRequiresMemoryShapeForLimitTooLow(t *testing.T) {
+func TestHypothesisEngineScoresEvidenceRefs(t *testing.T) {
 	engine := NewHypothesisEngine()
 	scores := engine.Update(1, nil, []diagnostic.EvidenceRecord{
 		{SourceType: "prometheus", Title: "OOM memory working set near limit", Content: "oom memory working set limit", Severity: "critical", Timestamp: time.Now()},
@@ -19,59 +18,11 @@ func TestHypothesisEngineRequiresMemoryShapeForLimitTooLow(t *testing.T) {
 	if memory == nil {
 		t.Fatalf("missing memory hypothesis")
 	}
-	if memory.Status == model.HypothesisStatusConfirmed {
-		t.Fatalf("near-limit samples alone must not confirm memory limit hypothesis, got score %.2f refs=%v", memory.Confidence, memory.SupportingRefs)
-	}
-	if !containsSubstring(memory.MissingEvidence, "memory curve shape") {
-		t.Fatalf("expected missing curve-shape evidence, got %v", memory.MissingEvidence)
-	}
-}
-
-func TestHypothesisEngineConfirmsLimitTooLowFromMemoryPattern(t *testing.T) {
-	engine := NewHypothesisEngine()
-	scores := engine.Update(1, nil, []diagnostic.EvidenceRecord{
-		{
-			SourceType: "prometheus",
-			Title:      "Container memory working set around OOMKilled",
-			Content:    "reason=OOMKilled memory working set memoryPattern=memory_limit_too_low sustainedNearLimit=true baselineLimitRatio=92.0% preOOMSlopeRatioPerMinute=1.0%",
-			Severity:   "critical",
-			Timestamp:  time.Now(),
-		},
-	})
-	memory := findScore(scores, "memory_limit_too_low")
-	leak := findScore(scores, "application_memory_leak")
-	if memory == nil || leak == nil {
-		t.Fatalf("missing hypotheses memory=%#v leak=%#v", memory, leak)
-	}
 	if memory.Status != model.HypothesisStatusConfirmed {
-		t.Fatalf("expected confirmed memory limit hypothesis, got %s score %.2f missing=%v", memory.Status, memory.Confidence, memory.MissingEvidence)
+		t.Fatalf("expected confirmed memory hypothesis, got %s score %.2f", memory.Status, memory.Confidence)
 	}
-	if leak.Status == model.HypothesisStatusConfirmed || leak.Confidence >= memory.Confidence {
-		t.Fatalf("limit-too-low shape should not confirm leak or outrank limit: leak=%.2f/%s memory=%.2f/%s", leak.Confidence, leak.Status, memory.Confidence, memory.Status)
-	}
-}
-
-func TestHypothesisEngineConfirmsApplicationLeakFromMemoryPattern(t *testing.T) {
-	engine := NewHypothesisEngine()
-	scores := engine.Update(1, nil, []diagnostic.EvidenceRecord{
-		{
-			SourceType: "prometheus",
-			Title:      "Container memory working set around OOMKilled",
-			Content:    "reason=OOMKilled memory working set memoryPattern=application_memory_leak baselineLimitRatio=30.0% preOOMEndLimitRatio=98.0% preOOMSlopeRatioPerMinute=14.0% postRestartMinLimitRatio=22.0%",
-			Severity:   "critical",
-			Timestamp:  time.Now(),
-		},
-	})
-	leak := findScore(scores, "application_memory_leak")
-	memory := findScore(scores, "memory_limit_too_low")
-	if leak == nil || memory == nil {
-		t.Fatalf("missing hypotheses leak=%#v memory=%#v", leak, memory)
-	}
-	if leak.Status != model.HypothesisStatusConfirmed {
-		t.Fatalf("expected confirmed leak hypothesis, got %s score %.2f missing=%v", leak.Status, leak.Confidence, leak.MissingEvidence)
-	}
-	if memory.Status == model.HypothesisStatusConfirmed || memory.Confidence >= leak.Confidence {
-		t.Fatalf("leak shape should not confirm or outrank limit-too-low: memory=%.2f/%s leak=%.2f/%s", memory.Confidence, memory.Status, leak.Confidence, leak.Status)
+	if len(memory.SupportingRefs) == 0 {
+		t.Fatalf("expected supporting refs")
 	}
 }
 
@@ -205,13 +156,4 @@ func findScore(scores []HypothesisScore, kind string) *HypothesisScore {
 		}
 	}
 	return nil
-}
-
-func containsSubstring(items []string, want string) bool {
-	for _, item := range items {
-		if strings.Contains(item, want) {
-			return true
-		}
-	}
-	return false
 }

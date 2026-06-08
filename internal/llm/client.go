@@ -25,6 +25,8 @@ type OpenAICompatibleClient struct {
 	http    *http.Client
 	mu      sync.Mutex
 	usage   UsageRecord
+	total   UsageRecord
+	calls   int
 }
 
 type chatCompletionRequest struct {
@@ -210,6 +212,24 @@ func (c *OpenAICompatibleClient) LastUsage() UsageRecord {
 	return c.usage
 }
 
+func (c *OpenAICompatibleClient) CumulativeUsage() UsageRecord {
+	if c == nil {
+		return UsageRecord{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.total
+}
+
+func (c *OpenAICompatibleClient) UsageCallCount() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
 func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt agent.PlanPrompt) (agent.Plan, error) {
 	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
 		return agent.Plan{}, fmt.Errorf("llm client is not configured")
@@ -378,8 +398,9 @@ func (c *OpenAICompatibleClient) ScoreHypotheses(ctx context.Context, candidates
 		Messages: []chatMessage{
 			{Role: "system", Content: strings.Join([]string{
 				"You are KubeSage's hypothesis scoring engine.",
-				"Given the current hypothesis candidates with keyword-based confidence scores,",
-				"re-rank them by adjusting confidence based on your understanding of Kubernetes故障诊断.",
+				"Given hypothesis candidates with evidence-derived confidence scores,",
+				"identify semantic conflicts that justify lowering confidence.",
+				"Do not raise confidence, invent evidence, or treat a keyword mention as proof of root cause.",
 				"Return JSON: {\"hypotheses\": [{\"type\": string, \"confidence\": float, \"summary\": string}]}",
 				"Only include hypotheses you want to adjust. Keep type names exactly as provided.",
 				"Confidence must be between 0 and 1.",
@@ -551,6 +572,16 @@ func (c *OpenAICompatibleClient) captureUsage(usage *struct {
 	}
 	c.mu.Lock()
 	c.usage = record
+	if c.total.Provider == "" {
+		c.total.Provider = record.Provider
+		c.total.Model = record.Model
+	}
+	c.total.PromptTokens += record.PromptTokens
+	c.total.CompletionTokens += record.CompletionTokens
+	c.total.TotalTokens += record.TotalTokens
+	c.total.LatencyMS += record.LatencyMS
+	c.total.EstimatedCost += record.EstimatedCost
+	c.calls++
 	c.mu.Unlock()
 }
 

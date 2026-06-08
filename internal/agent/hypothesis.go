@@ -61,7 +61,7 @@ func DefaultHypothesisScoringConfig() HypothesisScoringConfig {
 		RejectedThreshold:  0.20,
 		Weights: map[string]map[string]float64{
 			"memory_limit_too_low":        {"oom": 0.25, "working_set_limit": 0.20, "prometheus": 0.10},
-			"application_memory_leak":     {"oom": 0.20, "memory": 0.30},
+			"application_memory_leak":     {"oom": 0.20, "memory": 0.10},
 			"node_memory_pressure":        {"memorypressure": 0.35, "k8s_topology": 0.10},
 			"bad_config":                  {"config": 0.30, "backoff": 0.20},
 			"missing_secret_or_configmap": {"secret_configmap": 0.30},
@@ -194,7 +194,7 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 		f.text += "\n" + text
 		f.sourceRefs[record.SourceType] = append(f.sourceRefs[record.SourceType], ref)
 		for _, key := range []string{
-			"oom", "oomkilled", "memory", "working set", "limit", "limitratio", "sustainednearlimit", "progressive_growth", "backoff", "crashloop", "config", "secret", "configmap",
+			"oom", "oomkilled", "memory", "working set", "limit", "backoff", "crashloop", "config", "secret", "configmap",
 			"refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector", "pvc", "bound",
 			"imagepull", "errimagepull", "imagepullbackoff", "unauthorized", "denied", "manifest",
 			"initerror", "initcontainer", "init container", "exitcode", "evicted", "eviction", "nodenotready", "notready",
@@ -208,12 +208,6 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 			if strings.Contains(text, key) {
 				f.refsByKey[key] = append(f.refsByKey[key], ref)
 			}
-		}
-		if strings.Contains(text, "memorypattern=memory_limit_too_low") {
-			f.refsByKey["memory_limit_too_low_pattern"] = append(f.refsByKey["memory_limit_too_low_pattern"], ref)
-		}
-		if strings.Contains(text, "memorypattern=application_memory_leak") {
-			f.refsByKey["application_memory_leak_pattern"] = append(f.refsByKey["application_memory_leak_pattern"], ref)
 		}
 		for _, key := range []string{"memorypressure", "diskpressure", "pidpressure"} {
 			if positiveConditionSignal(text, key) {
@@ -260,14 +254,10 @@ func negativeDiagnosticEvidence(record diagnostic.EvidenceRecord) bool {
 func (e *HypothesisEngine) scoreMemoryLimitTooLow(f facts) HypothesisScore {
 	s := base("memory_limit_too_low", "Container memory limit may be too low for observed workload.")
 	s.add(e.weight(s.Type, "oom", 0.25), refs(f, "oom", "oomkilled")...)
-	patternRefs := refs(f, "memory_limit_too_low_pattern")
-	s.add(e.weight(s.Type, "working_set_limit", 0.20), patternRefs...)
+	s.add(e.weight(s.Type, "working_set_limit", 0.20), refs(f, "working set", "limit")...)
 	s.add(e.weight(s.Type, "prometheus", 0.10), f.sourceRefs["prometheus"]...)
-	s.add(0.05, refs(f, "working set", "limit", "limitratio", "sustainednearlimit")...)
 	if !contains(f.text, "prometheus") {
 		s.MissingEvidence = append(s.MissingEvidence, "memory metrics")
-	} else if len(patternRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "memory curve shape: high baseline, low pre-OOM slope, and post-restart return")
 	}
 	return s
 }
@@ -275,11 +265,8 @@ func (e *HypothesisEngine) scoreMemoryLimitTooLow(f facts) HypothesisScore {
 func (e *HypothesisEngine) scoreApplicationMemoryLeak(f facts) HypothesisScore {
 	s := base("application_memory_leak", "Application memory may grow until the container is killed.")
 	s.add(e.weight(s.Type, "oom", 0.20), refs(f, "oom", "oomkilled")...)
-	growthRefs := refs(f, "application_memory_leak_pattern", "progressive_growth")
-	s.add(e.weight(s.Type, "memory", 0.30), growthRefs...)
-	if len(growthRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "heap/profile or sustained memory growth evidence")
-	}
+	s.add(e.weight(s.Type, "memory", 0.10), refs(f, "memory")...)
+	s.MissingEvidence = append(s.MissingEvidence, "heap/profile or sustained memory growth evidence")
 	return s
 }
 

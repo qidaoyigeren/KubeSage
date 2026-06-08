@@ -23,6 +23,7 @@ Thumbs.db
 # Logs
 *.log
 tmp/
+.tmp/
 
 # Coverage
 coverage.out

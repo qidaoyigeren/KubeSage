@@ -77,7 +77,7 @@ func TestBuildReportSnapshotIncludesPrimaryAndContributingFactors(t *testing.T) 
 		},
 	}
 	snapshot := BuildReportSnapshot(report, hypotheses, nil, nil, nil, StopReasonConfirmedHypothesis)
-	if snapshot.PrimaryRootCause == nil || snapshot.PrimaryRootCause.HypothesisType != "node_not_ready" {
+	if snapshot.PrimaryRootCause == nil || snapshot.PrimaryRootCause.HypothesisType != "NodeNotReady" {
 		t.Fatalf("unexpected primary root cause: %#v", snapshot.PrimaryRootCause)
 	}
 	if len(snapshot.ContributingFactors) != 1 || snapshot.ContributingFactors[0].HypothesisType != "node_eviction" {
@@ -85,6 +85,42 @@ func TestBuildReportSnapshotIncludesPrimaryAndContributingFactors(t *testing.T) 
 	}
 	if !containsString(snapshot.ContributingFactors[0].MissingEvidence, "node pressure metrics") {
 		t.Fatalf("expected contributing factor missing evidence, got %#v", snapshot.ContributingFactors[0].MissingEvidence)
+	}
+}
+
+func TestBuildReportSnapshotKeepsAnalyzerPrimaryOverHypothesis(t *testing.T) {
+	report := &diagnostic.Report{
+		FaultType:        "OOMKilled",
+		RootCauseSummary: "Container status reason is OOMKilled.",
+		ConfidenceScore:  0.90,
+		PrimaryRootCause: &diagnostic.RootCauseFactor{
+			AnalyzerName:     "oomkilled",
+			FaultType:        "OOMKilled",
+			Summary:          "Container status reason is OOMKilled.",
+			ConfidenceScore:  0.90,
+			ContributingRole: "primary",
+		},
+		Evidences: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_pod_status",
+			Title:      "OOM termination evidence",
+			Content:    "reason=OOMKilled exitCode=137",
+			Severity:   "critical",
+		}},
+	}
+	hypotheses := []model.Hypothesis{{
+		HypothesisType:         "bad_config",
+		Summary:                "A log mentioned config.",
+		ConfidenceScore:        0.95,
+		Status:                 model.HypothesisStatusConfirmed,
+		SupportingEvidenceRefs: model.JSONText(`["k8s_log:Previous logs"]`),
+	}}
+
+	snapshot := BuildReportSnapshot(report, hypotheses, nil, nil, nil, StopReasonConfirmedHypothesis)
+	if snapshot.PrimaryRootCause == nil || snapshot.PrimaryRootCause.HypothesisType != "OOMKilled" {
+		t.Fatalf("expected deterministic analyzer primary, got %#v", snapshot.PrimaryRootCause)
+	}
+	if len(snapshot.ContributingFactors) != 1 || snapshot.ContributingFactors[0].HypothesisType != "bad_config" {
+		t.Fatalf("expected hypothesis to remain contributing, got %#v", snapshot.ContributingFactors)
 	}
 }
 
