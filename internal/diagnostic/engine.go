@@ -1,6 +1,7 @@
 package diagnostic
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -413,7 +414,14 @@ func enrichReportWithMetricTrends(ctx *DiagnosticContext, report *Report) {
 	critical := false
 	parts := make([]string, 0, len(ctx.MetricTrends))
 	for _, trend := range ctx.MetricTrends {
-		parts = append(parts, trend.Profile+"/"+trend.Window+"="+trend.Classification)
+		parts = append(parts, fmt.Sprintf("%s/%s=%s growthRatio=%.2f slopePerMinute=%.2f samples=%d",
+			trend.Profile,
+			trend.Window,
+			trend.Classification,
+			trend.GrowthRatio,
+			trend.SlopePerMinute,
+			trend.SampleCount,
+		))
 		if trend.Classification == "progressive_growth" || trend.Classification == "sudden_spike" || trend.Classification == "restart_increasing" {
 			critical = true
 		}

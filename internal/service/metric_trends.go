@@ -114,6 +114,13 @@ func classifyTrend(trend diagnostic.MetricTrend, points []promapi.Point) diagnos
 	if trend.FirstValue > 0 {
 		trend.GrowthRatio = (trend.LastValue - trend.FirstValue) / trend.FirstValue
 	}
+	if len(points) >= 2 {
+		minutes := points[len(points)-1].Timestamp.Sub(points[0].Timestamp).Minutes()
+		if minutes <= 0 {
+			minutes = float64(len(points) - 1)
+		}
+		trend.SlopePerMinute = (trend.LastValue - trend.FirstValue) / minutes
+	}
 	switch {
 	case len(points) >= 4 && trend.GrowthRatio >= 0.5:
 		trend.Classification = "progressive_growth"

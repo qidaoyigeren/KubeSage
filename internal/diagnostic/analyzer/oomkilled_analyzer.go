@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,21 @@ const (
 	oomMetricWindow              = 5 * time.Minute
 	memoryNearLimitThreshold     = 0.90
 	sustainedNearLimitSampleRate = 0.80
+	memoryHighBaselineThreshold  = 0.75
+	memoryLowRestartThreshold    = 0.60
+	memoryLeakGrowthThreshold    = 0.35
+	memoryLeakSlopePerMinute     = 0.03
+	memoryStableSlopePerMinute   = 0.03
+	memoryRestartReturnThreshold = 0.70
+)
+
+const (
+	memoryPatternLimitTooLow       = "memory_limit_too_low"
+	memoryPatternApplicationLeak   = "application_memory_leak"
+	memoryPatternSustainedNear     = "sustained_near_limit"
+	memoryPatternNearLimitSpike    = "near_limit_spike"
+	memoryPatternNoLimitPressure   = "no_limit_pressure"
+	memoryPatternInsufficientShape = "insufficient_shape"
 )
 
 type OOMKilledAnalyzer struct {
@@ -163,6 +179,8 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 	evidences = append(evidences, keyLogEvidences(ctx.Logs, "Key OOMKilled log fragments", oomKilledLogKeywords, "critical")...)
 
 	sustainedNearLimit := false
+	limitTooLowPattern := false
+	memoryLeakPattern := false
 	if ctx.MetricsEnabled {
 		// Metric enrichment is best-effort: every Prometheus failure path returns
 		// warning evidence instead of failing the analyzer.
@@ -171,8 +189,16 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 			limitBytes, limitSet := memoryLimitBytes(container, ok)
 			evidence, analysis := a.queryMemoryEvidence(ctx, termination, limitBytes, limitSet)
 			evidences = append(evidences, evidence)
-			if analysis != nil && analysis.SustainedNearLimit {
-				sustainedNearLimit = true
+			if analysis != nil {
+				if analysis.SustainedNearLimit {
+					sustainedNearLimit = true
+				}
+				if analysis.LimitTooLowPattern {
+					limitTooLowPattern = true
+				}
+				if analysis.ApplicationLeakPattern {
+					memoryLeakPattern = true
+				}
 			}
 		}
 	}
@@ -184,11 +210,24 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 		"结合 Prometheus 中 container_memory_working_set_bytes 与 memory limit 的比例确认是否长期贴近上限。",
 		"临时提高 memory limit 可缓解风险，但需要标记为临时方案并继续根因排查。",
 	}
-	if sustainedNearLimit {
-		summary = "OOMKilled exitCode 137 memory limit: Prometheus 内存曲线 working set 显示 OOM 前后工作集持续接近容器 memory limit，根因更倾向于 memory limit 不足或应用内存持续增长。"
+	switch {
+	case memoryLeakPattern:
+		summary = "OOMKilled exitCode 137 application memory leak: Prometheus 内存曲线显示启动后从低水位持续爬升到 memory limit，或 OOM 重启后从低点重新增长，更倾向于应用内存泄漏或未释放缓存。"
+		actions = append(actions,
+			"优先抓取 heap/profile、对象分配热点和最近发布差异，确认是否存在持续增长的应用内存泄漏。",
+			"提高 memory limit 只能作为临时止血，需要同步设置增长率告警并验证重启后曲线是否再次爬升。",
+		)
+	case limitTooLowPattern:
+		summary = "OOMKilled exitCode 137 memory limit too low: Prometheus 内存曲线 baseline 已长期接近 memory limit，OOM 前斜率较低且重启后快速回到同一高水位，更倾向于 limit 配置低于工作负载正常基线。"
+		actions = append(actions,
+			"按正常运行 baseline 重新评估 memory request/limit，并检查是否存在固定缓存或启动即加载的大对象。",
+			"调整 limit 后继续观察 baseline 与 limit 的间隔，而不只看 OOM 是否消失。",
+		)
+	case sustainedNearLimit:
+		summary = "OOMKilled exitCode 137 memory limit: Prometheus 内存曲线 working set 持续接近容器 memory limit，但曲线形态不足以区分 limit 配太低还是应用内存泄漏。"
 		actions = append(actions, "优先降低峰值内存或提高 memory limit，并为关键容器补充内存使用率告警。")
 	}
-	confidence = oomConfidence(terminations, evidences, sustainedNearLimit, ctx.MetricTrends)
+	confidence = oomConfidence(terminations, evidences, sustainedNearLimit, limitTooLowPattern, memoryLeakPattern, ctx.MetricTrends)
 
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
@@ -205,7 +244,7 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 
 // oomConfidence adjusts confidence according to termination, log, and metric
 // evidence strength instead of relying on a single hard-coded value.
-func oomConfidence(terminations []oomTermination, evidences []diagnostic.EvidenceRecord, sustainedNearLimit bool, trends []diagnostic.MetricTrend) float64 {
+func oomConfidence(terminations []oomTermination, evidences []diagnostic.EvidenceRecord, sustainedNearLimit, limitTooLowPattern, memoryLeakPattern bool, trends []diagnostic.MetricTrend) float64 {
 	score := 0.72
 	if len(terminations) > 0 {
 		score += 0.10
@@ -217,7 +256,10 @@ func oomConfidence(terminations []oomTermination, evidences []diagnostic.Evidenc
 		score += 0.05
 	}
 	if sustainedNearLimit {
-		score += 0.05
+		score += 0.03
+	}
+	if limitTooLowPattern || memoryLeakPattern {
+		score += 0.06
 	}
 	// Boost confidence when metric trends show progressive memory growth.
 	for _, trend := range trends {
@@ -313,12 +355,12 @@ func (a *OOMKilledAnalyzer) queryMemoryEvidence(ctx *diagnostic.DiagnosticContex
 		}, nil
 	}
 
-	analysis := analyzeMemoryPressure(points, limitBytes, limitSet)
+	analysis := analyzeMemoryPressure(points, limitBytes, limitSet, termination.FinishedAt)
 	severity := "info"
 	if !limitSet {
 		severity = "warning"
 	}
-	if analysis.SustainedNearLimit {
+	if analysis.SustainedNearLimit || analysis.LimitTooLowPattern || analysis.ApplicationLeakPattern {
 		severity = "critical"
 	}
 	content := memoryEvidenceContent(termination.ContainerName, start, end, analysis, limitSet)
@@ -363,17 +405,32 @@ type prometheusMemoryEvidence struct {
 }
 
 type memoryPressureAnalysis struct {
-	SampleCount         int     `json:"sample_count"`
-	MemoryLimitBytes    int64   `json:"memory_limit_bytes"`
-	MaxWorkingSetBytes  float64 `json:"max_working_set_bytes"`
-	MinWorkingSetBytes  float64 `json:"min_working_set_bytes"`
-	AvgWorkingSetBytes  float64 `json:"avg_working_set_bytes"`
-	MaxLimitRatio       float64 `json:"max_limit_ratio"`
-	AvgLimitRatio       float64 `json:"avg_limit_ratio"`
-	NearLimitThreshold  float64 `json:"near_limit_threshold"`
-	NearLimitSamples    int     `json:"near_limit_samples"`
-	SustainedSampleRate float64 `json:"sustained_sample_rate"`
-	SustainedNearLimit  bool    `json:"sustained_near_limit"`
+	SampleCount                int     `json:"sample_count"`
+	PreOOMSampleCount          int     `json:"pre_oom_sample_count"`
+	PostOOMSampleCount         int     `json:"post_oom_sample_count"`
+	MemoryLimitBytes           int64   `json:"memory_limit_bytes"`
+	MaxWorkingSetBytes         float64 `json:"max_working_set_bytes"`
+	MinWorkingSetBytes         float64 `json:"min_working_set_bytes"`
+	AvgWorkingSetBytes         float64 `json:"avg_working_set_bytes"`
+	MaxLimitRatio              float64 `json:"max_limit_ratio"`
+	AvgLimitRatio              float64 `json:"avg_limit_ratio"`
+	BaselineLimitRatio         float64 `json:"baseline_limit_ratio"`
+	PreOOMEndLimitRatio        float64 `json:"pre_oom_end_limit_ratio"`
+	PreOOMGrowthRatio          float64 `json:"pre_oom_growth_ratio"`
+	PreOOMSlopeRatioPerMinute  float64 `json:"pre_oom_slope_ratio_per_minute"`
+	PostRestartMinLimitRatio   float64 `json:"post_restart_min_limit_ratio"`
+	PostRestartMaxLimitRatio   float64 `json:"post_restart_max_limit_ratio"`
+	PostRestartFirstLimitRatio float64 `json:"post_restart_first_limit_ratio"`
+	PostRestartLastLimitRatio  float64 `json:"post_restart_last_limit_ratio"`
+	PostRestartGrowthRatio     float64 `json:"post_restart_growth_ratio"`
+	NearLimitThreshold         float64 `json:"near_limit_threshold"`
+	NearLimitSamples           int     `json:"near_limit_samples"`
+	SustainedSampleRate        float64 `json:"sustained_sample_rate"`
+	SustainedNearLimit         bool    `json:"sustained_near_limit"`
+	MemoryPattern              string  `json:"memory_pattern"`
+	PatternReason              string  `json:"pattern_reason"`
+	LimitTooLowPattern         bool    `json:"limit_too_low_pattern"`
+	ApplicationLeakPattern     bool    `json:"application_leak_pattern"`
 }
 
 // oomTerminations extracts the OOM-related lastState.terminated records from a
@@ -448,16 +505,18 @@ func memoryLimitBytes(container corev1.Container, containerFound bool) (int64, b
 	return quantity.Value(), true
 }
 
-// analyzeMemoryPressure treats "sustained near limit" as at least 80% of the
-// samples being >=90% of memory limit. The thresholds are constants above so the
-// rule is easy to tune or later move into config.
-func analyzeMemoryPressure(points []prometheus.Point, limitBytes int64, limitSet bool) memoryPressureAnalysis {
+// analyzeMemoryPressure keeps the old near-limit count, but separates it from
+// root-cause shape. Limit-too-low needs high baseline and low slope; leak needs
+// low startup/restart values followed by sustained growth toward the limit.
+func analyzeMemoryPressure(points []prometheus.Point, limitBytes int64, limitSet bool, faultTime time.Time) memoryPressureAnalysis {
+	points = sortedPoints(points)
 	analysis := memoryPressureAnalysis{
 		SampleCount:         len(points),
 		MemoryLimitBytes:    limitBytes,
 		NearLimitThreshold:  memoryNearLimitThreshold,
 		SustainedSampleRate: sustainedNearLimitSampleRate,
 		MinWorkingSetBytes:  math.MaxFloat64,
+		MemoryPattern:       memoryPatternInsufficientShape,
 	}
 	var sum float64
 	for _, point := range points {
@@ -490,8 +549,183 @@ func analyzeMemoryPressure(points []prometheus.Point, limitBytes int64, limitSet
 		analysis.AvgLimitRatio = analysis.AvgLimitRatio / float64(len(points))
 		nearLimitRate := float64(analysis.NearLimitSamples) / float64(len(points))
 		analysis.SustainedNearLimit = len(points) >= 3 && nearLimitRate >= sustainedNearLimitSampleRate
+		enrichMemoryShape(&analysis, points, faultTime, limitBytes)
 	}
 	return analysis
+}
+
+func sortedPoints(points []prometheus.Point) []prometheus.Point {
+	out := append([]prometheus.Point(nil), points...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Timestamp.Before(out[j].Timestamp)
+	})
+	return out
+}
+
+func enrichMemoryShape(analysis *memoryPressureAnalysis, points []prometheus.Point, faultTime time.Time, limitBytes int64) {
+	if analysis == nil || len(points) == 0 || limitBytes <= 0 {
+		return
+	}
+	pre, post := splitAroundFault(points, faultTime)
+	analysis.PreOOMSampleCount = len(pre)
+	analysis.PostOOMSampleCount = len(post)
+	if len(pre) == 0 {
+		pre = points
+		analysis.PreOOMSampleCount = len(pre)
+	}
+
+	analysis.BaselineLimitRatio = averageLimitRatio(firstSegment(pre), limitBytes)
+	analysis.PreOOMEndLimitRatio = averageLimitRatio(lastSegment(pre), limitBytes)
+	if analysis.BaselineLimitRatio > 0 {
+		analysis.PreOOMGrowthRatio = (analysis.PreOOMEndLimitRatio - analysis.BaselineLimitRatio) / analysis.BaselineLimitRatio
+	}
+	analysis.PreOOMSlopeRatioPerMinute = slopeRatioPerMinute(pre, limitBytes)
+
+	if len(post) > 0 {
+		analysis.PostRestartMinLimitRatio = minLimitRatio(post, limitBytes)
+		analysis.PostRestartMaxLimitRatio = maxLimitRatio(post, limitBytes)
+		analysis.PostRestartFirstLimitRatio = averageLimitRatio(firstSegment(post), limitBytes)
+		analysis.PostRestartLastLimitRatio = averageLimitRatio(lastSegment(post), limitBytes)
+		if analysis.PostRestartFirstLimitRatio > 0 {
+			analysis.PostRestartGrowthRatio = (analysis.PostRestartLastLimitRatio - analysis.PostRestartFirstLimitRatio) / analysis.PostRestartFirstLimitRatio
+		}
+	}
+
+	preGrowsToLimit := len(pre) >= 4 &&
+		analysis.BaselineLimitRatio <= memoryHighBaselineThreshold &&
+		analysis.PreOOMEndLimitRatio >= memoryNearLimitThreshold &&
+		(analysis.PreOOMGrowthRatio >= memoryLeakGrowthThreshold ||
+			analysis.PreOOMSlopeRatioPerMinute >= memoryLeakSlopePerMinute)
+	postDropsAndRegrows := len(post) >= 3 &&
+		analysis.PostRestartMinLimitRatio > 0 &&
+		analysis.PostRestartMinLimitRatio <= memoryLowRestartThreshold &&
+		analysis.PostRestartMaxLimitRatio >= memoryHighBaselineThreshold &&
+		analysis.PostRestartGrowthRatio >= memoryLeakGrowthThreshold
+	analysis.ApplicationLeakPattern = preGrowsToLimit || postDropsAndRegrows
+
+	postReturnsHigh := len(post) == 0 ||
+		analysis.PostRestartFirstLimitRatio >= memoryRestartReturnThreshold ||
+		analysis.PostRestartMaxLimitRatio >= memoryNearLimitThreshold
+	analysis.LimitTooLowPattern = analysis.SustainedNearLimit &&
+		!analysis.ApplicationLeakPattern &&
+		analysis.BaselineLimitRatio >= memoryHighBaselineThreshold &&
+		math.Abs(analysis.PreOOMSlopeRatioPerMinute) <= memoryStableSlopePerMinute &&
+		postReturnsHigh
+
+	switch {
+	case analysis.ApplicationLeakPattern:
+		analysis.MemoryPattern = memoryPatternApplicationLeak
+		analysis.PatternReason = "low baseline or restart drop followed by positive slope toward memory limit"
+	case analysis.LimitTooLowPattern:
+		analysis.MemoryPattern = memoryPatternLimitTooLow
+		analysis.PatternReason = "high baseline near memory limit with stable pre-OOM slope and fast post-restart return"
+	case analysis.SustainedNearLimit:
+		analysis.MemoryPattern = memoryPatternSustainedNear
+		analysis.PatternReason = "many samples are near memory limit but curve shape is ambiguous"
+	case analysis.NearLimitSamples > 0:
+		analysis.MemoryPattern = memoryPatternNearLimitSpike
+		analysis.PatternReason = "some samples are near memory limit without sustained shape"
+	default:
+		analysis.MemoryPattern = memoryPatternNoLimitPressure
+		analysis.PatternReason = "memory samples do not approach limit"
+	}
+}
+
+func splitAroundFault(points []prometheus.Point, faultTime time.Time) ([]prometheus.Point, []prometheus.Point) {
+	if faultTime.IsZero() {
+		return points, nil
+	}
+	pre := make([]prometheus.Point, 0, len(points))
+	post := make([]prometheus.Point, 0, len(points))
+	for _, point := range points {
+		if point.Timestamp.After(faultTime) {
+			post = append(post, point)
+			continue
+		}
+		pre = append(pre, point)
+	}
+	return pre, post
+}
+
+func firstSegment(points []prometheus.Point) []prometheus.Point {
+	if len(points) <= 3 {
+		return points
+	}
+	return points[:segmentSize(len(points))]
+}
+
+func lastSegment(points []prometheus.Point) []prometheus.Point {
+	if len(points) <= 3 {
+		return points
+	}
+	size := segmentSize(len(points))
+	return points[len(points)-size:]
+}
+
+func segmentSize(n int) int {
+	size := n / 3
+	if n%3 != 0 {
+		size++
+	}
+	if size < 1 {
+		return 1
+	}
+	return size
+}
+
+func averageLimitRatio(points []prometheus.Point, limitBytes int64) float64 {
+	if len(points) == 0 || limitBytes <= 0 {
+		return 0
+	}
+	var sum float64
+	for _, point := range points {
+		sum += point.Value / float64(limitBytes)
+	}
+	return sum / float64(len(points))
+}
+
+func minLimitRatio(points []prometheus.Point, limitBytes int64) float64 {
+	if len(points) == 0 || limitBytes <= 0 {
+		return 0
+	}
+	min := math.MaxFloat64
+	for _, point := range points {
+		ratio := point.Value / float64(limitBytes)
+		if ratio < min {
+			min = ratio
+		}
+	}
+	if min == math.MaxFloat64 {
+		return 0
+	}
+	return min
+}
+
+func maxLimitRatio(points []prometheus.Point, limitBytes int64) float64 {
+	if len(points) == 0 || limitBytes <= 0 {
+		return 0
+	}
+	var max float64
+	for _, point := range points {
+		ratio := point.Value / float64(limitBytes)
+		if ratio > max {
+			max = ratio
+		}
+	}
+	return max
+}
+
+func slopeRatioPerMinute(points []prometheus.Point, limitBytes int64) float64 {
+	if len(points) < 2 || limitBytes <= 0 {
+		return 0
+	}
+	first := points[0]
+	last := points[len(points)-1]
+	minutes := last.Timestamp.Sub(first.Timestamp).Minutes()
+	if minutes <= 0 {
+		minutes = float64(len(points) - 1)
+	}
+	return ((last.Value - first.Value) / float64(limitBytes)) / minutes
 }
 
 // memoryEvidenceContent builds the short text summary stored in the evidence
@@ -507,7 +741,7 @@ func memoryEvidenceContent(containerName string, start, end time.Time, analysis 
 			formatBytes(analysis.AvgWorkingSetBytes),
 		)
 	}
-	return fmt.Sprintf("container=%s window=%s..%s samples=%d memoryLimit=%s maxWorkingSet=%s avgWorkingSet=%s maxLimitRatio=%.1f%% avgLimitRatio=%.1f%% nearLimitSamples=%d/%d threshold=%.0f%% sustainedNearLimit=%t",
+	return fmt.Sprintf("container=%s window=%s..%s samples=%d memoryLimit=%s maxWorkingSet=%s avgWorkingSet=%s maxLimitRatio=%.1f%% avgLimitRatio=%.1f%% nearLimitSamples=%d/%d threshold=%.0f%% sustainedNearLimit=%t memoryPattern=%s baselineLimitRatio=%.1f%% preOOMEndLimitRatio=%.1f%% preOOMSlopeRatioPerMinute=%.2f%% postRestartMinLimitRatio=%.1f%% postRestartMaxLimitRatio=%.1f%% postRestartGrowthRatio=%.1f%% patternReason=%q",
 		containerName,
 		start.Format(time.RFC3339),
 		end.Format(time.RFC3339),
@@ -521,6 +755,14 @@ func memoryEvidenceContent(containerName string, start, end time.Time, analysis 
 		analysis.SampleCount,
 		memoryNearLimitThreshold*100,
 		analysis.SustainedNearLimit,
+		analysis.MemoryPattern,
+		analysis.BaselineLimitRatio*100,
+		analysis.PreOOMEndLimitRatio*100,
+		analysis.PreOOMSlopeRatioPerMinute*100,
+		analysis.PostRestartMinLimitRatio*100,
+		analysis.PostRestartMaxLimitRatio*100,
+		analysis.PostRestartGrowthRatio*100,
+		analysis.PatternReason,
 	)
 }
 

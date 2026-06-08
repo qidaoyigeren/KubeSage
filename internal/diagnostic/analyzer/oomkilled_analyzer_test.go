@@ -110,10 +110,56 @@ func TestOOMKilledAnalyzerAddsPrometheusMemoryEvidence(t *testing.T) {
 			if !strings.Contains(evidence.Content, "sustainedNearLimit=true") {
 				t.Fatalf("missing sustained near limit result: %s", evidence.Content)
 			}
+			if !strings.Contains(evidence.Content, "memoryPattern=memory_limit_too_low") {
+				t.Fatalf("missing memory limit pattern: %s", evidence.Content)
+			}
 		}
 	}
 	if !found {
 		t.Fatal("expected prometheus memory evidence")
+	}
+}
+
+func TestAnalyzeMemoryPressureClassifiesLimitTooLowShape(t *testing.T) {
+	faultTime := time.Unix(1_000, 0)
+	points := []prometheus.Point{
+		{Timestamp: faultTime.Add(-4 * time.Minute), Value: 920},
+		{Timestamp: faultTime.Add(-3 * time.Minute), Value: 930},
+		{Timestamp: faultTime.Add(-2 * time.Minute), Value: 940},
+		{Timestamp: faultTime.Add(30 * time.Second), Value: 910},
+		{Timestamp: faultTime.Add(time.Minute), Value: 930},
+	}
+
+	analysis := analyzeMemoryPressure(points, 1000, true, faultTime)
+	if !analysis.LimitTooLowPattern || analysis.ApplicationLeakPattern {
+		t.Fatalf("expected limit-too-low shape, got %+v", analysis)
+	}
+	if analysis.MemoryPattern != memoryPatternLimitTooLow {
+		t.Fatalf("unexpected pattern %q", analysis.MemoryPattern)
+	}
+}
+
+func TestAnalyzeMemoryPressureClassifiesLeakShape(t *testing.T) {
+	faultTime := time.Unix(1_000, 0)
+	points := []prometheus.Point{
+		{Timestamp: faultTime.Add(-5 * time.Minute), Value: 300},
+		{Timestamp: faultTime.Add(-4 * time.Minute), Value: 500},
+		{Timestamp: faultTime.Add(-2 * time.Minute), Value: 900},
+		{Timestamp: faultTime.Add(-30 * time.Second), Value: 980},
+		{Timestamp: faultTime.Add(30 * time.Second), Value: 220},
+		{Timestamp: faultTime.Add(2 * time.Minute), Value: 460},
+		{Timestamp: faultTime.Add(4 * time.Minute), Value: 720},
+	}
+
+	analysis := analyzeMemoryPressure(points, 1000, true, faultTime)
+	if !analysis.ApplicationLeakPattern || analysis.LimitTooLowPattern {
+		t.Fatalf("expected application leak shape, got %+v", analysis)
+	}
+	if analysis.MemoryPattern != memoryPatternApplicationLeak {
+		t.Fatalf("unexpected pattern %q", analysis.MemoryPattern)
+	}
+	if analysis.PreOOMSlopeRatioPerMinute <= 0 {
+		t.Fatalf("expected positive pre-OOM slope, got %+v", analysis)
 	}
 }
 

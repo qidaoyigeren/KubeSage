@@ -18,6 +18,9 @@ func TestClassifyTrendProgressiveGrowth(t *testing.T) {
 	if trend.Classification != "progressive_growth" {
 		t.Fatalf("unexpected classification: %+v", trend)
 	}
+	if trend.SlopePerMinute <= 0 {
+		t.Fatalf("expected positive slope: %+v", trend)
+	}
 }
 
 func TestClassifyTrendSuddenSpike(t *testing.T) {

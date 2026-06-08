@@ -135,6 +135,7 @@ type MetricTrend struct {
 	MaxValue       float64   `json:"max_value"`
 	AvgValue       float64   `json:"avg_value"`
 	GrowthRatio    float64   `json:"growth_ratio"`
+	SlopePerMinute float64   `json:"slope_per_minute"`
 	Error          string    `json:"error,omitempty"`
 	WindowStart    time.Time `json:"window_start,omitempty"`
 	WindowEnd      time.Time `json:"window_end,omitempty"`

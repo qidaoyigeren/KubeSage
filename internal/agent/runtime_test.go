@@ -192,7 +192,7 @@ func TestRuntimeConfirmedHypothesisEarlyStop(t *testing.T) {
 	}
 }
 
-func TestRuntimeConfirmsWhenRemainingEvidenceIsExhausted(t *testing.T) {
+func TestRuntimeDoesNotConfirmOOMLimitWithoutCurveShape(t *testing.T) {
 	_, result, err := runRuntimeForTest(
 		t,
 		Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled", IncludeLogs: true, IncludeMetrics: true},
@@ -204,8 +204,8 @@ func TestRuntimeConfirmsWhenRemainingEvidenceIsExhausted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.StopReason != StopReasonConfirmedHypothesis {
-		t.Fatalf("expected exhausted high-confidence hypothesis to confirm, got %s", result.StopReason)
+	if result.StopReason == StopReasonConfirmedHypothesis {
+		t.Fatalf("OOM limit hypothesis must not confirm without baseline/slope/restart curve shape")
 	}
 }
 
@@ -459,6 +459,18 @@ func baseReport(faultType string) *diagnostic.Report {
 	}
 }
 
+func oomLimitReport() *diagnostic.Report {
+	report := baseReport("OOMKilled")
+	report.Evidences = append(report.Evidences, diagnostic.EvidenceRecord{
+		SourceType: "prometheus",
+		Title:      "Container memory working set around OOMKilled",
+		Content:    "reason=OOMKilled memory working set memoryPattern=memory_limit_too_low sustainedNearLimit=true baselineLimitRatio=92.0% preOOMSlopeRatioPerMinute=1.0%",
+		Severity:   "critical",
+		Timestamp:  time.Now(),
+	})
+	return report
+}
+
 func oomContext() *diagnostic.DiagnosticContext {
 	return &diagnostic.DiagnosticContext{
 		Namespace:      "default",
@@ -551,7 +563,7 @@ func (confirmedTool) Execute(ctx context.Context, input map[string]interface{}, 
 		EvidenceRecords: []diagnostic.EvidenceRecord{{
 			SourceType: "prometheus",
 			Title:      "OOM memory working set near limit",
-			Content:    "oom memory working set limit prometheus",
+			Content:    "oom memory working set limit prometheus memoryPattern=memory_limit_too_low sustainedNearLimit=true",
 			Severity:   "critical",
 			Timestamp:  time.Now(),
 		}},
