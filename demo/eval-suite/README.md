@@ -1,9 +1,10 @@
 # KubeSage Eval Suite Demo
 
-This directory contains 55 generated Kubernetes demo scenarios that mirror the full offline eval suite:
+This directory contains 59 generated Kubernetes demo scenarios that mirror the full offline eval suite:
 
 - eval/cases/core.yaml
 - eval/cases/fault-bank.yaml
+- eval/cases/supplementary.yaml
 
 Apply:
 
@@ -26,8 +27,8 @@ kubectl delete -k demo/eval-suite --ignore-not-found
 
 Notes:
 
-- This is the live-cluster companion for the default 55-case offline suite.
-- NodeNotReady cases remain placeholders; exact NodeNotReady reproduction requires node-level fault injection in a disposable cluster.
+- This is the live-cluster companion for the complete 59-case offline suite.
+- NodeNotReady cases use dedicated synthetic Node API objects. After applying the manifests, run the status patch commands printed by the preparation script so their real Kubernetes Node status becomes Ready=False.
 - Several scenarios intentionally use invalid images, impossible requests, failing probes, and tight resource limits. Apply this only to a dev or disposable cluster.
 
 List scenario pods:

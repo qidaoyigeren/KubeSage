@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +24,9 @@ const faultBankNamespace = "eval-bank"
 var faultBankTime = time.Date(2026, 5, 31, 8, 0, 0, 0, time.UTC)
 
 type generatedCase struct {
-	Case eval.EvalCase
-	Ctx  *diagnostic.DiagnosticContext
+	Case         eval.EvalCase
+	Ctx          *diagnostic.DiagnosticContext
+	ResourceName string
 }
 
 type oomScenario struct {
@@ -163,7 +165,11 @@ func main() {
 	if err != nil {
 		fatalf("load core cases for demo manifests: %v", err)
 	}
-	evalSuiteCases := append(append([]generatedCase{}, coreCases...), cases...)
+	supplementaryCases, err := loadGeneratedCasesFromSuite(filepath.Join("eval", "cases", "supplementary.yaml"))
+	if err != nil {
+		fatalf("load supplementary cases for demo manifests: %v", err)
+	}
+	evalSuiteCases := append(append(append([]generatedCase{}, coreCases...), cases...), supplementaryCases...)
 	if err := writeEvalSuiteDemoManifests(evalSuiteCases); err != nil {
 		fatalf("write eval-suite demo manifests: %v", err)
 	}
@@ -1153,7 +1159,12 @@ func writeDemoManifests(cases []generatedCase) error {
 }
 
 func writeEvalSuiteDemoManifests(cases []generatedCase) error {
-	return writeDemoManifestsAt(filepath.Join("demo", "eval-suite"), cases, evalSuiteDemoReadme(len(cases)))
+	anonymized := make([]generatedCase, len(cases))
+	copy(anonymized, cases)
+	for i := range anonymized {
+		anonymized[i].ResourceName = eval.LiveResourceName(anonymized[i].Case.ID)
+	}
+	return writeDemoManifestsAt(filepath.Join("demo", "eval-suite"), anonymized, evalSuiteDemoReadme(len(cases)))
 }
 
 func writeDemoManifestsAt(demoDir string, cases []generatedCase, readme string) error {
@@ -1298,6 +1309,7 @@ This directory contains %d generated Kubernetes demo scenarios that mirror the f
 
 - eval/cases/core.yaml
 - eval/cases/fault-bank.yaml
+- eval/cases/supplementary.yaml
 
 Apply:
 
@@ -1320,8 +1332,8 @@ kubectl delete -k demo/eval-suite --ignore-not-found
 
 Notes:
 
-- This is the live-cluster companion for the default 55-case offline suite.
-- NodeNotReady cases remain placeholders; exact NodeNotReady reproduction requires node-level fault injection in a disposable cluster.
+- This is the live-cluster companion for the complete %d-case offline suite.
+- NodeNotReady cases use dedicated synthetic Node API objects. After applying the manifests, run the status patch commands printed by the preparation script so their real Kubernetes Node status becomes Ready=False.
 - Several scenarios intentionally use invalid images, impossible requests, failing probes, and tight resource limits. Apply this only to a dev or disposable cluster.
 
 List scenario pods:
@@ -1329,7 +1341,7 @@ List scenario pods:
 `+"```bash"+`
 kubectl get pods -n %s -l kubesage.io/fault-bank=true
 `+"```"+`
-`, caseCount, faultBankNamespace, faultBankNamespace, faultBankNamespace)
+`, caseCount, faultBankNamespace, faultBankNamespace, caseCount, faultBankNamespace)
 }
 
 func demoResources(item generatedCase) []interface{} {
@@ -1351,7 +1363,7 @@ func demoResources(item generatedCase) []interface{} {
 	case "Evicted":
 		resources = append(resources, evictedDemoPod(item))
 	case "NodeNotReady":
-		resources = append(resources, nodeNotReadyPlaceholderPod(item))
+		resources = append(resources, nodeNotReadyNode(item), nodeNotReadyPlaceholderPod(item))
 	default:
 		resources = append(resources, unknownDemoPod(item))
 	}
@@ -1362,7 +1374,17 @@ func demoResources(item generatedCase) []interface{} {
 }
 
 func needsSyntheticEvents(item generatedCase) bool {
-	return item.Case.GoldenAnswer.ExpectedFaultType == "NodeNotReady"
+	return item.Case.GoldenAnswer.ExpectedFaultType == "NodeNotReady" ||
+		hasCaseTag(item.Case.Tags, "supplementary")
+}
+
+func hasCaseTag(tags []string, want string) bool {
+	for _, tag := range tags {
+		if strings.EqualFold(strings.TrimSpace(tag), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func oomDemoPod(item generatedCase) map[string]interface{} {
@@ -1411,7 +1433,7 @@ func pendingDemoResources(item generatedCase) []interface{} {
 		podSpec["nodeSelector"] = map[string]string{"kubesage.dev/tainted-pool": "true"}
 	}
 	if strings.Contains(item.Case.ID, "node-selector") {
-		podSpec["nodeSelector"] = map[string]string{"kubesage.dev/nonexistent-node-pool": item.Case.ID}
+		podSpec["nodeSelector"] = map[string]string{"kubesage.dev/nonexistent-node-pool": resourceName(item)}
 	}
 
 	containerMap := map[string]interface{}{
@@ -1532,16 +1554,62 @@ func evictedDemoPod(item generatedCase) map[string]interface{} {
 func nodeNotReadyPlaceholderPod(item generatedCase) map[string]interface{} {
 	spec := map[string]interface{}{
 		"restartPolicy": "Never",
-		"nodeSelector":  map[string]string{"kubesage.dev/node-notready": item.Case.ID},
+		"nodeName":      nodeNotReadyNodeName(item),
 	}
 	pod := podManifest(item, []map[string]interface{}{{
 		"name":    "app",
 		"image":   "busybox:1.36",
-		"command": []string{"sh", "-c", "echo NodeNotReady requires node-level fault injection; sleep 3600"},
+		"command": []string{"sh", "-c", "echo bound to synthetic Ready=False node; sleep 3600"},
 	}}, spec)
 	annotations := pod["metadata"].(map[string]interface{})["annotations"].(map[string]string)
-	annotations["kubesage.io/demo-note"] = "Placeholder only: exact NodeNotReady requires a real node Ready=False condition."
+	annotations["kubesage.io/demo-note"] = "Pod is bound to a dedicated Node API object whose status is patched to Ready=False."
 	return pod
+}
+
+func nodeNotReadyNode(item generatedCase) map[string]interface{} {
+	memoryPressure, diskPressure, pidPressure := false, false, false
+	if item.Ctx != nil && item.Ctx.Topology != nil && item.Ctx.Topology.Node != nil {
+		memoryPressure = item.Ctx.Topology.Node.MemoryPressure
+		diskPressure = item.Ctx.Topology.Node.DiskPressure
+		pidPressure = item.Ctx.Topology.Node.PIDPressure
+	}
+	return map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Node",
+		"metadata": map[string]interface{}{
+			"name": nodeNotReadyNodeName(item),
+			"labels": map[string]string{
+				"kubesage.io/eval-node":       "true",
+				"kubesage.io/case-id":         item.Case.ID,
+				"kubesage.io/memory-pressure": strconv.FormatBool(memoryPressure),
+				"kubesage.io/disk-pressure":   strconv.FormatBool(diskPressure),
+				"kubesage.io/pid-pressure":    strconv.FormatBool(pidPressure),
+			},
+			"annotations": map[string]string{
+				"kubesage.io/demo-note": "Status is patched to Ready=False by scripts/prepare_live_eval.ps1.",
+			},
+		},
+		"spec": map[string]interface{}{
+			"unschedulable": true,
+			"taints": []map[string]interface{}{{
+				"key":    "kubesage.io/not-ready",
+				"value":  resourceName(item),
+				"effect": "NoSchedule",
+			}},
+		},
+	}
+}
+
+func nodeNotReadyNodeName(item generatedCase) string {
+	if item.ResourceName != "" {
+		return resourceName(item) + "-node"
+	}
+	if item.Ctx != nil && item.Ctx.Topology != nil && item.Ctx.Topology.Node != nil {
+		if name := strings.TrimSpace(item.Ctx.Topology.Node.Name); name != "" {
+			return sanitizeEventName(name)
+		}
+	}
+	return sanitizeEventName("kubesage-notready-" + item.Case.ID)
 }
 
 func unknownDemoPod(item generatedCase) map[string]interface{} {
@@ -1561,7 +1629,7 @@ func podManifest(item generatedCase, containers []map[string]interface{}, specEx
 		"apiVersion": "v1",
 		"kind":       "Pod",
 		"metadata": map[string]interface{}{
-			"name":        item.Case.ID,
+			"name":        resourceName(item),
 			"namespace":   faultBankNamespace,
 			"labels":      demoLabels(item),
 			"annotations": demoAnnotations(item),
@@ -1601,7 +1669,7 @@ func pvcDemoName(item generatedCase, pvc diagnostic.PVCBrief) string {
 	if name == "" {
 		name = "data"
 	}
-	return sanitizeEventName(item.Case.ID + "-" + name)
+	return sanitizeEventName(resourceName(item) + "-" + name)
 }
 
 func eventDemoResources(item generatedCase) []interface{} {
@@ -1614,14 +1682,14 @@ func eventDemoResources(item generatedCase) []interface{} {
 			"apiVersion": "v1",
 			"kind":       "Event",
 			"metadata": map[string]interface{}{
-				"name":      sanitizeEventName(item.Case.ID + "." + event.Reason),
+				"name":      sanitizeEventName(resourceName(item) + "." + event.Reason),
 				"namespace": faultBankNamespace,
 				"labels":    demoLabels(item),
 			},
 			"involvedObject": map[string]interface{}{
 				"apiVersion": "v1",
 				"kind":       "Pod",
-				"name":       item.Case.ID,
+				"name":       resourceName(item),
 				"namespace":  faultBankNamespace,
 			},
 			"reason":         event.Reason,
@@ -1638,12 +1706,19 @@ func eventDemoResources(item generatedCase) []interface{} {
 
 func demoLabels(item generatedCase) map[string]string {
 	return map[string]string{
-		"app":                      item.Case.ID,
+		"app":                      resourceName(item),
 		"kubesage.io/fault-bank":   "true",
 		"kubesage.io/case-id":      item.Case.ID,
 		"kubesage.io/fault-type":   strings.ToLower(item.Case.GoldenAnswer.ExpectedFaultType),
 		"kubesage.io/demo-surface": demoSurface(item.Case.GoldenAnswer.ExpectedFaultType),
 	}
+}
+
+func resourceName(item generatedCase) string {
+	if name := strings.TrimSpace(item.ResourceName); name != "" {
+		return name
+	}
+	return item.Case.ID
 }
 
 func demoAnnotations(item generatedCase) map[string]string {

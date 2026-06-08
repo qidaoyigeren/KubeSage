@@ -34,7 +34,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: OOMKilled
-        root_cause: OOMKilled exitCode 137 memory limit out of memory
+        root_cause: OOMKilled exitCode 137 Java heap GC overhead memoryLimit
         key_evidences:
             - reason=OOMKilled
             - exitCode=137
@@ -130,10 +130,11 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: CrashLoopBackOff
-        root_cause: CrashLoopBackOff startup failure config parse error
+        root_cause: CrashLoopBackOff restartCount exitCode 1 missing config
         key_evidences:
             - restartCount=5
             - exitCode=1
+            - missing config
         should_not_contain:
             - OOMKilled
             - ImagePullBackOff
@@ -175,7 +176,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: CrashLoopBackOff
-        root_cause: CrashLoopBackOff startup failure permission denied exitCode 126
+        root_cause: CrashLoopBackOff restartCount exitCode 126 permission denied
         key_evidences:
             - restartCount=3
             - exitCode=126
@@ -221,7 +222,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: CrashLoopBackOff
-        root_cause: CrashLoopBackOff startup failure config parse error
+        root_cause: CrashLoopBackOff restartCount exitCode 1 config parse error
         key_evidences:
             - restartCount=6
             - exitCode=1
@@ -361,6 +362,7 @@ cases:
         expected_fault_type: ImagePullBackOff
         root_cause: ImagePullBackOff image tag not found manifest unknown
         key_evidences:
+            - ImagePullBackOff
             - manifest unknown
             - image=registry.example.com/payments:missing
         should_not_contain:
@@ -404,7 +406,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: ImagePullBackOff
-        root_cause: ImagePullBackOff unauthorized registry authentication imagePullSecret
+        root_cause: ImagePullBackOff pull access denied repository does not exist
         key_evidences:
             - pull access denied
             - repository does not exist
@@ -427,7 +429,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: ImagePullBackOff
-        root_cause: ImagePullBackOff image tag not found manifest unknown
+        root_cause: ImagePullBackOff init image not found ErrImagePull
         key_evidences:
             - ErrImagePull
             - not found
@@ -439,7 +441,7 @@ cases:
         acceptable_remediations:
             - image repository
             - imagePullSecrets
-        confidence_min: 0.75
+        confidence_min: 0.82
     - id: bank-imagepull-registry-x509
       name: Fault bank ImagePullBackOff from registry certificate error
       fixture: ../fixtures/fault-bank/bank-imagepull-registry-x509.json
@@ -450,8 +452,10 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: ImagePullBackOff
-        root_cause: ImagePullBackOff imagePullSecret registry image
+        root_cause: ImagePullBackOff registry certificate x509 unknown authority
         key_evidences:
+            - ImagePullBackOff
+            - x509 certificate signed by unknown authority
             - image=registry.corp.local/platform/app:v3
         should_not_contain:
             - OOMKilled
@@ -540,7 +544,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: ProbeFailed
-        root_cause: liveness probe failed Liveness probe kubelet health endpoint timeout
+        root_cause: liveness probe failed connection refused health port
         key_evidences:
             - Unhealthy
             - liveness probe failed
@@ -563,7 +567,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: ProbeFailed
-        root_cause: readiness probe failed Readiness probe health path initialDelaySeconds
+        root_cause: readiness probe failed timeout slow startup initialDelaySeconds
         key_evidences:
             - Unhealthy
             - readiness probe failed
@@ -630,7 +634,7 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: InitError
-        root_cause: InitError init container failed Init container command dependency
+        root_cause: InitError init container dependency connection refused
         key_evidences:
             - initContainer=wait-db
             - connection refused
@@ -652,9 +656,10 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: InitError
-        root_cause: InitError init container failed Init 容器日志
+        root_cause: InitError init container permission denied exitCode 126
         key_evidences:
             - initContainer=init-perms
+            - permission denied
             - exitCode=126
         should_not_contain:
             - OOMKilled
@@ -673,10 +678,11 @@ cases:
       max_duration_seconds: 5
       golden_answer:
         expected_fault_type: InitError
-        root_cause: InitError init container failed Init 容器日志
+        root_cause: InitError init container missing secret key failed
         key_evidences:
             - initContainer=init-secrets
             - missing key DB_PASSWORD
+            - failed
         should_not_contain:
             - OOMKilled
             - ImagePullBackOff

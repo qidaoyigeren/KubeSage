@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuildScheduleBalancesExactSampleCount(t *testing.T) {
-	cases := make([]evalpkg.EvalCase, 55)
+	cases := make([]evalpkg.EvalCase, 59)
 	for i := range cases {
 		cases[i].ID = fmt.Sprintf("case-%02d", i+1)
 	}
@@ -40,18 +40,18 @@ func TestBuildScheduleBalancesExactSampleCount(t *testing.T) {
 			t.Fatalf("scenario run count = %d, want 2 or 3", count)
 		}
 	}
-	if twoRuns != 15 || threeRuns != 40 {
-		t.Fatalf("distribution = %d scenarios x2 and %d scenarios x3, want 15 and 40", twoRuns, threeRuns)
+	if twoRuns != 27 || threeRuns != 32 {
+		t.Fatalf("distribution = %d scenarios x2 and %d scenarios x3, want 27 and 32", twoRuns, threeRuns)
 	}
 }
 
 func TestLoadCasePathsCombinesLiveSuites(t *testing.T) {
-	cases, err := loadCasePaths("../../eval/cases/core.yaml,../../eval/cases/fault-bank.yaml")
+	cases, err := loadCasePaths("../../eval/cases/core.yaml,../../eval/cases/fault-bank.yaml,../../eval/cases/supplementary.yaml")
 	if err != nil {
 		t.Fatalf("loadCasePaths() error = %v", err)
 	}
-	if len(cases) != 55 {
-		t.Fatalf("loaded cases = %d, want 55", len(cases))
+	if len(cases) != 59 {
+		t.Fatalf("loaded cases = %d, want 59", len(cases))
 	}
 }
 
