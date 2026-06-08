@@ -235,6 +235,7 @@ func run(configPath, casesPath, namespace string, maxCases, samples int, resume 
 		Methodology: []string{
 			"All evidence is collected from the live Kubernetes cluster; fixture files are not loaded.",
 			"Evaluation labels under kubesage.io are removed before diagnosis.",
+			"Live Pod and synthetic Node names are stable opaque hashes, so resource names do not expose the expected fault type.",
 			"Rule and Direct LLM arms receive the same full live snapshot.",
 			"Agent receives only namespace and pod name, then selects registered read-only tools through Plan-Execute-Reflect.",
 			"Prometheus and Loki usage is counted only when live samples or log bytes are returned.",
@@ -267,10 +268,11 @@ func run(configPath, casesPath, namespace string, maxCases, samples int, resume 
 			continue
 		}
 		evalCase := scheduled.Case
-		podName := evalCase.ID
+		scenarioID := evalCase.ID
+		podName := evalpkg.LiveResourceName(scenarioID)
 		evalCase.ID = scheduled.SampleID
 		evalCase.MaxDurationSeconds = 0
-		fmt.Fprintf(os.Stderr, "[%d/%d] live case %s scenario=%s iteration=%d\n", index+1, len(schedule), scheduled.SampleID, podName, scheduled.Iteration)
+		fmt.Fprintf(os.Stderr, "[%d/%d] live case %s scenario=%s pod=%s iteration=%d\n", index+1, len(schedule), scheduled.SampleID, scenarioID, podName, scheduled.Iteration)
 
 		snapshotCtx, cancelSnapshot := context.WithTimeout(context.Background(), caseTimeout)
 		snapshotStart := time.Now()
@@ -289,7 +291,7 @@ func run(configPath, casesPath, namespace string, maxCases, samples int, resume 
 
 		caseOutput := caseResult{
 			ID:         scheduled.SampleID,
-			ScenarioID: podName,
+			ScenarioID: scenarioID,
 			Iteration:  scheduled.Iteration,
 			Name:       evalCase.Name,
 			Expected:   evalCase.GoldenAnswer.ExpectedFaultType,
@@ -757,7 +759,10 @@ func redactEvaluationLabels(ctx *diagnostic.DiagnosticContext) {
 	}
 	for key := range pod.Annotations {
 		lower := strings.ToLower(key)
-		if strings.Contains(lower, "expected") || strings.Contains(lower, "fault-type") || strings.Contains(lower, "case-id") {
+		if strings.HasPrefix(lower, "kubesage.io/") ||
+			strings.Contains(lower, "expected") ||
+			strings.Contains(lower, "fault-type") ||
+			strings.Contains(lower, "case-id") {
 			delete(pod.Annotations, key)
 		}
 	}

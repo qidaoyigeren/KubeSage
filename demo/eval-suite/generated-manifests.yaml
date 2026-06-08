@@ -26,12 +26,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
     labels:
-        app: oom-limit-too-low
+        app: ks-e58257bc8b40
         kubesage.io/case-id: oom-limit-too-low
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: oom-limit-too-low
+    name: ks-e58257bc8b40
     namespace: eval-bank
 spec:
     containers:
@@ -62,12 +62,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: OOMKilled Java heap memory limit exitCode 137
     labels:
-        app: oom-java-heap
+        app: ks-b0307c50cca2
         kubesage.io/case-id: oom-java-heap
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: oom-java-heap
+    name: ks-b0307c50cca2
     namespace: eval-bank
 spec:
     containers:
@@ -96,14 +96,14 @@ metadata:
     annotations:
         kubesage.io/expected-fault: OOMKilled
         kubesage.io/offline-case: eval/cases/core.yaml
-        kubesage.io/root-cause: OOMKilled sudden memory spike working set memory limit
+        kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
     labels:
-        app: oom-sudden-spike
+        app: ks-a65bf3a563c1
         kubesage.io/case-id: oom-sudden-spike
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: oom-sudden-spike
+    name: ks-a65bf3a563c1
     namespace: eval-bank
 spec:
     containers:
@@ -132,14 +132,14 @@ metadata:
     annotations:
         kubesage.io/expected-fault: OOMKilled
         kubesage.io/offline-case: eval/cases/core.yaml
-        kubesage.io/root-cause: OOMKilled exitCode 137 without Prometheus metrics
+        kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
     labels:
-        app: oom-no-metrics
+        app: ks-af087247082d
         kubesage.io/case-id: oom-no-metrics
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: oom-no-metrics
+    name: ks-af087247082d
     namespace: eval-bank
 spec:
     containers:
@@ -168,14 +168,14 @@ metadata:
     annotations:
         kubesage.io/expected-fault: CrashLoopBackOff
         kubesage.io/offline-case: eval/cases/core.yaml
-        kubesage.io/root-cause: CrashLoopBackOff restartCount exitCode 1 missing config
+        kubesage.io/root-cause: CrashLoopBackOff startup failure config parse error
     labels:
-        app: crashloop-missing-config
+        app: ks-5d48a364aa0e
         kubesage.io/case-id: crashloop-missing-config
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: crashloop-missing-config
+    name: ks-5d48a364aa0e
     namespace: eval-bank
 spec:
     containers:
@@ -193,14 +193,14 @@ metadata:
     annotations:
         kubesage.io/expected-fault: CrashLoopBackOff
         kubesage.io/offline-case: eval/cases/core.yaml
-        kubesage.io/root-cause: CrashLoopBackOff dependency connection refused startup failure
+        kubesage.io/root-cause: CrashLoopBackOff startup failure dependency connection refused
     labels:
-        app: crashloop-connection-refused
+        app: ks-6e81477b227a
         kubesage.io/case-id: crashloop-connection-refused
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: crashloop-connection-refused
+    name: ks-6e81477b227a
     namespace: eval-bank
 spec:
     containers:
@@ -220,12 +220,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: CrashLoopBackOff permission denied startup failure
     labels:
-        app: crashloop-permission-denied
+        app: ks-27a78785c162
         kubesage.io/case-id: crashloop-permission-denied
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: crashloop-permission-denied
+    name: ks-27a78785c162
     namespace: eval-bank
 spec:
     containers:
@@ -245,12 +245,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: CrashLoopBackOff panic fatal startup failure
     labels:
-        app: crashloop-panic
+        app: ks-979890b894fe
         kubesage.io/case-id: crashloop-panic
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: crashloop-panic
+    name: ks-979890b894fe
     namespace: eval-bank
 spec:
     containers:
@@ -270,12 +270,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: PodPending FailedScheduling insufficient cpu requests
     labels:
-        app: pending-insufficient-cpu
+        app: ks-5ef14ef596df
         kubesage.io/case-id: pending-insufficient-cpu
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: pending-insufficient-cpu
+    name: ks-5ef14ef596df
     namespace: eval-bank
 spec:
     containers:
@@ -295,12 +295,12 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
     labels:
-        app: pending-unbound-pvc
+        app: ks-74be516d29b1
         kubesage.io/case-id: pending-unbound-pvc
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: pending-unbound-pvc-data
+    name: ks-74be516d29b1-data
     namespace: eval-bank
 spec:
     accessModes:
@@ -318,12 +318,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: PodPending unbound PersistentVolumeClaim PVC not Bound
     labels:
-        app: pending-unbound-pvc
+        app: ks-74be516d29b1
         kubesage.io/case-id: pending-unbound-pvc
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: pending-unbound-pvc
+    name: ks-74be516d29b1
     namespace: eval-bank
 spec:
     containers:
@@ -344,7 +344,7 @@ spec:
     volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: pending-unbound-pvc-data
+            claimName: ks-74be516d29b1-data
 ---
 apiVersion: v1
 kind: Pod
@@ -354,12 +354,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: PodPending untolerated taint scheduling constraint
     labels:
-        app: pending-untolerated-taint
+        app: ks-57b08404e2ca
         kubesage.io/case-id: pending-untolerated-taint
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: pending-untolerated-taint
+    name: ks-57b08404e2ca
     namespace: eval-bank
 spec:
     containers:
@@ -385,12 +385,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: ImagePullBackOff image tag not found manifest unknown
     labels:
-        app: imagepull-tag-not-found
+        app: ks-7662dceacef6
         kubesage.io/case-id: imagepull-tag-not-found
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: imagepullbackoff
-    name: imagepull-tag-not-found
+    name: ks-7662dceacef6
     namespace: eval-bank
 spec:
     containers:
@@ -410,12 +410,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: ImagePullBackOff unauthorized registry authentication imagePullSecret
     labels:
-        app: imagepull-unauthorized
+        app: ks-3f56fc4f3430
         kubesage.io/case-id: imagepull-unauthorized
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: imagepullbackoff
-    name: imagepull-unauthorized
+    name: ks-3f56fc4f3430
     namespace: eval-bank
 spec:
     containers:
@@ -437,12 +437,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: readiness probe failed 404 wrong health path
     labels:
-        app: probe-readiness-404
+        app: ks-de3e992616d5
         kubesage.io/case-id: probe-readiness-404
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: probefailed
-    name: probe-readiness-404
+    name: ks-de3e992616d5
     namespace: eval-bank
 spec:
     containers:
@@ -482,12 +482,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/core.yaml
         kubesage.io/root-cause: liveness probe failed timeout health endpoint
     labels:
-        app: probe-liveness-timeout
+        app: ks-ca5e70c2c390
         kubesage.io/case-id: probe-liveness-timeout
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: probefailed
-    name: probe-liveness-timeout
+    name: ks-ca5e70c2c390
     namespace: eval-bank
 spec:
     containers:
@@ -529,12 +529,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
     labels:
-        app: bank-oom-low-limit
+        app: ks-0142fd945d58
         kubesage.io/case-id: bank-oom-low-limit
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: bank-oom-low-limit
+    name: ks-0142fd945d58
     namespace: eval-bank
 spec:
     containers:
@@ -567,12 +567,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: OOMKilled exitCode 137 Java heap GC overhead memoryLimit
     labels:
-        app: bank-oom-java-gc-overhead
+        app: ks-601e09b21039
         kubesage.io/case-id: bank-oom-java-gc-overhead
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: bank-oom-java-gc-overhead
+    name: ks-601e09b21039
     namespace: eval-bank
 spec:
     containers:
@@ -605,12 +605,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: OOMKilled exitCode 137 Go heap memory limit
     labels:
-        app: bank-oom-go-heap
+        app: ks-fc03aa98d70c
         kubesage.io/case-id: bank-oom-go-heap
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: bank-oom-go-heap
+    name: ks-fc03aa98d70c
     namespace: eval-bank
 spec:
     containers:
@@ -643,12 +643,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: OOMKilled exitCode 137 sudden spike memory limit
     labels:
-        app: bank-oom-batch-spike
+        app: ks-f7118b99d869
         kubesage.io/case-id: bank-oom-batch-spike
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: bank-oom-batch-spike
+    name: ks-f7118b99d869
     namespace: eval-bank
 spec:
     containers:
@@ -681,12 +681,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: OOMKilled exitCode 137 cache warmup heap memory limit
     labels:
-        app: bank-oom-cache-warmup
+        app: ks-d8f51b74eb8c
         kubesage.io/case-id: bank-oom-cache-warmup
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: oomkilled
-    name: bank-oom-cache-warmup
+    name: ks-d8f51b74eb8c
     namespace: eval-bank
 spec:
     containers:
@@ -719,12 +719,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: CrashLoopBackOff restartCount exitCode 1 missing config
     labels:
-        app: bank-crash-missing-env
+        app: ks-72e4c45d361c
         kubesage.io/case-id: bank-crash-missing-env
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: bank-crash-missing-env
+    name: ks-72e4c45d361c
     namespace: eval-bank
 spec:
     containers:
@@ -744,12 +744,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: CrashLoopBackOff restartCount exitCode 1 connection refused
     labels:
-        app: bank-crash-db-refused
+        app: ks-0a9d40ee7e20
         kubesage.io/case-id: bank-crash-db-refused
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: bank-crash-db-refused
+    name: ks-0a9d40ee7e20
     namespace: eval-bank
 spec:
     containers:
@@ -769,12 +769,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: CrashLoopBackOff restartCount exitCode 126 permission denied
     labels:
-        app: bank-crash-permission-denied
+        app: ks-ca0f54d03475
         kubesage.io/case-id: bank-crash-permission-denied
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: bank-crash-permission-denied
+    name: ks-ca0f54d03475
     namespace: eval-bank
 spec:
     containers:
@@ -794,12 +794,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: CrashLoopBackOff restartCount exitCode 2 panic fatal
     labels:
-        app: bank-crash-panic-nil-pointer
+        app: ks-092e4f316613
         kubesage.io/case-id: bank-crash-panic-nil-pointer
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: bank-crash-panic-nil-pointer
+    name: ks-092e4f316613
     namespace: eval-bank
 spec:
     containers:
@@ -819,12 +819,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: CrashLoopBackOff restartCount exitCode 1 config parse error
     labels:
-        app: bank-crash-bad-config-yaml
+        app: ks-59ff85d91a99
         kubesage.io/case-id: bank-crash-bad-config-yaml
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: crashloopbackoff
-    name: bank-crash-bad-config-yaml
+    name: ks-59ff85d91a99
     namespace: eval-bank
 spec:
     containers:
@@ -844,12 +844,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: PodPending FailedScheduling Insufficient cpu requests
     labels:
-        app: bank-pending-insufficient-cpu
+        app: ks-9936dad83c3f
         kubesage.io/case-id: bank-pending-insufficient-cpu
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: bank-pending-insufficient-cpu
+    name: ks-9936dad83c3f
     namespace: eval-bank
 spec:
     containers:
@@ -873,12 +873,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: PodPending FailedScheduling Insufficient memory requests
     labels:
-        app: bank-pending-insufficient-memory
+        app: ks-6983167efb8d
         kubesage.io/case-id: bank-pending-insufficient-memory
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: bank-pending-insufficient-memory
+    name: ks-6983167efb8d
     namespace: eval-bank
 spec:
     containers:
@@ -898,12 +898,12 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
     labels:
-        app: bank-pending-unbound-pvc
+        app: ks-ebd2a4269bc3
         kubesage.io/case-id: bank-pending-unbound-pvc
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: bank-pending-unbound-pvc-data
+    name: ks-ebd2a4269bc3-data
     namespace: eval-bank
 spec:
     accessModes:
@@ -921,12 +921,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: PodPending unbound PersistentVolumeClaims PVC Pending
     labels:
-        app: bank-pending-unbound-pvc
+        app: ks-ebd2a4269bc3
         kubesage.io/case-id: bank-pending-unbound-pvc
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: bank-pending-unbound-pvc
+    name: ks-ebd2a4269bc3
     namespace: eval-bank
 spec:
     containers:
@@ -947,7 +947,7 @@ spec:
     volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: bank-pending-unbound-pvc-data
+            claimName: ks-ebd2a4269bc3-data
 ---
 apiVersion: v1
 kind: Pod
@@ -957,12 +957,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: PodPending FailedScheduling untolerated taint tolerations
     labels:
-        app: bank-pending-untolerated-taint
+        app: ks-28b164575f18
         kubesage.io/case-id: bank-pending-untolerated-taint
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: bank-pending-untolerated-taint
+    name: ks-28b164575f18
     namespace: eval-bank
 spec:
     containers:
@@ -988,12 +988,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: PodPending FailedScheduling node selector nodeSelector disktype nvme
     labels:
-        app: bank-pending-node-selector
+        app: ks-4ad3e7644ecc
         kubesage.io/case-id: bank-pending-node-selector
         kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: podpending
-    name: bank-pending-node-selector
+    name: ks-4ad3e7644ecc
     namespace: eval-bank
 spec:
     containers:
@@ -1008,7 +1008,7 @@ spec:
                 cpu: 250m
                 memory: 256Mi
     nodeSelector:
-        kubesage.dev/nonexistent-node-pool: bank-pending-node-selector
+        kubesage.dev/nonexistent-node-pool: ks-4ad3e7644ecc
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1019,12 +1019,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: ImagePullBackOff image tag not found manifest unknown
     labels:
-        app: bank-imagepull-tag-missing
+        app: ks-0bcbcb500d7b
         kubesage.io/case-id: bank-imagepull-tag-missing
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: imagepullbackoff
-    name: bank-imagepull-tag-missing
+    name: ks-0bcbcb500d7b
     namespace: eval-bank
 spec:
     containers:
@@ -1044,12 +1044,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: ImagePullBackOff unauthorized authentication imagePullSecret
     labels:
-        app: bank-imagepull-unauthorized-secret
+        app: ks-57b0a2acacd1
         kubesage.io/case-id: bank-imagepull-unauthorized-secret
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: imagepullbackoff
-    name: bank-imagepull-unauthorized-secret
+    name: ks-57b0a2acacd1
     namespace: eval-bank
 spec:
     containers:
@@ -1071,12 +1071,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: ImagePullBackOff pull access denied repository does not exist
     labels:
-        app: bank-imagepull-repo-denied
+        app: ks-386d5577ebe0
         kubesage.io/case-id: bank-imagepull-repo-denied
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: imagepullbackoff
-    name: bank-imagepull-repo-denied
+    name: ks-386d5577ebe0
     namespace: eval-bank
 spec:
     containers:
@@ -1096,12 +1096,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: ImagePullBackOff init image not found ErrImagePull
     labels:
-        app: bank-imagepull-init-image-missing
+        app: ks-1c9e10f7828c
         kubesage.io/case-id: bank-imagepull-init-image-missing
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: imagepullbackoff
-    name: bank-imagepull-init-image-missing
+    name: ks-1c9e10f7828c
     namespace: eval-bank
 spec:
     containers:
@@ -1128,12 +1128,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: ImagePullBackOff registry certificate x509 unknown authority
     labels:
-        app: bank-imagepull-registry-x509
+        app: ks-89320c65e1fe
         kubesage.io/case-id: bank-imagepull-registry-x509
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: imagepullbackoff
-    name: bank-imagepull-registry-x509
+    name: ks-89320c65e1fe
     namespace: eval-bank
 spec:
     containers:
@@ -1153,12 +1153,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: readiness probe failed 404 wrong health path
     labels:
-        app: bank-probe-readiness-404
+        app: ks-ce05bbfec19d
         kubesage.io/case-id: bank-probe-readiness-404
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: probefailed
-    name: bank-probe-readiness-404
+    name: ks-ce05bbfec19d
     namespace: eval-bank
 spec:
     containers:
@@ -1198,12 +1198,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: readiness probe failed 503 health dependency
     labels:
-        app: bank-probe-readiness-503
+        app: ks-88a7d3b26548
         kubesage.io/case-id: bank-probe-readiness-503
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: probefailed
-    name: bank-probe-readiness-503
+    name: ks-88a7d3b26548
     namespace: eval-bank
 spec:
     containers:
@@ -1243,12 +1243,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: liveness probe failed timeout health endpoint
     labels:
-        app: bank-probe-liveness-timeout
+        app: ks-80d3227c067d
         kubesage.io/case-id: bank-probe-liveness-timeout
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: probefailed
-    name: bank-probe-liveness-timeout
+    name: ks-80d3227c067d
     namespace: eval-bank
 spec:
     containers:
@@ -1290,12 +1290,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: liveness probe failed connection refused health port
     labels:
-        app: bank-probe-liveness-refused
+        app: ks-4ed7508ba35a
         kubesage.io/case-id: bank-probe-liveness-refused
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: probefailed
-    name: bank-probe-liveness-refused
+    name: ks-4ed7508ba35a
     namespace: eval-bank
 spec:
     containers:
@@ -1331,12 +1331,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: readiness probe failed timeout slow startup initialDelaySeconds
     labels:
-        app: bank-probe-slow-startup
+        app: ks-795987b151b9
         kubesage.io/case-id: bank-probe-slow-startup
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: probefailed
-    name: bank-probe-slow-startup
+    name: ks-795987b151b9
     namespace: eval-bank
 spec:
     containers:
@@ -1378,12 +1378,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: InitError init container migration timeout failed
     labels:
-        app: bank-init-migration-timeout
+        app: ks-62a0d7733aaf
         kubesage.io/case-id: bank-init-migration-timeout
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: initerror
-    name: bank-init-migration-timeout
+    name: ks-62a0d7733aaf
     namespace: eval-bank
 spec:
     containers:
@@ -1410,12 +1410,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: InitError init container failed missing config
     labels:
-        app: bank-init-config-missing
+        app: ks-60dac2ae8dea
         kubesage.io/case-id: bank-init-config-missing
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: initerror
-    name: bank-init-config-missing
+    name: ks-60dac2ae8dea
     namespace: eval-bank
 spec:
     containers:
@@ -1442,12 +1442,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: InitError init container dependency connection refused
     labels:
-        app: bank-init-db-refused
+        app: ks-adfdaff24840
         kubesage.io/case-id: bank-init-db-refused
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: initerror
-    name: bank-init-db-refused
+    name: ks-adfdaff24840
     namespace: eval-bank
 spec:
     containers:
@@ -1474,12 +1474,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: InitError init container permission denied exitCode 126
     labels:
-        app: bank-init-permission-denied
+        app: ks-e3c1f85fa880
         kubesage.io/case-id: bank-init-permission-denied
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: initerror
-    name: bank-init-permission-denied
+    name: ks-e3c1f85fa880
     namespace: eval-bank
 spec:
     containers:
@@ -1506,12 +1506,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: InitError init container missing secret key failed
     labels:
-        app: bank-init-secret-key-missing
+        app: ks-bddd44777a55
         kubesage.io/case-id: bank-init-secret-key-missing
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: initerror
-    name: bank-init-secret-key-missing
+    name: ks-bddd44777a55
     namespace: eval-bank
 spec:
     containers:
@@ -1538,12 +1538,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: Evicted node DiskPressure ephemeral-storage
     labels:
-        app: bank-evicted-disk-pressure
+        app: ks-3a56ade054e9
         kubesage.io/case-id: bank-evicted-disk-pressure
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: evicted
-    name: bank-evicted-disk-pressure
+    name: ks-3a56ade054e9
     namespace: eval-bank
 spec:
     containers:
@@ -1576,12 +1576,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: Evicted node MemoryPressure memory
     labels:
-        app: bank-evicted-memory-pressure
+        app: ks-2ec014a1551a
         kubesage.io/case-id: bank-evicted-memory-pressure
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: evicted
-    name: bank-evicted-memory-pressure
+    name: ks-2ec014a1551a
     namespace: eval-bank
 spec:
     containers:
@@ -1614,12 +1614,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: Evicted node PIDPressure pid
     labels:
-        app: bank-evicted-pid-pressure
+        app: ks-5f1820729eaa
         kubesage.io/case-id: bank-evicted-pid-pressure
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: evicted
-    name: bank-evicted-pid-pressure
+    name: ks-5f1820729eaa
     namespace: eval-bank
 spec:
     containers:
@@ -1652,12 +1652,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: Evicted node DiskPressure imagefs storage
     labels:
-        app: bank-evicted-imagefs-pressure
+        app: ks-9dc25c7cf2de
         kubesage.io/case-id: bank-evicted-imagefs-pressure
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: evicted
-    name: bank-evicted-imagefs-pressure
+    name: ks-9dc25c7cf2de
     namespace: eval-bank
 spec:
     containers:
@@ -1690,12 +1690,12 @@ metadata:
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: Evicted node DiskPressure nodefs inodes
     labels:
-        app: bank-evicted-nodefs-inodes
+        app: ks-745217d02ff1
         kubesage.io/case-id: bank-evicted-nodefs-inodes
         kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: evicted
-    name: bank-evicted-nodefs-inodes
+    name: ks-745217d02ff1
     namespace: eval-bank
 spec:
     containers:
@@ -1721,31 +1721,49 @@ spec:
           name: scratch
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-kubelet-down
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "false"
+    name: ks-bf4327675f93-node
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: ks-bf4327675f93
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node Ready kubelet NotReady
     labels:
-        app: bank-node-notready-kubelet-down
+        app: ks-bf4327675f93
         kubesage.io/case-id: bank-node-notready-kubelet-down
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-kubelet-down
+    name: ks-bf4327675f93
     namespace: eval-bank
 spec:
     containers:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-kubelet-down
+    nodeName: ks-bf4327675f93-node
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1754,19 +1772,19 @@ firstTimestamp: "2026-05-31T07:59:30Z"
 involvedObject:
     apiVersion: v1
     kind: Pod
-    name: bank-node-notready-kubelet-down
+    name: ks-bf4327675f93
     namespace: eval-bank
 kind: Event
 lastTimestamp: "2026-05-31T08:00:00Z"
 message: 'Node node-kubelet-down status is now: NodeNotReady; kubelet stopped posting status'
 metadata:
     labels:
-        app: bank-node-notready-kubelet-down
+        app: ks-bf4327675f93
         kubesage.io/case-id: bank-node-notready-kubelet-down
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-kubelet-down.nodenotready
+    name: ks-bf4327675f93.nodenotready
     namespace: eval-bank
 reason: NodeNotReady
 source:
@@ -1774,31 +1792,49 @@ source:
 type: Warning
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-network
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "false"
+    name: ks-af539fe5357b-node
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: ks-af539fe5357b
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node network unreachable
     labels:
-        app: bank-node-notready-network
+        app: ks-af539fe5357b
         kubesage.io/case-id: bank-node-notready-network
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-network
+    name: ks-af539fe5357b
     namespace: eval-bank
 spec:
     containers:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-network
+    nodeName: ks-af539fe5357b-node
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1807,19 +1843,19 @@ firstTimestamp: "2026-05-31T07:59:30Z"
 involvedObject:
     apiVersion: v1
     kind: Pod
-    name: bank-node-notready-network
+    name: ks-af539fe5357b
     namespace: eval-bank
 kind: Event
 lastTimestamp: "2026-05-31T08:00:00Z"
 message: Node node-network-partition is NotReady because node network is unreachable
 metadata:
     labels:
-        app: bank-node-notready-network
+        app: ks-af539fe5357b
         kubesage.io/case-id: bank-node-notready-network
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-network.nodenotready
+    name: ks-af539fe5357b.nodenotready
     namespace: eval-bank
 reason: NodeNotReady
 source:
@@ -1827,31 +1863,49 @@ source:
 type: Warning
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-disk-pressure
+        kubesage.io/disk-pressure: "true"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "false"
+    name: ks-9cedc761a09d-node
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: ks-9cedc761a09d
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node DiskPressure NotReady
     labels:
-        app: bank-node-notready-disk-pressure
+        app: ks-9cedc761a09d
         kubesage.io/case-id: bank-node-notready-disk-pressure
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-disk-pressure
+    name: ks-9cedc761a09d
     namespace: eval-bank
 spec:
     containers:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-disk-pressure
+    nodeName: ks-9cedc761a09d-node
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1860,19 +1914,19 @@ firstTimestamp: "2026-05-31T07:59:30Z"
 involvedObject:
     apiVersion: v1
     kind: Pod
-    name: bank-node-notready-disk-pressure
+    name: ks-9cedc761a09d
     namespace: eval-bank
 kind: Event
 lastTimestamp: "2026-05-31T08:00:00Z"
 message: Node node-disk-pressure is NotReady and reports DiskPressure
 metadata:
     labels:
-        app: bank-node-notready-disk-pressure
+        app: ks-9cedc761a09d
         kubesage.io/case-id: bank-node-notready-disk-pressure
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-disk-pressure.nodenotready
+    name: ks-9cedc761a09d.nodenotready
     namespace: eval-bank
 reason: NodeNotReady
 source:
@@ -1880,31 +1934,49 @@ source:
 type: Warning
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-memory-pressure
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "true"
+        kubesage.io/pid-pressure: "false"
+    name: ks-54cb61136b38-node
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: ks-54cb61136b38
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node MemoryPressure NotReady
     labels:
-        app: bank-node-notready-memory-pressure
+        app: ks-54cb61136b38
         kubesage.io/case-id: bank-node-notready-memory-pressure
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-memory-pressure
+    name: ks-54cb61136b38
     namespace: eval-bank
 spec:
     containers:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-memory-pressure
+    nodeName: ks-54cb61136b38-node
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1913,19 +1985,90 @@ firstTimestamp: "2026-05-31T07:59:30Z"
 involvedObject:
     apiVersion: v1
     kind: Pod
-    name: bank-node-notready-memory-pressure
+    name: ks-54cb61136b38
     namespace: eval-bank
 kind: Event
 lastTimestamp: "2026-05-31T08:00:00Z"
 message: Node node-memory-pressure is NotReady and reports MemoryPressure
 metadata:
     labels:
-        app: bank-node-notready-memory-pressure
+        app: ks-54cb61136b38
         kubesage.io/case-id: bank-node-notready-memory-pressure
         kubesage.io/demo-surface: node-placeholder
         kubesage.io/fault-bank: "true"
         kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-memory-pressure.nodenotready
+    name: ks-54cb61136b38.nodenotready
+    namespace: eval-bank
+reason: NodeNotReady
+source:
+    component: kubesage-fault-bank
+type: Warning
+---
+apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-pid-pressure
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "true"
+    name: ks-a102cc7029d4-node
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: ks-a102cc7029d4
+    unschedulable: true
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
+        kubesage.io/expected-fault: NodeNotReady
+        kubesage.io/offline-case: eval/cases/fault-bank.yaml
+        kubesage.io/root-cause: NodeNotReady node PIDPressure NotReady
+    labels:
+        app: ks-a102cc7029d4
+        kubesage.io/case-id: bank-node-notready-pid-pressure
+        kubesage.io/demo-surface: node-placeholder
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: nodenotready
+    name: ks-a102cc7029d4
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - echo bound to synthetic Ready=False node; sleep 3600
+          image: busybox:1.36
+          name: app
+    nodeName: ks-a102cc7029d4-node
+    restartPolicy: Never
+---
+apiVersion: v1
+count: 1
+firstTimestamp: "2026-05-31T07:59:30Z"
+involvedObject:
+    apiVersion: v1
+    kind: Pod
+    name: ks-a102cc7029d4
+    namespace: eval-bank
+kind: Event
+lastTimestamp: "2026-05-31T08:00:00Z"
+message: Node node-pid-pressure is NotReady and reports PIDPressure
+metadata:
+    labels:
+        app: ks-a102cc7029d4
+        kubesage.io/case-id: bank-node-notready-pid-pressure
+        kubesage.io/demo-surface: node-placeholder
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: nodenotready
+    name: ks-a102cc7029d4.nodenotready
     namespace: eval-bank
 reason: NodeNotReady
 source:
@@ -1936,28 +2079,258 @@ apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
-        kubesage.io/expected-fault: NodeNotReady
-        kubesage.io/offline-case: eval/cases/fault-bank.yaml
-        kubesage.io/root-cause: NodeNotReady node PIDPressure NotReady
+        kubesage.io/expected-fault: OOMKilled
+        kubesage.io/offline-case: eval/cases/supplementary.yaml
+        kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
     labels:
-        app: bank-node-notready-pid-pressure
-        kubesage.io/case-id: bank-node-notready-pid-pressure
-        kubesage.io/demo-surface: node-placeholder
+        app: ks-0eccb45847a0
+        kubesage.io/case-id: supplement-oom-node-pressure
+        kubesage.io/demo-surface: pod
         kubesage.io/fault-bank: "true"
-        kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-pid-pressure
+        kubesage.io/fault-type: oomkilled
+    name: ks-0eccb45847a0
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              import time
+              print("Container app was OOMKilled after exceeding memory limit", flush=True)
+              buf=[]
+              while True:
+                  buf.append(bytearray(8*1024*1024))
+                  time.sleep(0.05)
+          image: python:3.12-alpine
+          name: app
+          resources:
+            limits:
+                memory: 128Mi
+            requests:
+                memory: 64Mi
+    restartPolicy: Always
+---
+apiVersion: v1
+count: 1
+firstTimestamp: "2026-05-31T07:59:30Z"
+involvedObject:
+    apiVersion: v1
+    kind: Pod
+    name: ks-0eccb45847a0
+    namespace: eval-bank
+kind: Event
+lastTimestamp: "2026-05-31T08:00:00Z"
+message: Container app was OOMKilled after exceeding memory limit
+metadata:
+    labels:
+        app: ks-0eccb45847a0
+        kubesage.io/case-id: supplement-oom-node-pressure
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: ks-0eccb45847a0.oomkilled
+    namespace: eval-bank
+reason: OOMKilled
+source:
+    component: kubesage-fault-bank
+type: Warning
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: ImagePullBackOff
+        kubesage.io/offline-case: eval/cases/supplementary.yaml
+        kubesage.io/root-cause: InitError init container failed Init container
+    labels:
+        app: ks-e1a430e01d05
+        kubesage.io/case-id: supplement-crashloop-init-image
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: imagepullbackoff
+    name: ks-e1a430e01d05
     namespace: eval-bank
 spec:
     containers:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-pid-pressure
+    initContainers:
+        - command:
+            - sh
+            - -c
+            - echo init image should fail before this command runs
+          image: registry.example.com/migrate:missing-tag
+          name: init-migrate
+    restartPolicy: Always
+---
+apiVersion: v1
+count: 1
+firstTimestamp: "2026-05-31T07:59:30Z"
+involvedObject:
+    apiVersion: v1
+    kind: Pod
+    name: ks-e1a430e01d05
+    namespace: eval-bank
+kind: Event
+lastTimestamp: "2026-05-31T08:00:00Z"
+message: 'Error: ImagePullBackOff'
+metadata:
+    labels:
+        app: ks-e1a430e01d05
+        kubesage.io/case-id: supplement-crashloop-init-image
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: imagepullbackoff
+    name: ks-e1a430e01d05.failed
+    namespace: eval-bank
+reason: Failed
+source:
+    component: kubesage-fault-bank
+type: Warning
+---
+apiVersion: v1
+count: 1
+firstTimestamp: "2026-05-31T07:59:30Z"
+involvedObject:
+    apiVersion: v1
+    kind: Pod
+    name: ks-e1a430e01d05
+    namespace: eval-bank
+kind: Event
+lastTimestamp: "2026-05-31T08:00:00Z"
+message: Back-off restarting failed container
+metadata:
+    labels:
+        app: ks-e1a430e01d05
+        kubesage.io/case-id: supplement-crashloop-init-image
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: imagepullbackoff
+    name: ks-e1a430e01d05.backoff
+    namespace: eval-bank
+reason: BackOff
+source:
+    component: kubesage-fault-bank
+type: Warning
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: OOMKilled
+        kubesage.io/offline-case: eval/cases/supplementary.yaml
+        kubesage.io/root-cause: OOMKilled exitCode 137 memory limit out of memory
+    labels:
+        app: ks-ffdeedca9c73
+        kubesage.io/case-id: supplement-oom-strong-evidence
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: ks-ffdeedca9c73
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - python
+            - -c
+            - |
+              import time
+              print("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", flush=True)
+              buf=[]
+              while True:
+                  buf.append(bytearray(8*1024*1024))
+                  time.sleep(0.05)
+          image: python:3.12-alpine
+          name: app
+          resources:
+            limits:
+                memory: 128Mi
+            requests:
+                memory: 64Mi
+    restartPolicy: Always
+---
+apiVersion: v1
+count: 1
+firstTimestamp: "2026-05-31T07:59:30Z"
+involvedObject:
+    apiVersion: v1
+    kind: Pod
+    name: ks-ffdeedca9c73
+    namespace: eval-bank
+kind: Event
+lastTimestamp: "2026-05-31T08:00:00Z"
+message: Container app was OOMKilled after exceeding memory limit
+metadata:
+    labels:
+        app: ks-ffdeedca9c73
+        kubesage.io/case-id: supplement-oom-strong-evidence
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: ks-ffdeedca9c73.oomkilled
+    namespace: eval-bank
+reason: OOMKilled
+source:
+    component: kubesage-fault-bank
+type: Warning
+---
+apiVersion: v1
+count: 1
+firstTimestamp: "2026-05-31T07:59:30Z"
+involvedObject:
+    apiVersion: v1
+    kind: Pod
+    name: ks-ffdeedca9c73
+    namespace: eval-bank
+kind: Event
+lastTimestamp: "2026-05-31T08:00:00Z"
+message: Back-off restarting failed container
+metadata:
+    labels:
+        app: ks-ffdeedca9c73
+        kubesage.io/case-id: supplement-oom-strong-evidence
+        kubesage.io/demo-surface: pod
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: oomkilled
+    name: ks-ffdeedca9c73.backoff
+    namespace: eval-bank
+reason: BackOff
+source:
+    component: kubesage-fault-bank
+type: Warning
+---
+apiVersion: v1
+kind: Pod
+metadata:
+    annotations:
+        kubesage.io/expected-fault: PodPending
+        kubesage.io/offline-case: eval/cases/supplementary.yaml
+        kubesage.io/root-cause: PodPending FailedScheduling Insufficient cpu requests
+    labels:
+        app: ks-e73d655872b0
+        kubesage.io/case-id: supplement-pending-with-eviction-hint
+        kubesage.io/demo-surface: scheduler
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: podpending
+    name: ks-e73d655872b0
+    namespace: eval-bank
+spec:
+    containers:
+        - command:
+            - sh
+            - -c
+            - sleep 3600
+          image: busybox:1.36
+          name: app
+          resources:
+            requests:
+                cpu: "2"
+                memory: 4Gi
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1966,21 +2339,46 @@ firstTimestamp: "2026-05-31T07:59:30Z"
 involvedObject:
     apiVersion: v1
     kind: Pod
-    name: bank-node-notready-pid-pressure
+    name: ks-e73d655872b0
     namespace: eval-bank
 kind: Event
 lastTimestamp: "2026-05-31T08:00:00Z"
-message: Node node-pid-pressure is NotReady and reports PIDPressure
+message: '0/3 nodes are available: 3 Insufficient cpu.'
 metadata:
     labels:
-        app: bank-node-notready-pid-pressure
-        kubesage.io/case-id: bank-node-notready-pid-pressure
-        kubesage.io/demo-surface: node-placeholder
+        app: ks-e73d655872b0
+        kubesage.io/case-id: supplement-pending-with-eviction-hint
+        kubesage.io/demo-surface: scheduler
         kubesage.io/fault-bank: "true"
-        kubesage.io/fault-type: nodenotready
-    name: bank-node-notready-pid-pressure.nodenotready
+        kubesage.io/fault-type: podpending
+    name: ks-e73d655872b0.failedscheduling
     namespace: eval-bank
-reason: NodeNotReady
+reason: FailedScheduling
+source:
+    component: kubesage-fault-bank
+type: Warning
+---
+apiVersion: v1
+count: 1
+firstTimestamp: "2026-05-31T07:59:30Z"
+involvedObject:
+    apiVersion: v1
+    kind: Pod
+    name: ks-e73d655872b0
+    namespace: eval-bank
+kind: Event
+lastTimestamp: "2026-05-31T08:00:00Z"
+message: Pod was evicted due to memory pressure on node worker-01
+metadata:
+    labels:
+        app: ks-e73d655872b0
+        kubesage.io/case-id: supplement-pending-with-eviction-hint
+        kubesage.io/demo-surface: scheduler
+        kubesage.io/fault-bank: "true"
+        kubesage.io/fault-type: podpending
+    name: ks-e73d655872b0.evicted
+    namespace: eval-bank
+reason: Evicted
 source:
     component: kubesage-fault-bank
 type: Warning

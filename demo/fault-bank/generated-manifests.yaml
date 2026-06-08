@@ -1218,10 +1218,29 @@ spec:
           name: scratch
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-kubelet-down
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "false"
+    name: node-kubelet-down
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: bank-node-notready-kubelet-down
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node Ready kubelet NotReady
@@ -1238,11 +1257,10 @@ spec:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-kubelet-down
+    nodeName: node-kubelet-down
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1271,10 +1289,29 @@ source:
 type: Warning
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-network
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "false"
+    name: node-network-partition
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: bank-node-notready-network
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node network unreachable
@@ -1291,11 +1328,10 @@ spec:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-network
+    nodeName: node-network-partition
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1324,10 +1360,29 @@ source:
 type: Warning
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-disk-pressure
+        kubesage.io/disk-pressure: "true"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "false"
+    name: node-disk-pressure
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: bank-node-notready-disk-pressure
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node DiskPressure NotReady
@@ -1344,11 +1399,10 @@ spec:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-disk-pressure
+    nodeName: node-disk-pressure
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1377,10 +1431,29 @@ source:
 type: Warning
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-memory-pressure
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "true"
+        kubesage.io/pid-pressure: "false"
+    name: node-memory-pressure
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: bank-node-notready-memory-pressure
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node MemoryPressure NotReady
@@ -1397,11 +1470,10 @@ spec:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-memory-pressure
+    nodeName: node-memory-pressure
     restartPolicy: Never
 ---
 apiVersion: v1
@@ -1430,10 +1502,29 @@ source:
 type: Warning
 ---
 apiVersion: v1
+kind: Node
+metadata:
+    annotations:
+        kubesage.io/demo-note: Status is patched to Ready=False by scripts/prepare_live_eval.ps1.
+    labels:
+        kubesage.io/case-id: bank-node-notready-pid-pressure
+        kubesage.io/disk-pressure: "false"
+        kubesage.io/eval-node: "true"
+        kubesage.io/memory-pressure: "false"
+        kubesage.io/pid-pressure: "true"
+    name: node-pid-pressure
+spec:
+    taints:
+        - effect: NoSchedule
+          key: kubesage.io/not-ready
+          value: bank-node-notready-pid-pressure
+    unschedulable: true
+---
+apiVersion: v1
 kind: Pod
 metadata:
     annotations:
-        kubesage.io/demo-note: 'Placeholder only: exact NodeNotReady requires a real node Ready=False condition.'
+        kubesage.io/demo-note: Pod is bound to a dedicated Node API object whose status is patched to Ready=False.
         kubesage.io/expected-fault: NodeNotReady
         kubesage.io/offline-case: eval/cases/fault-bank.yaml
         kubesage.io/root-cause: NodeNotReady node PIDPressure NotReady
@@ -1450,11 +1541,10 @@ spec:
         - command:
             - sh
             - -c
-            - echo NodeNotReady requires node-level fault injection; sleep 3600
+            - echo bound to synthetic Ready=False node; sleep 3600
           image: busybox:1.36
           name: app
-    nodeSelector:
-        kubesage.dev/node-notready: bank-node-notready-pid-pressure
+    nodeName: node-pid-pressure
     restartPolicy: Never
 ---
 apiVersion: v1
