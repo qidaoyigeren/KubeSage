@@ -58,6 +58,9 @@ func (c *OpenAICompatibleClient) GenerateDirectDiagnosis(ctx context.Context, sn
 		Temperature:    0.1,
 		ResponseFormat: &responseFormat{Type: "json_object"},
 	}
+	if err := applyContextTokenBudget(ctx, &payload); err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -90,7 +93,7 @@ func (c *OpenAICompatibleClient) GenerateDirectDiagnosis(ctx context.Context, sn
 	if len(raw.Choices) == 0 {
 		return nil, fmt.Errorf("direct llm response has no choices")
 	}
-	c.captureUsage(raw.Usage, time.Since(start))
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
 
 	content := stripMarkdownFences(raw.Choices[0].Message.Content)
 	var result DirectDiagnosis

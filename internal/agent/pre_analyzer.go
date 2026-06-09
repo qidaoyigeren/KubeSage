@@ -218,6 +218,9 @@ func applyTargetedEvidencePlan(plan *Plan, state *ToolState, decision *PreAnalys
 		switch {
 		case step.Completed:
 			history = append(history, step)
+		case adaptiveEvidenceStep(step) && toolAvailableInState(state, step.ToolName):
+			step.Skipped = false
+			selected = append(selected, step)
 		case targeted && !selectedByTool[tool]:
 			if step.Skipped || step.ParallelGroup != preAnalyzerEvidenceGroup || step.AppendedBy != "pre_analyzer" {
 				rewrite.changed = true
@@ -275,12 +278,28 @@ func applyTargetedEvidencePlan(plan *Plan, state *ToolState, decision *PreAnalys
 	return rewrite
 }
 
+func adaptiveEvidenceStep(step PlanStep) bool {
+	return step.AppendedBy == "llm_reflection" || step.AppendedBy == configEvidenceGuardrail
+}
+
 func hasPendingTargetedEvidence(plan *Plan) bool {
 	if plan == nil {
 		return false
 	}
 	for _, step := range plan.Steps {
 		if step.AppendedBy == "pre_analyzer" && !step.Completed && !step.Skipped {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPendingRequiredEvidence(plan *Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, step := range plan.Steps {
+		if (step.AppendedBy == "pre_analyzer" || adaptiveEvidenceStep(step)) && !step.Completed && !step.Skipped {
 			return true
 		}
 	}

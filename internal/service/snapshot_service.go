@@ -19,6 +19,7 @@ import (
 type SnapshotService struct {
 	cfg          *config.Config
 	log          *zap.Logger
+	client       *k8s.Client
 	pods         *k8s.PodCollector
 	events       *k8s.EventCollector
 	logs         *k8s.LogCollector
@@ -39,6 +40,7 @@ func NewSnapshotService(cfg *config.Config, client *k8s.Client, log *zap.Logger,
 	return &SnapshotService{
 		cfg:          cfg,
 		log:          log,
+		client:       client,
 		pods:         k8s.NewPodCollector(client),
 		events:       k8s.NewEventCollector(client),
 		logs:         k8s.NewLogCollector(client),

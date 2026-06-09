@@ -177,12 +177,13 @@ func run(casesPath, configPath, namespace string, maxCases int, outPath, summary
 		toolTimeout = 10 * time.Second
 	}
 	toolRegistry, err := agent.NewDefaultRegistry(agent.RegistryOptions{
-		Snapshot:    snapshotFunc,
-		Retriever:   noopRetriever{},
-		Policy:      agent.NewRemediationPolicy(false),
-		Prometheus:  promClient,
-		Loki:        lokiClient,
-		ToolTimeout: toolTimeout,
+		Snapshot:        snapshotFunc,
+		ConfigInspector: snapshotSvc,
+		Retriever:       noopRetriever{},
+		Policy:          agent.NewRemediationPolicy(false),
+		Prometheus:      promClient,
+		Loki:            lokiClient,
+		ToolTimeout:     toolTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("tool registry: %w", err)
@@ -208,7 +209,7 @@ func run(casesPath, configPath, namespace string, maxCases int, outPath, summary
 		fmt.Fprintf(os.Stderr, "\n[%d/%d] Running case: %s (pod=%s expected=%s)\n",
 			i+1, len(cases), tc.CaseID, tc.Pod, tc.Expected)
 
-		result := runCase(runtime, tc, maxSteps, toolTimeout)
+		result := runCase(runtime, tc, maxSteps, toolTimeout, cfg.Agent)
 		results = append(results, result)
 
 		status := "✓"
@@ -251,7 +252,7 @@ func run(casesPath, configPath, namespace string, maxCases int, outPath, summary
 	return nil
 }
 
-func runCase(rt *agent.Runtime, tc TestCase, maxSteps int, toolTimeout time.Duration) CaseResult {
+func runCase(rt *agent.Runtime, tc TestCase, maxSteps int, toolTimeout time.Duration, cfg config.AgentConfig) CaseResult {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -263,9 +264,15 @@ func runCase(rt *agent.Runtime, tc TestCase, maxSteps int, toolTimeout time.Dura
 	}
 
 	result, err := rt.Run(ctx, agent.RuntimeOptions{
-		Goal:        goal,
-		MaxSteps:    maxSteps,
-		ToolTimeout: toolTimeout,
+		Goal:                goal,
+		MaxSteps:            maxSteps,
+		ToolTimeout:         toolTimeout,
+		MaxReflectionSteps:  cfg.MaxReflectionSteps,
+		MaxReflectionRounds: cfg.MaxReflectionRounds,
+		MaxToolCallsPerTool: cfg.MaxToolCallsPerTool,
+		MaxRunbookSearches:  cfg.MaxRunbookSearches,
+		MaxLLMTokens:        cfg.MaxLLMTokens,
+		ReflectionTimeout:   time.Duration(cfg.ReflectionTimeoutSeconds) * time.Second,
 	})
 	elapsed := time.Since(start)
 
@@ -290,6 +297,7 @@ func runCase(rt *agent.Runtime, tc TestCase, maxSteps int, toolTimeout time.Dura
 	cr.StepsExecuted = result.StepsExecuted
 	cr.PlannerSummary = result.PlanSummary
 	cr.PlannedTools = result.PlannedToolNames
+	cr.ExecutedTools = result.ExecutedToolNames
 
 	// Match expected vs actual with fault-type equivalence.
 	cr.Match = faultTypesMatch(tc.Expected, cr.Actual)

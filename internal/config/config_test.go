@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/spf13/viper"
+)
 
 func TestValidateRejectsInvalidPlanner(t *testing.T) {
 	cfg := Config{
@@ -44,5 +48,35 @@ func TestValidateAcceptsPgvector(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestAgentBudgetDefaults(t *testing.T) {
+	v := viper.New()
+	setDefaults(v)
+	expected := map[string]int{
+		"agent.max_reflection_steps":       4,
+		"agent.max_reflection_rounds":      4,
+		"agent.max_tool_calls_per_tool":    3,
+		"agent.max_runbook_searches":       2,
+		"agent.max_llm_tokens":             12000,
+		"agent.reflection_timeout_seconds": 15,
+	}
+	for key, want := range expected {
+		if got := v.GetInt(key); got != want {
+			t.Fatalf("%s = %d, want %d", key, got, want)
+		}
+	}
+}
+
+func TestValidateRejectsNegativeAgentBudget(t *testing.T) {
+	cfg := Config{
+		Server:  ServerConfig{Port: 8080},
+		MySQL:   MySQLConfig{Host: "127.0.0.1", Port: 3306, Username: "u", Database: "d"},
+		Planner: PlannerConfig{Type: "rule"},
+		Agent:   AgentConfig{MaxReflectionSteps: -1},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected negative agent budget validation error")
 	}
 }

@@ -380,13 +380,14 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 
 	agentPolicy := agent.NewRemediationPolicy(s.cfg.Agent.EnableDryRunPreview)
 	registry, err := agent.NewDefaultRegistry(agent.RegistryOptions{
-		Snapshot:    s.agentSnapshotFunc(req),
-		Retriever:   agentRunbookRetriever{base: s.runbookRetriever},
-		Policy:      agentPolicy,
-		Prometheus:  s.prometheusClient,
-		Loki:        s.agentLokiClient(),
-		ToolTimeout: time.Duration(s.cfg.Agent.ToolTimeoutSeconds) * time.Second,
-		MCPProvider: s.mcpProvider,
+		Snapshot:        s.agentSnapshotFunc(req),
+		ConfigInspector: s.snapshotService,
+		Retriever:       agentRunbookRetriever{base: s.runbookRetriever},
+		Policy:          agentPolicy,
+		Prometheus:      s.prometheusClient,
+		Loki:            s.agentLokiClient(),
+		ToolTimeout:     time.Duration(s.cfg.Agent.ToolTimeoutSeconds) * time.Second,
+		MCPProvider:     s.mcpProvider,
 	})
 	if err != nil {
 		span.RecordError(err)
@@ -405,6 +406,12 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 		TaskID:              taskID,
 		MaxSteps:            s.agentMaxSteps(),
 		ToolTimeout:         s.agentToolTimeout(),
+		MaxReflectionSteps:  s.cfg.Agent.MaxReflectionSteps,
+		MaxReflectionRounds: s.cfg.Agent.MaxReflectionRounds,
+		MaxToolCallsPerTool: s.cfg.Agent.MaxToolCallsPerTool,
+		MaxRunbookSearches:  s.cfg.Agent.MaxRunbookSearches,
+		MaxLLMTokens:        s.cfg.Agent.MaxLLMTokens,
+		ReflectionTimeout:   time.Duration(s.cfg.Agent.ReflectionTimeoutSeconds) * time.Second,
 		EnableDryRunPreview: s.cfg.Agent.EnableDryRunPreview,
 		Goal:                toAgentGoal(req),
 	})

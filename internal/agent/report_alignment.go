@@ -34,10 +34,11 @@ func AlignReportWithHypotheses(report *diagnostic.Report, hypotheses []model.Hyp
 	// Deterministic analyzers own the observed fault classification. A
 	// hypothesis may explain or refine that result, but must not replace it.
 	if analyzerPrimaryAuthoritative(report) {
-		var added bool
+		var added, refined bool
 		report.ContributingFactors, added = appendHypothesisFactor(report.ContributingFactors, *primary)
+		refined = refineAuthoritativeConfigSummary(report, *primary)
 		return ReportAlignmentResult{
-			Changed:       added,
+			Changed:       added || refined,
 			Reason:        fmt.Sprintf("kept analyzer primary %s; attached hypothesis %s as a contributing explanation", report.FaultType, primary.HypothesisType),
 			OriginalFault: report.FaultType,
 			AlignedFault:  report.FaultType,
@@ -70,6 +71,47 @@ func AlignReportWithHypotheses(report *diagnostic.Report, hypotheses []model.Hyp
 		AlignedFault:  alignedFault,
 		Primary:       primary.HypothesisType,
 	}
+}
+
+func refineAuthoritativeConfigSummary(report *diagnostic.Report, hypothesis model.Hypothesis) bool {
+	if report == nil || hypothesis.HypothesisType != "missing_secret_or_configmap" ||
+		hypothesis.Status != model.HypothesisStatusConfirmed {
+		return false
+	}
+	cause := confirmedConfigReferenceCause(report.Evidences)
+	if cause == "" || strings.Contains(strings.ToLower(report.RootCauseSummary), strings.ToLower(cause)) {
+		return false
+	}
+	report.RootCauseSummary = strings.TrimSpace(report.RootCauseSummary) + " Confirmed configuration cause: " + cause + "."
+	return true
+}
+
+func confirmedConfigReferenceCause(evidences []diagnostic.EvidenceRecord) string {
+	for _, evidence := range evidences {
+		if evidence.SourceType != "k8s_config_ref" {
+			continue
+		}
+		if ref, ok := evidence.Raw.(podConfigReference); ok {
+			switch ref.ContentStatus {
+			case "object_missing":
+				return fmt.Sprintf("%s %s is missing", ref.Kind, ref.Name)
+			case "key_missing":
+				return fmt.Sprintf("%s %s is missing key %s", ref.Kind, ref.Name, ref.Key)
+			case "empty":
+				return fmt.Sprintf("%s %s key %s is empty", ref.Kind, ref.Name, ref.Key)
+			}
+		}
+		text := strings.ToLower(evidence.Content)
+		switch {
+		case strings.Contains(text, "contentstatus=object_missing"):
+			return "a referenced ConfigMap or Secret is missing"
+		case strings.Contains(text, "contentstatus=key_missing"):
+			return "a referenced ConfigMap or Secret key is missing"
+		case strings.Contains(text, "contentstatus=empty"):
+			return "a referenced ConfigMap or Secret value is empty"
+		}
+	}
+	return ""
 }
 
 func selectPrimaryHypothesis(hypotheses []model.Hypothesis) *model.Hypothesis {

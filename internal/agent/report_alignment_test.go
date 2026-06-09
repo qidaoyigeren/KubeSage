@@ -149,6 +149,48 @@ func TestAlignReportWithHypothesesLeavesEquivalentFaultAlone(t *testing.T) {
 	}
 }
 
+func TestAlignReportWithHypothesesRefinesPendingSummaryWithConfirmedMissingConfig(t *testing.T) {
+	report := &diagnostic.Report{
+		FaultType:        "PodPending",
+		RootCauseSummary: "Pod is pending.",
+		ConfidenceScore:  0.70,
+		PrimaryRootCause: &diagnostic.RootCauseFactor{
+			AnalyzerName:     "podpending",
+			FaultType:        "PodPending",
+			Summary:          "Pod is pending.",
+			ConfidenceScore:  0.70,
+			ContributingRole: "primary",
+		},
+		Evidences: []diagnostic.EvidenceRecord{{
+			SourceType: "k8s_config_ref",
+			Raw: podConfigReference{
+				Kind:            "ConfigMap",
+				Name:            "app-config",
+				ObjectInspected: true,
+				ObjectExists:    boolPointer(false),
+				ContentStatus:   "object_missing",
+			},
+		}},
+	}
+	hypotheses := []model.Hypothesis{{
+		HypothesisType:  "missing_secret_or_configmap",
+		Summary:         "A referenced ConfigMap is missing.",
+		ConfidenceScore: 0.90,
+		Status:          model.HypothesisStatusConfirmed,
+	}}
+
+	result := AlignReportWithHypotheses(report, hypotheses)
+	if !result.Changed {
+		t.Fatal("expected confirmed configuration cause to refine the report")
+	}
+	if report.FaultType != "PodPending" {
+		t.Fatalf("observed fault classification must remain PodPending, got %s", report.FaultType)
+	}
+	if !strings.Contains(report.RootCauseSummary, "ConfigMap app-config is missing") {
+		t.Fatalf("expected exact missing object in summary, got %q", report.RootCauseSummary)
+	}
+}
+
 func TestPrimaryHypothesisPrefersSpecificConfirmedRootCause(t *testing.T) {
 	hypotheses := []model.Hypothesis{
 		{

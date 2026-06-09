@@ -65,7 +65,7 @@ func DefaultHypothesisScoringConfig() HypothesisScoringConfig {
 			"application_memory_leak":     {"oom": 0.20, "memory": 0.30},
 			"node_memory_pressure":        {"memorypressure": 0.35, "k8s_topology": 0.10},
 			"bad_config":                  {"config": 0.30, "backoff": 0.20},
-			"missing_secret_or_configmap": {"secret_configmap": 0.30},
+			"missing_secret_or_configmap": {"secret_configmap": 0.15, "object_missing": 0.45, "key_missing": 0.40},
 			"dependency_unavailable":      {"refused_timeout": 0.25, "backoff_probe": 0.10},
 			"probe_misconfigured":         {"probe_unhealthy": 0.45},
 			"pvc_unbound":                 {"pvc_bound": 0.45},
@@ -107,6 +107,10 @@ func (c HypothesisScoringConfig) WithDefaults(defaults HypothesisScoringConfig) 
 // Update recalculates candidate root-cause hypotheses from observations and
 // analyzer evidence.
 func (e *HypothesisEngine) Update(taskID uint, ctx *diagnostic.DiagnosticContext, records []diagnostic.EvidenceRecord) []HypothesisScore {
+	return e.UpdateContext(context.Background(), taskID, ctx, records)
+}
+
+func (e *HypothesisEngine) UpdateContext(callContext context.Context, taskID uint, ctx *diagnostic.DiagnosticContext, records []diagnostic.EvidenceRecord) []HypothesisScore {
 	_ = taskID
 	facts := evidenceFacts(ctx, records)
 	candidates := []HypothesisScore{
@@ -133,7 +137,7 @@ func (e *HypothesisEngine) Update(taskID uint, ctx *diagnostic.DiagnosticContext
 
 	// LLM-assisted re-ranking: blend keyword scores with LLM scores.
 	if e.llmScorer != nil {
-		if llmRanked, err := e.llmScorer.ScoreHypotheses(context.Background(), candidates); err == nil {
+		if llmRanked, err := e.llmScorer.ScoreHypotheses(callContext, candidates); err == nil {
 			candidates = blendScores(candidates, llmRanked, 0.6)
 		}
 	}
@@ -216,6 +220,15 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 		if strings.Contains(text, "memorypattern=application_memory_leak") {
 			f.refsByKey["application_memory_leak_pattern"] = append(f.refsByKey["application_memory_leak_pattern"], ref)
 		}
+		if strings.Contains(text, "objectinspected=true") && strings.Contains(text, "objectexists=false") {
+			f.refsByKey["config_object_missing"] = append(f.refsByKey["config_object_missing"], ref)
+		}
+		if strings.Contains(text, "keyexists=false") || strings.Contains(text, "contentstatus=key_missing") {
+			f.refsByKey["config_key_missing"] = append(f.refsByKey["config_key_missing"], ref)
+		}
+		if strings.Contains(text, "contentstatus=empty") {
+			f.refsByKey["config_content_empty"] = append(f.refsByKey["config_content_empty"], ref)
+		}
 		for _, key := range []string{"memorypressure", "diskpressure", "pidpressure"} {
 			if positiveConditionSignal(text, key) {
 				f.refsByKey[key] = append(f.refsByKey[key], ref)
@@ -297,6 +310,7 @@ func (e *HypothesisEngine) scoreBadConfig(f facts) HypothesisScore {
 	s := base("bad_config", "Application startup may fail because of invalid configuration.")
 	s.add(e.weight(s.Type, "config", 0.25), refs(f, "config", "configmap")...)
 	s.add(e.weight(s.Type, "backoff", 0.15), refs(f, "backoff", "crashloop")...)
+	s.add(0.30, refs(f, "config_content_empty")...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "logs or events mentioning configuration errors")
 	}
@@ -305,9 +319,13 @@ func (e *HypothesisEngine) scoreBadConfig(f facts) HypothesisScore {
 
 func (e *HypothesisEngine) scoreMissingSecretOrConfigMap(f facts) HypothesisScore {
 	s := base("missing_secret_or_configmap", "A referenced Secret or ConfigMap may be missing or incomplete.")
-	s.add(e.weight(s.Type, "secret_configmap", 0.30), refs(f, "secret", "configmap")...)
-	if len(s.SupportingRefs) == 0 {
-		s.MissingEvidence = append(s.MissingEvidence, "secret/configmap reference evidence")
+	s.add(e.weight(s.Type, "secret_configmap", 0.15), refs(f, "secret", "configmap")...)
+	missingRefs := refs(f, "config_object_missing")
+	keyRefs := refs(f, "config_key_missing")
+	s.add(e.weight(s.Type, "object_missing", 0.45), missingRefs...)
+	s.add(e.weight(s.Type, "key_missing", 0.40), keyRefs...)
+	if len(missingRefs) == 0 && len(keyRefs) == 0 {
+		s.MissingEvidence = append(s.MissingEvidence, "direct ConfigMap/Secret object and key inspection")
 	}
 	return s
 }
@@ -497,6 +515,12 @@ func configErrorSignal(text string) bool {
 	if strings.Contains(compact, "containerimageconfiguration") ||
 		strings.Contains(compact, "imagepull") ||
 		strings.Contains(compact, "errimagepull") {
+		return false
+	}
+	if strings.Contains(compact, "k8sconfigref") &&
+		!strings.Contains(compact, "objectinspected=trueobjectexists=false") &&
+		!strings.Contains(compact, "keyexists=false") &&
+		!strings.Contains(compact, "contentstatus=empty") {
 		return false
 	}
 	for _, needle := range []string{

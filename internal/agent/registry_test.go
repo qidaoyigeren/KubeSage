@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"kubesage/internal/prometheus"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestToolRegistryRegisterAndLookup(t *testing.T) {
@@ -152,6 +154,266 @@ func TestSnapshotEvidenceToolsRefreshEmptyPodOnlyCache(t *testing.T) {
 	}
 	if !state.Goal.IncludeEvents {
 		t.Fatalf("expected refreshed goal to include events")
+	}
+}
+
+func TestGetLogsUsesContainerInputForSnapshot(t *testing.T) {
+	calls := []Goal{}
+	registry, err := NewDefaultRegistry(RegistryOptions{
+		Snapshot: func(ctx context.Context, goal Goal) (*diagnostic.DiagnosticContext, error) {
+			_ = ctx
+			calls = append(calls, goal)
+			return &diagnostic.DiagnosticContext{
+				Namespace: "default",
+				PodName:   "api-0",
+				Pod: &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api-0"},
+					Spec: corev1.PodSpec{
+						InitContainers: []corev1.Container{{Name: "init-config"}},
+						Containers:     []corev1.Container{{Name: "app"}},
+					},
+				},
+				Logs: []diagnostic.ContainerLogs{{ContainerName: goal.ContainerName, Previous: "init failed"}},
+			}, nil
+		},
+		Policy: NewRemediationPolicy(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &ToolState{
+		Goal: Goal{Namespace: "default", PodName: "api-0"},
+		DiagnosticContext: &diagnostic.DiagnosticContext{
+			Namespace: "default",
+			PodName:   "api-0",
+			Pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api-0"},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+			},
+			Logs: []diagnostic.ContainerLogs{{ContainerName: "app", Previous: "app failed"}},
+		},
+	}
+	tool, _ := registry.Get("k8s.get_logs")
+	result := tool.Execute(context.Background(), map[string]interface{}{"container_name": "init-config"}, state)
+	if !result.Success {
+		t.Fatalf("get_logs failed: %s", result.Error)
+	}
+	if len(calls) != 1 || calls[0].ContainerName != "init-config" {
+		t.Fatalf("expected targeted snapshot call, got %#v", calls)
+	}
+	logs, ok := result.Data.([]diagnostic.ContainerLogs)
+	if !ok || len(logs) != 1 || logs[0].ContainerName != "init-config" {
+		t.Fatalf("expected only init-container logs, got %#v", result.Data)
+	}
+	state.RecordToolResult(result)
+	if state.Goal.ContainerName != "" {
+		t.Fatalf("targeted reflection call must not mutate the diagnosis goal, got %q", state.Goal.ContainerName)
+	}
+	if len(state.DiagnosticContext.Logs) != 2 {
+		t.Fatalf("expected existing and targeted logs to be retained, got %#v", state.DiagnosticContext.Logs)
+	}
+}
+
+func TestGetLogsDoesNotLeakOtherContainersWhenTargetMissing(t *testing.T) {
+	result := filterLogsByContainer(ToolResult{
+		Success: true,
+		Data: []diagnostic.ContainerLogs{{
+			ContainerName: "app",
+			Previous:      "sensitive app log",
+		}},
+		EvidenceRecords: []diagnostic.EvidenceRecord{{SourceType: "k8s_log", Content: "sensitive app log"}},
+	}, map[string]interface{}{"container_name": "missing"})
+
+	logs, ok := result.Data.([]diagnostic.ContainerLogs)
+	if !ok || len(logs) != 0 {
+		t.Fatalf("expected an empty targeted result, got %#v", result.Data)
+	}
+	if len(result.EvidenceRecords) != 0 || len(result.MissingEvidence) == 0 {
+		t.Fatalf("expected explicit missing evidence without unrelated logs, got %#v", result)
+	}
+}
+
+func TestConfigRefsToolUsesSnapshotWithoutClaimingExistence(t *testing.T) {
+	optional := true
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api-0"},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{
+				Name: "config",
+				VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "app-config"},
+				}},
+			}},
+			Containers: []corev1.Container{{
+				Name:         "app",
+				VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/app"}},
+				EnvFrom: []corev1.EnvFromSource{{
+					SecretRef: &corev1.SecretEnvSource{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "app-secret"},
+						Optional:             &optional,
+					},
+				}},
+			}},
+		},
+	}
+	registry, err := NewDefaultRegistry(RegistryOptions{Policy: NewRemediationPolicy(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, ok := registry.Get("k8s.get_config_refs")
+	if !ok {
+		t.Fatal("missing k8s.get_config_refs")
+	}
+	result := tool.Execute(context.Background(), map[string]interface{}{"container_name": "app"}, &ToolState{
+		Goal:              Goal{Namespace: "default", PodName: "api-0"},
+		DiagnosticContext: &diagnostic.DiagnosticContext{Namespace: "default", PodName: "api-0", Pod: pod},
+	})
+	if !result.Success || len(result.EvidenceRecords) != 2 {
+		t.Fatalf("expected ConfigMap and Secret evidence, got %#v", result)
+	}
+	if !strings.Contains(result.EvidenceRecords[0].Content, "objectInspected=false objectExists=not_applicable") {
+		t.Fatalf("reference evidence must not claim object existence: %#v", result.EvidenceRecords)
+	}
+	if len(result.Warnings) == 0 || !strings.Contains(result.Warnings[0], "diagnostic snapshot") {
+		t.Fatalf("expected stale snapshot warning, got %#v", result.Warnings)
+	}
+}
+
+func TestConfigRefsToolUsesLivePodAndInspectsObjects(t *testing.T) {
+	livePod := configReferencePod("live-config")
+	livePod.Spec.Volumes = nil
+	livePod.Spec.Containers[0].VolumeMounts = nil
+	livePod.Spec.Containers[0].Env = []corev1.EnvVar{
+		{
+			Name: "CONFIG",
+			ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "live-config"},
+				Key:                  "config.yaml",
+			}},
+		},
+		{
+			Name: "TOKEN",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "app-secret"},
+				Key:                  "token",
+			}},
+		},
+	}
+	inspector := fakeConfigReferenceInspector{
+		pod: livePod,
+		objects: map[string]ConfigObjectSnapshot{
+			"configmap/live-config": {Kind: "ConfigMap", Name: "live-config", Exists: true, ResourceVersion: "17", KeySizes: map[string]int{"config.yaml": 18}},
+			"secret/app-secret":     {Kind: "Secret", Name: "app-secret", Exists: true, ResourceVersion: "23", KeySizes: map[string]int{"token": 32}},
+		},
+	}
+	registry, err := NewDefaultRegistry(RegistryOptions{
+		ConfigInspector: inspector,
+		Policy:          NewRemediationPolicy(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, _ := registry.Get("k8s.get_config_refs")
+	stalePod := configReferencePod("stale-config")
+	result := tool.Execute(context.Background(), map[string]interface{}{"container_name": "app"}, &ToolState{
+		Goal:              Goal{Namespace: "default", PodName: "api-0"},
+		DiagnosticContext: &diagnostic.DiagnosticContext{Namespace: "default", PodName: "api-0", Pod: stalePod},
+	})
+	if !result.Success || len(result.EvidenceRecords) != 2 {
+		t.Fatalf("expected two live configuration references, got %#v", result)
+	}
+	for _, evidence := range result.EvidenceRecords {
+		if strings.Contains(evidence.Content, "stale-config") {
+			t.Fatalf("stale Pod spec leaked into live evidence: %s", evidence.Content)
+		}
+		if !strings.Contains(evidence.Content, "livePodSpec=true objectInspected=true objectExists=true keyExists=true") {
+			t.Fatalf("expected verified live evidence, got %s", evidence.Content)
+		}
+	}
+	if !strings.Contains(result.EvidenceRecords[1].Content, "valueBytes=32") {
+		t.Fatalf("expected only secret value size metadata, got %s", result.EvidenceRecords[1].Content)
+	}
+	if result.StateDelta == nil || result.StateDelta.DiagnosticContext == nil || result.StateDelta.DiagnosticContext.Pod != livePod {
+		t.Fatal("expected live Pod to replace the stale diagnostic snapshot")
+	}
+}
+
+func TestConfigRefsToolReportsMissingObjectAndKey(t *testing.T) {
+	pod := configReferencePod("missing-config")
+	pod.Spec.Containers[0].Env = []corev1.EnvVar{{
+		Name: "TOKEN",
+		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "app-secret"},
+			Key:                  "missing-key",
+		}},
+	}}
+	inspector := fakeConfigReferenceInspector{
+		pod: pod,
+		objects: map[string]ConfigObjectSnapshot{
+			"configmap/missing-config": {Kind: "ConfigMap", Name: "missing-config", Exists: false},
+			"secret/app-secret":        {Kind: "Secret", Name: "app-secret", Exists: true, KeySizes: map[string]int{"token": 32}},
+		},
+	}
+	registry, err := NewDefaultRegistry(RegistryOptions{ConfigInspector: inspector, Policy: NewRemediationPolicy(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, _ := registry.Get("k8s.get_config_refs")
+	result := tool.Execute(context.Background(), map[string]interface{}{"container_name": "app"}, &ToolState{
+		Goal: Goal{Namespace: "default", PodName: "api-0"},
+	})
+	if !result.Success || len(result.EvidenceRecords) != 2 {
+		t.Fatalf("expected missing object and key evidence, got %#v", result)
+	}
+	joined := result.EvidenceRecords[0].Content + "\n" + result.EvidenceRecords[1].Content
+	if !strings.Contains(joined, "contentStatus=object_missing") || !strings.Contains(joined, "contentStatus=key_missing") {
+		t.Fatalf("expected explicit missing object and key statuses, got %s", joined)
+	}
+	if !strings.Contains(result.Observation, "missingObjects=1 missingKeys=1") {
+		t.Fatalf("unexpected inspection summary: %s", result.Observation)
+	}
+}
+
+type fakeConfigReferenceInspector struct {
+	pod     *corev1.Pod
+	podErr  error
+	objects map[string]ConfigObjectSnapshot
+	errors  map[string]error
+}
+
+func (f fakeConfigReferenceInspector) GetLivePod(ctx context.Context, namespace, podName string) (*corev1.Pod, error) {
+	_ = ctx
+	_ = namespace
+	_ = podName
+	return f.pod, f.podErr
+}
+
+func (f fakeConfigReferenceInspector) InspectConfigObject(ctx context.Context, namespace, kind, name string) (ConfigObjectSnapshot, error) {
+	_ = ctx
+	_ = namespace
+	key := strings.ToLower(kind) + "/" + name
+	if err := f.errors[key]; err != nil {
+		return ConfigObjectSnapshot{}, err
+	}
+	return f.objects[key], nil
+}
+
+func configReferencePod(configMapName string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "api-0"},
+		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{
+				Name: "config",
+				VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: configMapName},
+					Items:                []corev1.KeyToPath{{Key: "config.yaml", Path: "config.yaml"}},
+				}},
+			}},
+			Containers: []corev1.Container{{
+				Name:         "app",
+				VolumeMounts: []corev1.VolumeMount{{Name: "config", MountPath: "/etc/app"}},
+			}},
+		},
 	}
 }
 

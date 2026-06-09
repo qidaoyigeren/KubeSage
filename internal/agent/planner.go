@@ -169,6 +169,9 @@ func toolsForEvidenceGap(evidence string) []string {
 		strings.Contains(missing, "registry") {
 		tools = append(tools, "k8s.get_events")
 	}
+	if strings.Contains(missing, "config") || strings.Contains(missing, "secret") {
+		tools = append(tools, "k8s.get_config_refs")
+	}
 	if strings.Contains(missing, "pvc") {
 		tools = append(tools, "k8s.get_pvc")
 	}
@@ -339,7 +342,7 @@ func expectedObservations(fault string) []string {
 	case "oomkilled":
 		return []string{"OOM 事件", "终止原因", "内存限制", "内存指标", "previous logs", "节点压力"}
 	case "crashloopbackoff":
-		return []string{"BackOff 事件", "最近终止状态", "previous logs", "配置或依赖线索"}
+		return []string{"BackOff 事件", "最近终止状态", "previous logs", "ConfigMap/Secret 引用与挂载路径", "配置或依赖线索"}
 	case "probefailed":
 		return []string{"探针配置", "Unhealthy 事件", "健康检查端点日志", "Service Endpoint 影响"}
 	case "pending", "podpending":

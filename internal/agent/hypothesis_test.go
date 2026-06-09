@@ -8,7 +8,7 @@ import (
 	"kubesage/internal/model"
 )
 
-func TestHypothesisEngineScoresEvidenceRefs(t *testing.T) {
+func TestHypothesisEngineRequiresCurveShapeBeforeConfirmingMemoryLimit(t *testing.T) {
 	engine := NewHypothesisEngine()
 	scores := engine.Update(1, nil, []diagnostic.EvidenceRecord{
 		{SourceType: "prometheus", Title: "OOM memory working set near limit", Content: "oom memory working set limit", Severity: "critical", Timestamp: time.Now()},
@@ -18,11 +18,29 @@ func TestHypothesisEngineScoresEvidenceRefs(t *testing.T) {
 	if memory == nil {
 		t.Fatalf("missing memory hypothesis")
 	}
-	if memory.Status != model.HypothesisStatusConfirmed {
-		t.Fatalf("expected confirmed memory hypothesis, got %s score %.2f", memory.Status, memory.Confidence)
+	if memory.Status != model.HypothesisStatusActive || memory.Confidence >= 0.75 {
+		t.Fatalf("generic OOM evidence must remain active at 0.70, got %s score %.2f", memory.Status, memory.Confidence)
 	}
 	if len(memory.SupportingRefs) == 0 {
 		t.Fatalf("expected supporting refs")
+	}
+	if len(memory.MissingEvidence) == 0 {
+		t.Fatal("expected missing memory curve-shape evidence")
+	}
+}
+
+func TestHypothesisEngineConfirmsMemoryLimitWithCurveShape(t *testing.T) {
+	engine := NewHypothesisEngine()
+	scores := engine.Update(1, nil, []diagnostic.EvidenceRecord{{
+		SourceType: "prometheus",
+		Title:      "OOM memory working set pattern",
+		Content:    "oom memory working set limit prometheus memoryPattern=memory_limit_too_low",
+		Severity:   "critical",
+		Timestamp:  time.Now(),
+	}})
+	memory := findScore(scores, "memory_limit_too_low")
+	if memory == nil || memory.Status != model.HypothesisStatusConfirmed {
+		t.Fatalf("expected curve-backed memory hypothesis to confirm, got %#v", memory)
 	}
 }
 

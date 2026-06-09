@@ -539,12 +539,13 @@ func diagnoseAgent(
 		toolTimeout = 10 * time.Second
 	}
 	toolRegistry, err := agent.NewDefaultRegistry(agent.RegistryOptions{
-		Snapshot:    snapshotFunc,
-		Retriever:   noopRetriever{},
-		Policy:      agent.NewRemediationPolicy(false),
-		Prometheus:  promClient,
-		Loki:        lokiClient,
-		ToolTimeout: toolTimeout,
+		Snapshot:        snapshotFunc,
+		ConfigInspector: snapshotService,
+		Retriever:       noopRetriever{},
+		Policy:          agent.NewRemediationPolicy(false),
+		Prometheus:      promClient,
+		Loki:            lokiClient,
+		ToolTimeout:     toolTimeout,
 	})
 	if err != nil {
 		return nil, usageStats{}, sourceStats{}, toolStats{}, "", 0, time.Since(start).Milliseconds(), err
@@ -563,10 +564,16 @@ func diagnoseAgent(
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	runResult, runErr := runtime.Run(ctx, agent.RuntimeOptions{
-		TaskID:      taskID,
-		TraceID:     fmt.Sprintf("live-ab-%d-%s", taskID, podName),
-		MaxSteps:    maxSteps,
-		ToolTimeout: toolTimeout,
+		TaskID:              taskID,
+		TraceID:             fmt.Sprintf("live-ab-%d-%s", taskID, podName),
+		MaxSteps:            maxSteps,
+		ToolTimeout:         toolTimeout,
+		MaxReflectionSteps:  cfg.Agent.MaxReflectionSteps,
+		MaxReflectionRounds: cfg.Agent.MaxReflectionRounds,
+		MaxToolCallsPerTool: cfg.Agent.MaxToolCallsPerTool,
+		MaxRunbookSearches:  cfg.Agent.MaxRunbookSearches,
+		MaxLLMTokens:        cfg.Agent.MaxLLMTokens,
+		ReflectionTimeout:   time.Duration(cfg.Agent.ReflectionTimeoutSeconds) * time.Second,
 		Goal: agent.Goal{
 			Namespace: namespace,
 			PodName:   podName,

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"time"
 
 	"kubesage/internal/diagnostic"
@@ -9,11 +10,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-func newToolState(taskID uint, goal Goal, tools []ToolMetadata) *ToolState {
+func newToolState(taskID uint, goal Goal, tools []ToolMetadata, runContexts ...context.Context) *ToolState {
+	var runContext context.Context
+	if len(runContexts) > 0 {
+		runContext = runContexts[0]
+	}
 	return &ToolState{
 		TaskID:         taskID,
 		Goal:           goal,
 		AvailableTools: append([]ToolMetadata(nil), tools...),
+		RunContext:     runContext,
 	}
 }
 
@@ -49,17 +55,19 @@ func (s *ToolState) SnapshotForTool() *ToolState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return &ToolState{
-		TaskID:             s.TaskID,
-		Goal:               s.Goal,
-		AvailableTools:     append([]ToolMetadata(nil), s.AvailableTools...),
-		Observations:       append([]ObservationRecord(nil), s.Observations...),
-		EvidenceRecords:    append([]diagnostic.EvidenceRecord(nil), s.EvidenceRecords...),
-		DiagnosticContext:  cloneDiagnosticContext(s.DiagnosticContext),
-		Report:             cloneReport(s.Report),
-		RunbookHits:        append([]RunbookHit(nil), s.RunbookHits...),
-		RemediationActions: append([]diagnostic.RemediationAction(nil), s.RemediationActions...),
-		Executions:         append([]model.RemediationExecution(nil), s.Executions...),
-		CompletedTools:     cloneCompletedTools(s.CompletedTools),
+		TaskID:              s.TaskID,
+		Goal:                s.Goal,
+		AvailableTools:      append([]ToolMetadata(nil), s.AvailableTools...),
+		Observations:        append([]ObservationRecord(nil), s.Observations...),
+		EvidenceRecords:     append([]diagnostic.EvidenceRecord(nil), s.EvidenceRecords...),
+		DiagnosticContext:   cloneDiagnosticContext(s.DiagnosticContext),
+		Report:              cloneReport(s.Report),
+		RunbookHits:         append([]RunbookHit(nil), s.RunbookHits...),
+		RemediationActions:  append([]diagnostic.RemediationAction(nil), s.RemediationActions...),
+		Executions:          append([]model.RemediationExecution(nil), s.Executions...),
+		CompletedTools:      cloneCompletedTools(s.CompletedTools),
+		CompletedToolInputs: cloneCompletedToolInputs(s.CompletedToolInputs),
+		RunContext:          s.RunContext,
 	}
 }
 
@@ -73,12 +81,13 @@ func (s *ToolState) ReadOnly() *ReadOnlyToolState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return &ReadOnlyToolState{
-		TaskID:            s.TaskID,
-		Goal:              s.Goal,
-		DiagnosticContext: s.DiagnosticContext,
-		Report:            s.Report,
-		RunbookHits:       append([]RunbookHit(nil), s.RunbookHits...),
-		CompletedTools:    cloneCompletedTools(s.CompletedTools),
+		TaskID:              s.TaskID,
+		Goal:                s.Goal,
+		DiagnosticContext:   s.DiagnosticContext,
+		Report:              s.Report,
+		RunbookHits:         append([]RunbookHit(nil), s.RunbookHits...),
+		CompletedTools:      cloneCompletedTools(s.CompletedTools),
+		CompletedToolInputs: cloneCompletedToolInputs(s.CompletedToolInputs),
 	}
 }
 
@@ -253,6 +262,21 @@ func cloneCompletedTools(in map[string]bool) map[string]bool {
 	out := make(map[string]bool, len(in))
 	for key, value := range in {
 		out[key] = value
+	}
+	return out
+}
+
+func cloneCompletedToolInputs(in map[string][]map[string]interface{}) map[string][]map[string]interface{} {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]map[string]interface{}, len(in))
+	for tool, inputs := range in {
+		cloned := make([]map[string]interface{}, 0, len(inputs))
+		for _, input := range inputs {
+			cloned = append(cloned, cloneToolInput(input))
+		}
+		out[tool] = cloned
 	}
 	return out
 }

@@ -159,6 +159,7 @@
       "max_value": 3,
       "avg_value": 1.5,
       "growth_ratio": 3,
+      "slope_per_minute": 0,
       "window_start": "2026-05-31T07:00:00Z",
       "window_end": "2026-05-31T08:00:00Z"
     }

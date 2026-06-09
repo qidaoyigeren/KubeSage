@@ -108,13 +108,14 @@ func (t simpleTool) Execute(ctx context.Context, input map[string]interface{}, s
 }
 
 type RegistryOptions struct {
-	Snapshot    SnapshotFunc
-	Retriever   Retriever
-	Policy      *RemediationPolicy
-	Prometheus  PrometheusRangeClient
-	Loki        LokiQueryClient
-	ToolTimeout time.Duration
-	MCPProvider *MCPProvider
+	Snapshot        SnapshotFunc
+	ConfigInspector ConfigReferenceInspector
+	Retriever       Retriever
+	Policy          *RemediationPolicy
+	Prometheus      PrometheusRangeClient
+	Loki            LokiQueryClient
+	ToolTimeout     time.Duration
+	MCPProvider     *MCPProvider
 }
 
 type PrometheusRangeClient interface {
@@ -134,6 +135,7 @@ func NewDefaultRegistry(opts RegistryOptions) (*ToolRegistry, error) {
 		newSnapshotTool("k8s.get_pod", "Read Pod spec/status only and seed a minimal diagnostic context. Use explicit tools for Events, logs, metrics, PVC, or topology evidence.", true, opts.Snapshot, podObservation),
 		newSnapshotTool("k8s.get_events", "Read pod Events and cache them as explicit event evidence.", false, opts.Snapshot, eventsObservation),
 		newSnapshotTool("k8s.get_logs", "Read previous/current pod logs and cache them as explicit log evidence.", false, opts.Snapshot, logsObservation),
+		newConfigRefsTool(opts.Snapshot, opts.ConfigInspector),
 		newSnapshotTool("k8s.get_topology", "Read workload, service, endpoint, and node topology as explicit topology evidence.", false, opts.Snapshot, topologyObservation),
 		newSnapshotTool("k8s.get_pvc", "Read PVC status referenced by the pod as explicit storage evidence.", false, opts.Snapshot, pvcObservation),
 		newRunbookSearchTool(opts.Retriever),
@@ -171,11 +173,15 @@ func NewDefaultRegistry(opts RegistryOptions) (*ToolRegistry, error) {
 }
 
 func newSnapshotTool(name, description string, critical bool, snapshot SnapshotFunc, observe func(*diagnostic.DiagnosticContext) ToolResult) Tool {
+	inputSchema := map[string]string{"namespace": "string", "pod_name": "string"}
+	if canonicalToolName(name) == "k8s.get_logs" {
+		inputSchema["container_name"] = "string"
+	}
 	return simpleTool{
 		meta: ToolMetadata{
 			Name:        name,
 			Description: description,
-			InputSchema: map[string]string{"namespace": "string", "pod_name": "string"},
+			InputSchema: inputSchema,
 			RiskLevel:   "low",
 			ReadOnly:    true,
 			Timeout:     10 * time.Second,
@@ -188,42 +194,128 @@ func newSnapshotTool(name, description string, critical bool, snapshot SnapshotF
 			diagCtx := state.GetDiagnosticContext()
 			goal := state.GetGoal()
 			var delta *ToolStateDelta
-			if diagCtx == nil || shouldRefreshSnapshotForTool(name, state) {
+			if diagCtx == nil || shouldRefreshSnapshotForTool(name, state, input) {
 				if snapshot == nil {
 					return failedTool(name, "snapshot collector is not configured")
 				}
-				goal = snapshotGoalForTool(name, goal)
-				refreshed, err := snapshot(ctx, goal)
+				collectionGoal := snapshotGoalForTool(name, goal, input)
+				refreshed, err := snapshot(ctx, collectionGoal)
 				if err != nil {
 					return ToolResult{ToolName: name, Success: false, Error: err.Error(), Observation: "快照采集失败"}
 				}
-				diagCtx = diagnosticContextForTool(name, refreshed)
-				delta = &ToolStateDelta{Goal: &goal, DiagnosticContext: diagCtx}
+				refreshedContext := diagnosticContextForTool(name, refreshed)
+				if refreshedContext != nil && canonicalToolName(name) == "k8s.get_logs" && stringInput(input, "container_name") != "" && diagCtx != nil {
+					refreshedContext.Logs = mergeCollectedContainerLogs(diagCtx.Logs, refreshedContext.Logs)
+				}
+				diagCtx = refreshedContext
+				nextGoal := goal
+				nextGoal.IncludeEvents = goal.IncludeEvents || collectionGoal.IncludeEvents
+				nextGoal.IncludeLogs = goal.IncludeLogs || collectionGoal.IncludeLogs
+				nextGoal.IncludeMetrics = goal.IncludeMetrics || collectionGoal.IncludeMetrics
+				delta = &ToolStateDelta{Goal: &nextGoal, DiagnosticContext: diagCtx}
 			}
 			result := observe(diagCtx)
 			result.StateDelta = delta
+			result = filterSnapshotByInput(name, result, input)
 			return result
 		},
 	}
 }
 
-func shouldRefreshSnapshotForTool(name string, state *ReadOnlyToolState) bool {
+// filterSnapshotByInput filters snapshot tool results by meaningful input parameters.
+// This allows LLM to suggest the same tool with different inputs and get different results.
+func filterSnapshotByInput(toolName string, result ToolResult, input map[string]interface{}) ToolResult {
+	if input == nil || !result.Success {
+		return result
+	}
+	switch canonicalToolName(toolName) {
+	case "k8s.get_logs":
+		return filterLogsByContainer(result, input)
+	default:
+		return result
+	}
+}
+
+// filterLogsByContainer filters log evidence records by container_name.
+// If container_name is specified in input, only return logs for that container.
+func filterLogsByContainer(result ToolResult, input map[string]interface{}) ToolResult {
+	containerName := strings.TrimSpace(stringInput(input, "container_name"))
+	if containerName == "" {
+		return result
+	}
+	logs, ok := result.Data.([]diagnostic.ContainerLogs)
+	if !ok {
+		return result
+	}
+	filtered := make([]diagnostic.ContainerLogs, 0)
+	for _, log := range logs {
+		if log.ContainerName == containerName {
+			filtered = append(filtered, log)
+		}
+	}
+	result.Data = filtered
+	if len(filtered) == 0 {
+		result.EvidenceRecords = nil
+		result.Observation = fmt.Sprintf("No logs were collected for container %s", containerName)
+		result.Warnings = append(result.Warnings, fmt.Sprintf("container %s was not present in the collected log snapshot", containerName))
+		result.MissingEvidence = append(result.MissingEvidence, fmt.Sprintf("logs for container %s", containerName))
+		return result
+	}
+	records := make([]diagnostic.EvidenceRecord, 0, len(filtered))
+	for _, log := range filtered {
+		content := log.Previous
+		if content == "" {
+			content = log.Current
+		}
+		if content == "" {
+			content = log.Loki
+		}
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		records = append(records, diagnostic.EvidenceRecord{
+			SourceType: "k8s_log",
+			Title:      "Container logs",
+			Content:    fmt.Sprintf("container=%s\n%s", log.ContainerName, trimText(content, 4000)),
+			Severity:   "info",
+			Raw:        log,
+			Timestamp:  time.Now(),
+		})
+	}
+	result.EvidenceRecords = records
+	result.Observation = fmt.Sprintf("Collected logs for container %s", containerName)
+	if len(records) == 0 {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("container %s returned no current, previous, or Loki log content", containerName))
+		result.MissingEvidence = append(result.MissingEvidence, fmt.Sprintf("log content for container %s", containerName))
+	}
+	return result
+}
+
+func shouldRefreshSnapshotForTool(name string, state *ReadOnlyToolState, input map[string]interface{}) bool {
 	if state == nil || state.GetDiagnosticContext() == nil {
 		return false
 	}
 	diagCtx := state.GetDiagnosticContext()
-	goal := state.GetGoal()
 	switch canonicalToolName(name) {
 	case "k8s.get_events":
-		return len(diagCtx.Events) == 0 && !goal.IncludeEvents
+		return len(diagCtx.Events) == 0
 	case "k8s.get_logs":
-		return len(diagCtx.Logs) == 0 && !goal.IncludeLogs
+		containerName := strings.TrimSpace(stringInput(input, "container_name"))
+		if containerName == "" {
+			return len(diagCtx.Logs) == 0
+		}
+		for _, logs := range diagCtx.Logs {
+			if logs.ContainerName == containerName {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}
 }
 
-func snapshotGoalForTool(name string, goal Goal) Goal {
+func snapshotGoalForTool(name string, goal Goal, input map[string]interface{}) Goal {
 	goal.IncludeEvents = false
 	goal.IncludeLogs = false
 	goal.IncludeMetrics = false
@@ -233,8 +325,31 @@ func snapshotGoalForTool(name string, goal Goal) Goal {
 	case "k8s.get_logs":
 		goal.IncludeEvents = true
 		goal.IncludeLogs = true
+		if containerName := strings.TrimSpace(stringInput(input, "container_name")); containerName != "" {
+			goal.ContainerName = containerName
+		}
 	}
 	return goal
+}
+
+func mergeCollectedContainerLogs(existing, update []diagnostic.ContainerLogs) []diagnostic.ContainerLogs {
+	if len(existing) == 0 {
+		return append([]diagnostic.ContainerLogs(nil), update...)
+	}
+	result := append([]diagnostic.ContainerLogs(nil), existing...)
+	indexByContainer := make(map[string]int, len(result))
+	for index, logs := range result {
+		indexByContainer[logs.ContainerName] = index
+	}
+	for _, logs := range update {
+		if index, ok := indexByContainer[logs.ContainerName]; ok {
+			result[index] = logs
+			continue
+		}
+		indexByContainer[logs.ContainerName] = len(result)
+		result = append(result, logs)
+	}
+	return result
 }
 
 func diagnosticContextForTool(name string, ctx *diagnostic.DiagnosticContext) *diagnostic.DiagnosticContext {

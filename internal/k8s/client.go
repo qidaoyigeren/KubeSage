@@ -20,7 +20,7 @@ import (
 )
 
 type Client struct {
-	Clientset *kubernetes.Clientset
+	Clientset kubernetes.Interface
 	Timeout   time.Duration
 	TailLines int64
 }

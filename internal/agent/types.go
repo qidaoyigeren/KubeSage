@@ -45,6 +45,12 @@ type RuntimeOptions struct {
 	TraceID             string
 	MaxSteps            int
 	ToolTimeout         time.Duration
+	MaxReflectionSteps  int
+	MaxReflectionRounds int
+	MaxToolCallsPerTool int
+	MaxRunbookSearches  int
+	MaxLLMTokens        int
+	ReflectionTimeout   time.Duration
 	EnableDryRunPreview bool
 	Goal                Goal
 }
@@ -58,6 +64,12 @@ type PlanClient interface {
 	GenerateAgentPlan(ctx context.Context, prompt PlanPrompt) (Plan, error)
 	GeneratePlanAdjustment(ctx context.Context, prompt AdjustmentPrompt) (Plan, error)
 	GenerateReflection(ctx context.Context, prompt ReflectionPrompt) (ReflectionResult, error)
+}
+
+// TokenUsageReporter exposes cumulative LLM usage without coupling the Agent
+// package to a concrete provider.
+type TokenUsageReporter interface {
+	CumulativeTokenUsage() int
 }
 
 type PlanPrompt struct {
@@ -181,18 +193,20 @@ type ToolStateDelta struct {
 }
 
 type ToolState struct {
-	mu                 sync.Mutex
-	TaskID             uint
-	Goal               Goal
-	AvailableTools     []ToolMetadata
-	Observations       []ObservationRecord
-	EvidenceRecords    []diagnostic.EvidenceRecord
-	DiagnosticContext  *diagnostic.DiagnosticContext
-	Report             *diagnostic.Report
-	RunbookHits        []RunbookHit
-	RemediationActions []diagnostic.RemediationAction
-	Executions         []model.RemediationExecution
-	CompletedTools     map[string]bool
+	mu                  sync.Mutex
+	TaskID              uint
+	Goal                Goal
+	AvailableTools      []ToolMetadata
+	Observations        []ObservationRecord
+	EvidenceRecords     []diagnostic.EvidenceRecord
+	DiagnosticContext   *diagnostic.DiagnosticContext
+	Report              *diagnostic.Report
+	RunbookHits         []RunbookHit
+	RemediationActions  []diagnostic.RemediationAction
+	Executions          []model.RemediationExecution
+	CompletedTools      map[string]bool
+	CompletedToolInputs map[string][]map[string]interface{}
+	RunContext          context.Context
 }
 
 type ObservationRecord struct {
@@ -215,12 +229,13 @@ type Tool interface {
 // function closures. Tools must not mutate this struct; they express state
 // changes via ToolResult.StateDelta instead.
 type ReadOnlyToolState struct {
-	TaskID            uint
-	Goal              Goal
-	DiagnosticContext *diagnostic.DiagnosticContext
-	Report            *diagnostic.Report
-	RunbookHits       []RunbookHit
-	CompletedTools    map[string]bool
+	TaskID              uint
+	Goal                Goal
+	DiagnosticContext   *diagnostic.DiagnosticContext
+	Report              *diagnostic.Report
+	RunbookHits         []RunbookHit
+	CompletedTools      map[string]bool
+	CompletedToolInputs map[string][]map[string]interface{}
 }
 
 // GetTaskID returns the task identifier.
@@ -271,18 +286,28 @@ func (s *ReadOnlyToolState) GetCompletedTools() map[string]bool {
 	return s.CompletedTools
 }
 
+// GetCompletedToolInputs returns the successful input variants recorded for
+// each tool.
+func (s *ReadOnlyToolState) GetCompletedToolInputs() map[string][]map[string]interface{} {
+	if s == nil {
+		return nil
+	}
+	return s.CompletedToolInputs
+}
+
 type RunResult struct {
-	Report           *diagnostic.Report
-	PreAnalysis      *PreAnalysisDecision
-	DiagContext      *diagnostic.DiagnosticContext
-	RunbookHits      []RunbookHit
-	Hypotheses       []model.Hypothesis
-	Executions       []model.RemediationExecution
-	VerificationPlan []VerificationPlan
-	StopReason       string
-	StepsExecuted    int
-	PlanSummary      string   `json:"-"`
-	PlannedToolNames []string `json:"-"`
+	Report            *diagnostic.Report
+	PreAnalysis       *PreAnalysisDecision
+	DiagContext       *diagnostic.DiagnosticContext
+	RunbookHits       []RunbookHit
+	Hypotheses        []model.Hypothesis
+	Executions        []model.RemediationExecution
+	VerificationPlan  []VerificationPlan
+	StopReason        string
+	StepsExecuted     int
+	PlanSummary       string   `json:"-"`
+	PlannedToolNames  []string `json:"-"`
+	ExecutedToolNames []string `json:"-"`
 }
 
 type VerificationPlan struct {

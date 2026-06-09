@@ -80,11 +80,17 @@ type DiagnosisConfig struct {
 }
 
 type AgentConfig struct {
-	Enabled              bool   `mapstructure:"enabled"`
-	MaxSteps             int    `mapstructure:"max_steps"`
-	ToolTimeoutSeconds   int    `mapstructure:"tool_timeout_seconds"`
-	EnableDryRunPreview  bool   `mapstructure:"enable_dry_run_preview"`
-	HypothesisConfigPath string `mapstructure:"hypothesis_config_path"`
+	Enabled                  bool   `mapstructure:"enabled"`
+	MaxSteps                 int    `mapstructure:"max_steps"`
+	ToolTimeoutSeconds       int    `mapstructure:"tool_timeout_seconds"`
+	MaxReflectionSteps       int    `mapstructure:"max_reflection_steps"`
+	MaxReflectionRounds      int    `mapstructure:"max_reflection_rounds"`
+	MaxToolCallsPerTool      int    `mapstructure:"max_tool_calls_per_tool"`
+	MaxRunbookSearches       int    `mapstructure:"max_runbook_searches"`
+	MaxLLMTokens             int    `mapstructure:"max_llm_tokens"`
+	ReflectionTimeoutSeconds int    `mapstructure:"reflection_timeout_seconds"`
+	EnableDryRunPreview      bool   `mapstructure:"enable_dry_run_preview"`
+	HypothesisConfigPath     string `mapstructure:"hypothesis_config_path"`
 }
 
 type PlannerConfig struct {
@@ -296,8 +302,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("mysql.database is required")
 		}
 	}
-	if c.Agent.MaxSteps < 0 || c.Agent.ToolTimeoutSeconds < 0 {
-		return fmt.Errorf("agent max_steps and tool_timeout_seconds cannot be negative")
+	if c.Agent.MaxSteps < 0 || c.Agent.ToolTimeoutSeconds < 0 ||
+		c.Agent.MaxReflectionSteps < 0 || c.Agent.MaxReflectionRounds < 0 ||
+		c.Agent.MaxToolCallsPerTool < 0 || c.Agent.MaxRunbookSearches < 0 ||
+		c.Agent.MaxLLMTokens < 0 || c.Agent.ReflectionTimeoutSeconds < 0 {
+		return fmt.Errorf("agent budgets and timeouts cannot be negative")
 	}
 	if c.Diagnosis.TaskTimeoutSeconds < 0 {
 		return fmt.Errorf("diagnosis.task_timeout_seconds cannot be negative")
@@ -416,6 +425,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("agent.enabled", true)
 	v.SetDefault("agent.max_steps", 12)
 	v.SetDefault("agent.tool_timeout_seconds", 10)
+	v.SetDefault("agent.max_reflection_steps", 4)
+	v.SetDefault("agent.max_reflection_rounds", 4)
+	v.SetDefault("agent.max_tool_calls_per_tool", 3)
+	v.SetDefault("agent.max_runbook_searches", 2)
+	v.SetDefault("agent.max_llm_tokens", 12000)
+	v.SetDefault("agent.reflection_timeout_seconds", 15)
 	v.SetDefault("agent.enable_dry_run_preview", true)
 	v.SetDefault("planner.type", "llm")
 	v.SetDefault("queue.type", "")

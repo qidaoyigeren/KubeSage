@@ -69,7 +69,11 @@ func (p *LLMPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, h
 	evidence := collectEvidenceSummary(state)
 	readOnly := readonlyToolsFromState(state)
 
-	adjusted, err := p.client.GeneratePlanAdjustment(context.Background(), AdjustmentPrompt{
+	adjustContext := context.Background()
+	if state != nil && state.RunContext != nil {
+		adjustContext = state.RunContext
+	}
+	adjusted, err := p.client.GeneratePlanAdjustment(adjustContext, AdjustmentPrompt{
 		CurrentPlan:  *plan,
 		Observations: observations,
 		Hypotheses:   hypotheses,
@@ -124,11 +128,19 @@ func (p *LLMPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, h
 	readOnly := readonlyToolsFromState(state)
 
 	prompt := ReflectionPrompt{
-		Plan:         plan,
-		Goal:         state.Goal,
-		Hypotheses:   hypotheses,
-		Tools:        readOnly,
-		Safety:       []string{"Use only read-only tools.", "Do not propose remediation execution."},
+		Plan:       plan,
+		Goal:       state.Goal,
+		Hypotheses: hypotheses,
+		Tools:      readOnly,
+		Safety: []string{
+			"Use only tools present in the provided read-only tool list.",
+			"Do not propose remediation execution.",
+			"Every new step must include the smallest input that makes it materially different from completed calls.",
+			"Use container_name when another app or init container needs separate logs or configuration inspection.",
+			"For missing configuration files, inspect Pod ConfigMap/Secret/volume references and Events; PVC evidence does not prove ConfigMap or Secret state.",
+			"Use runbook.search with a specific query when a known failure pattern can narrow the next evidence check.",
+			"Do not claim a ConfigMap or Secret is missing unless Events or direct evidence support that conclusion.",
+		},
 		Evidence:     evidence,
 		Observations: observations,
 	}
@@ -144,6 +156,17 @@ func (p *LLMPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, h
 // HasLLMClient returns true if this planner has an LLM backend configured.
 func (p *LLMPlanner) HasLLMClient() bool {
 	return p.client != nil
+}
+
+func (p *LLMPlanner) CumulativeTokenUsage() int {
+	if p == nil || p.client == nil {
+		return 0
+	}
+	reporter, ok := p.client.(TokenUsageReporter)
+	if !ok {
+		return 0
+	}
+	return reporter.CumulativeTokenUsage()
 }
 
 func readonlyTools(tools []ToolMetadata) []ToolMetadata {
@@ -193,6 +216,47 @@ func sanitizePlan(plan Plan, tools []ToolMetadata, goal Goal) Plan {
 	ensureRequiredEvidenceSteps(&sanitized, available, goal)
 	applyDefaultParallelGroups(sanitized.Steps)
 	return sanitized
+}
+
+func sanitizeReflectionStep(step PlanStep, tools []ToolMetadata, goal Goal) (PlanStep, bool) {
+	requested := canonicalToolName(strings.TrimSpace(step.ToolName))
+	var metadata ToolMetadata
+	found := false
+	for _, tool := range tools {
+		if canonicalToolName(tool.Name) == requested {
+			metadata = tool
+			found = true
+			break
+		}
+	}
+	if !found || !metadata.ReadOnly {
+		return PlanStep{}, false
+	}
+
+	input := make(map[string]interface{})
+	for key, value := range step.Input {
+		key = canonicalToolInputKey(key)
+		if _, ok := metadata.InputSchema[key]; ok {
+			input[key] = value
+		}
+	}
+	if _, ok := metadata.InputSchema["namespace"]; ok {
+		input["namespace"] = goal.Namespace
+	}
+	if _, ok := metadata.InputSchema["pod_name"]; ok {
+		input["pod_name"] = goal.PodName
+	}
+	if _, ok := metadata.InputSchema["container_name"]; ok && stringInput(input, "container_name") == "" && goal.ContainerName != "" {
+		input["container_name"] = goal.ContainerName
+	}
+
+	step.ToolName = metadata.Name
+	step.Input = input
+	step.Critical = metadata.Critical
+	if strings.TrimSpace(step.Reason) == "" {
+		step.Reason = "LLM reflection identified an evidence gap"
+	}
+	return step, true
 }
 
 func ensureRequiredEvidenceSteps(plan *Plan, available map[string]ToolMetadata, goal Goal) {
@@ -312,13 +376,14 @@ func collectEvidenceSummary(state *ToolState) string {
 		return ""
 	}
 	var parts []string
-	for _, ev := range state.EvidenceSnapshot() {
+	evidence := state.EvidenceSnapshot()
+	if len(evidence) > 20 {
+		evidence = evidence[len(evidence)-20:]
+	}
+	for _, ev := range evidence {
 		if ev.Content != "" {
 			parts = append(parts, fmt.Sprintf("[%s] %s: %s", ev.Severity, ev.Title, truncate(ev.Content, 200)))
 		}
-	}
-	if len(parts) > 10 {
-		parts = parts[:10]
 	}
 	return strings.Join(parts, "\n")
 }
@@ -343,3 +408,4 @@ func truncate(s string, maxLen int) string {
 // Ensure LLMPlanner implements ReflectivePlanner at compile time.
 var _ ReflectivePlanner = (*LLMPlanner)(nil)
 var _ Planner = (*LLMPlanner)(nil)
+var _ TokenUsageReporter = (*LLMPlanner)(nil)

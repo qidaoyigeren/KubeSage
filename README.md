@@ -72,7 +72,9 @@ kubernetes:
   kubeconfig: "~/.kube/config"
 ```
 
-KubeSage 只需要只读 RBAC：Pods、Pod logs、Events、Services、Endpoints、EndpointSlices、Nodes、ReplicaSets、Deployments、PersistentVolumeClaims。
+KubeSage requires read-only RBAC for Pods, Pod logs, Events, Services,
+Endpoints, EndpointSlices, Nodes, ReplicaSets, Deployments, PVCs, and named
+ConfigMap/Secret `get` operations. Secret `list` and `watch` are not required.
 
 ### 3. Run Backend
 
@@ -150,6 +152,7 @@ Stop conditions include `max_steps`, `confirmed_hypothesis`, `timeout`, `no_effe
 | `k8s.get_pod` | Pod detail snapshot |
 | `k8s.get_events` | Related Kubernetes Events |
 | `k8s.get_logs` | Current and previous logs with time window support |
+| `k8s.get_config_refs` | Live Pod references plus direct ConfigMap/Secret existence, key, and non-sensitive size checks |
 | `k8s.get_topology` | Deployment, Service, EndpointSlice, sibling pods, Node |
 | `k8s.get_pvc` | PVC, PV, StorageClass state |
 | `runbook.search` | Keyword and vector Runbook retrieval |
@@ -159,6 +162,35 @@ Stop conditions include `max_steps`, `confirmed_hypothesis`, `timeout`, `no_effe
 | `remediation.dry_run` | Policy-only dry-run preview |
 
 MCP tools can be registered with `mcp.<server>.<tool>` names and participate in the same planning flow.
+
+Reflection steps are deduplicated by tool plus meaningful input, so the LLM can
+request `k8s.get_logs` or `k8s.get_config_refs` again for another container
+without repeating an identical call. A configuration-file log signature also
+triggers deterministic `k8s.get_config_refs` and `runbook.search` follow-ups even
+when the LLM omits them.
+
+`k8s.get_config_refs` refreshes the Pod from the Kubernetes API and directly gets
+referenced ConfigMaps and Secrets. Secret values are never returned; evidence
+contains only object/key presence, value byte length, and resource version.
+Validating whether a non-empty value is semantically correct still requires an
+application-specific schema. The service account therefore needs only named-object
+`get` permission for ConfigMaps and Secrets, not `list` or `watch`.
+
+Agent runs enforce bounded reflection and tool use:
+
+```yaml
+agent:
+  max_reflection_steps: 4
+  max_reflection_rounds: 4
+  max_tool_calls_per_tool: 3
+  max_runbook_searches: 2
+  max_llm_tokens: 12000
+  reflection_timeout_seconds: 15
+```
+
+The LLM token budget is stored in the diagnosis context rather than on the shared
+client, so concurrent runs do not consume each other's allowance. OpenAI-compatible
+requests also receive a bounded `max_tokens` value.
 
 ## LLM Grounding
 

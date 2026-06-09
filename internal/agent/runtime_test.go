@@ -192,7 +192,7 @@ func TestRuntimeConfirmedHypothesisEarlyStop(t *testing.T) {
 	}
 }
 
-func TestRuntimeConfirmsWhenRemainingEvidenceIsExhausted(t *testing.T) {
+func TestRuntimeDoesNotConfirmOOMWhenCurveEvidenceIsMissing(t *testing.T) {
 	_, result, err := runRuntimeForTest(
 		t,
 		Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "OOMKilled", IncludeLogs: true, IncludeMetrics: true},
@@ -204,8 +204,8 @@ func TestRuntimeConfirmsWhenRemainingEvidenceIsExhausted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.StopReason != StopReasonConfirmedHypothesis {
-		t.Fatalf("expected exhausted high-confidence hypothesis to confirm, got %s", result.StopReason)
+	if result.StopReason != StopReasonNoEffectiveTool {
+		t.Fatalf("expected inconclusive OOM evidence to stop without confirmation, got %s", result.StopReason)
 	}
 }
 
@@ -425,6 +425,77 @@ func TestRuntimePrioritizesMissingProbeLogsOverReflectiveEventLoop(t *testing.T)
 	}
 }
 
+func TestRuntimeExecutesLLMConfigFollowupsAfterPreAnalysisLock(t *testing.T) {
+	store := &memoryStore{}
+	diagCtx := crashLoopContext()
+	diagCtx.Logs = []diagnostic.ContainerLogs{{
+		ContainerName: "app",
+		Previous:      "fatal: config file not found at /etc/app/config.yaml",
+	}}
+	diagCtx.Pod.Status.ContainerStatuses[0].State = corev1.ContainerState{
+		Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"},
+	}
+	diagCtx.Pod.Status.ContainerStatuses[0].LastTerminationState = corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{Reason: "Error", ExitCode: 1},
+	}
+	diagCtx.Pod.Spec.Volumes = []corev1.Volume{{
+		Name: "config",
+		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "app-config"},
+		}},
+	}}
+	diagCtx.Pod.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{
+		Name: "config", MountPath: "/etc/app",
+	}}
+	registry, err := NewDefaultRegistry(RegistryOptions{
+		Snapshot: func(ctx context.Context, goal Goal) (*diagnostic.DiagnosticContext, error) {
+			_ = ctx
+			_ = goal
+			return diagCtx, nil
+		},
+		Retriever: fakeRetriever{},
+		Policy:    NewRemediationPolicy(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := NewRuntime(RuntimeDeps{
+		Store:    store,
+		Registry: registry,
+		Analyzer: fakeAnalyzer{report: baseReport("CrashLoopBackOff")},
+		Policy:   NewRemediationPolicy(true),
+		Planner:  configFollowupPlanner{},
+	})
+	result, err := runtime.Run(context.Background(), RuntimeOptions{
+		TaskID:      1,
+		MaxSteps:    12,
+		ToolTimeout: time.Second,
+		Goal:        Goal{Namespace: "default", PodName: "api-0", ExpectedFault: "CrashLoopBackOff"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PreAnalysis == nil {
+		t.Fatal("expected CrashLoop pre-analysis lock")
+	}
+	if !hasSuccessfulTool(store.steps, "k8s.get_config_refs") {
+		t.Fatalf("expected LLM config-reference follow-up, got %#v", store.steps)
+	}
+	if !hasSuccessfulTool(store.steps, "runbook.search") {
+		t.Fatalf("expected LLM runbook follow-up, got %#v", store.steps)
+	}
+	foundConfigRef := false
+	for _, evidence := range result.Report.Evidences {
+		if evidence.SourceType == "k8s_config_ref" && strings.Contains(evidence.Content, "mountPath=/etc/app") {
+			foundConfigRef = true
+			break
+		}
+	}
+	if !foundConfigRef {
+		t.Fatalf("expected mounted ConfigMap evidence in final report, got %#v", result.Report.Evidences)
+	}
+}
+
 func runRuntimeForTest(t *testing.T, goal Goal, retriever Retriever, diagCtx *diagnostic.DiagnosticContext, analyzer Analyzer, maxSteps int) (*memoryStore, *RunResult, error) {
 	t.Helper()
 	store := &memoryStore{}
@@ -551,7 +622,7 @@ func (confirmedTool) Execute(ctx context.Context, input map[string]interface{}, 
 		EvidenceRecords: []diagnostic.EvidenceRecord{{
 			SourceType: "prometheus",
 			Title:      "OOM memory working set near limit",
-			Content:    "oom memory working set limit prometheus",
+			Content:    "oom memory working set limit prometheus memoryPattern=memory_limit_too_low",
 			Severity:   "critical",
 			Timestamp:  time.Now(),
 		}},
@@ -628,6 +699,47 @@ func (eventLoopPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState
 			Reason:   "extra event check",
 		}},
 	}, nil
+}
+
+type configFollowupPlanner struct{}
+
+func (configFollowupPlanner) BuildInitialPlan(ctx context.Context, goal Goal, tools []ToolMetadata) Plan {
+	return stopAfterPodPlanner{}.BuildInitialPlan(ctx, goal, tools)
+}
+
+func (configFollowupPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, hypotheses []HypothesisScore) {
+	_ = plan
+	_ = state
+	_ = last
+	_ = hypotheses
+}
+
+func (configFollowupPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, hypotheses []HypothesisScore) (ReflectionResult, error) {
+	_ = ctx
+	_ = plan
+	_ = hypotheses
+	for _, evidence := range state.EvidenceSnapshot() {
+		if !strings.Contains(strings.ToLower(evidence.Content), "config file not found") {
+			continue
+		}
+		return ReflectionResult{
+			ShouldContinue: true,
+			Reason:         "inspect configuration references and a matching runbook",
+			NewSteps: []PlanStep{
+				{
+					ToolName: "k8s.get_config_refs",
+					Input:    map[string]interface{}{"container_name": "app"},
+					Reason:   "verify ConfigMap/Secret references and mount paths for the failing container",
+				},
+				{
+					ToolName: "runbook.search",
+					Input:    map[string]interface{}{"fault_type": "CrashLoopBackOff", "query": "configmap missing config file not found"},
+					Reason:   "search a specific startup configuration failure pattern",
+				},
+			},
+		}, nil
+	}
+	return ReflectionResult{ShouldContinue: true, Reason: "wait for startup logs"}, nil
 }
 
 type stopWithPlannedEvidencePlanner struct{}

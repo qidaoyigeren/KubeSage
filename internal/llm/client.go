@@ -33,6 +33,7 @@ type chatCompletionRequest struct {
 	Model          string          `json:"model"`
 	Messages       []chatMessage   `json:"messages"`
 	Temperature    float64         `json:"temperature"`
+	MaxTokens      int             `json:"max_tokens,omitempty"`
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
@@ -108,6 +109,9 @@ func (c *OpenAICompatibleClient) GenerateDiagnosisSummary(ctx context.Context, p
 		Temperature:    0.2,
 		ResponseFormat: &responseFormat{Type: "json_object"},
 	}
+	if err := applyContextTokenBudget(ctx, &payload); err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -140,7 +144,7 @@ func (c *OpenAICompatibleClient) GenerateDiagnosisSummary(ctx context.Context, p
 	if len(raw.Choices) == 0 {
 		return nil, fmt.Errorf("llm response has no choices")
 	}
-	c.captureUsage(raw.Usage, time.Since(start))
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
 	summary, err := parseEnhancedSummary(raw.Choices[0].Message.Content)
 	if err != nil {
 		return nil, err
@@ -166,6 +170,9 @@ func (c *OpenAICompatibleClient) GenerateGroundedSummary(ctx context.Context, pr
 		},
 		Temperature:    0.1,
 		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	if err := applyContextTokenBudget(ctx, &payload); err != nil {
+		return nil, err
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -199,7 +206,7 @@ func (c *OpenAICompatibleClient) GenerateGroundedSummary(ctx context.Context, pr
 	if len(raw.Choices) == 0 {
 		return nil, fmt.Errorf("llm grounded response has no choices")
 	}
-	c.captureUsage(raw.Usage, time.Since(start))
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
 	return parseGroundedSummary(raw.Choices[0].Message.Content)
 }
 
@@ -228,6 +235,15 @@ func (c *OpenAICompatibleClient) UsageCallCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.calls
+}
+
+func (c *OpenAICompatibleClient) CumulativeTokenUsage() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.total.TotalTokens
 }
 
 func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt agent.PlanPrompt) (agent.Plan, error) {
@@ -259,6 +275,9 @@ func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt a
 		},
 		Temperature:    0.1,
 		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	if err := applyContextTokenBudget(ctx, &payload); err != nil {
+		return agent.Plan{}, err
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -292,7 +311,7 @@ func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt a
 	if len(raw.Choices) == 0 {
 		return agent.Plan{}, fmt.Errorf("llm plan response has no choices")
 	}
-	c.captureUsage(raw.Usage, time.Since(start))
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
 	content := stripMarkdownFences(raw.Choices[0].Message.Content)
 	plan, err := parseFlexiblePlan(content, prompt.Goal)
 	if err != nil {
@@ -337,6 +356,9 @@ func (c *OpenAICompatibleClient) GeneratePlanAdjustment(ctx context.Context, pro
 		Temperature:    0.1,
 		ResponseFormat: &responseFormat{Type: "json_object"},
 	}
+	if err := applyContextTokenBudget(ctx, &payload); err != nil {
+		return agent.Plan{}, err
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return agent.Plan{}, err
@@ -369,7 +391,7 @@ func (c *OpenAICompatibleClient) GeneratePlanAdjustment(ctx context.Context, pro
 	if len(raw.Choices) == 0 {
 		return agent.Plan{}, fmt.Errorf("llm adjustment response has no choices")
 	}
-	c.captureUsage(raw.Usage, time.Since(start))
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
 	content := stripMarkdownFences(raw.Choices[0].Message.Content)
 	plan, err := parseFlexiblePlan(content, prompt.Goal)
 	if err != nil {
@@ -410,6 +432,9 @@ func (c *OpenAICompatibleClient) ScoreHypotheses(ctx context.Context, candidates
 		Temperature:    0.1,
 		ResponseFormat: &responseFormat{Type: "json_object"},
 	}
+	if err := applyContextTokenBudget(ctx, &payload); err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -442,7 +467,7 @@ func (c *OpenAICompatibleClient) ScoreHypotheses(ctx context.Context, candidates
 	if len(raw.Choices) == 0 {
 		return nil, fmt.Errorf("llm hypothesis scoring has no choices")
 	}
-	c.captureUsage(raw.Usage, time.Since(start))
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
 
 	content := strings.TrimSpace(raw.Choices[0].Message.Content)
 	content = strings.TrimPrefix(content, "```json")
@@ -495,8 +520,11 @@ func (c *OpenAICompatibleClient) GenerateReflection(ctx context.Context, prompt 
 				"Given the current diagnostic plan, observations, hypothesis scores, and evidence,",
 				"decide whether the agent should continue investigating or the evidence is sufficient.",
 				"Return JSON: {\"should_continue\": bool, \"reason\": string, \"new_steps\": []}",
-				"new_steps is optional. Each step: {\"id\": string, \"tool_name\": string, \"reason\": string, \"critical\": bool}",
+				"new_steps is optional. Each step: {\"id\": string, \"tool_name\": string, \"input\": object, \"reason\": string, \"critical\": bool}",
 				"Only suggest new steps if there are clear evidence gaps that would change the diagnosis.",
+				"The same tool may be called again only when input is materially different, such as another container_name or a more specific runbook query.",
+				"When logs mention a missing config file, prefer k8s.get_config_refs plus k8s.get_events; use runbook.search for a specific known pattern.",
+				"k8s.get_pvc is storage evidence and must not be used as a substitute for ConfigMap or Secret inspection.",
 				"If multiple high-confidence hypotheses are close, continue and collect distinguishing evidence.",
 				"Stop only when the top hypothesis has confidence >= 0.75, top1-top2 gap >= 0.15, and no key evidence is missing.",
 			}, "\n")},
@@ -504,6 +532,9 @@ func (c *OpenAICompatibleClient) GenerateReflection(ctx context.Context, prompt 
 		},
 		Temperature:    0.1,
 		ResponseFormat: &responseFormat{Type: "json_object"},
+	}
+	if err := applyContextTokenBudget(ctx, &payload); err != nil {
+		return agent.ReflectionResult{}, err
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -537,7 +568,7 @@ func (c *OpenAICompatibleClient) GenerateReflection(ctx context.Context, prompt 
 	if len(raw.Choices) == 0 {
 		return agent.ReflectionResult{}, fmt.Errorf("llm reflection response has no choices")
 	}
-	c.captureUsage(raw.Usage, time.Since(start))
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
 	content := strings.TrimSpace(raw.Choices[0].Message.Content)
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
@@ -551,8 +582,9 @@ func (c *OpenAICompatibleClient) GenerateReflection(ctx context.Context, prompt 
 
 // Ensure OpenAICompatibleClient implements the agent interfaces at compile time.
 var _ agent.PlanClient = (*OpenAICompatibleClient)(nil)
+var _ agent.TokenUsageReporter = (*OpenAICompatibleClient)(nil)
 
-func (c *OpenAICompatibleClient) captureUsage(usage *struct {
+func (c *OpenAICompatibleClient) captureUsage(ctx context.Context, usage *struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
@@ -583,6 +615,38 @@ func (c *OpenAICompatibleClient) captureUsage(usage *struct {
 	c.total.EstimatedCost += record.EstimatedCost
 	c.calls++
 	c.mu.Unlock()
+	agent.RecordLLMTokenUsage(ctx, record.TotalTokens)
+}
+
+func applyContextTokenBudget(ctx context.Context, payload *chatCompletionRequest) error {
+	if payload == nil {
+		return fmt.Errorf("llm payload is nil")
+	}
+	remaining, maxCompletion, limited := agent.RemainingLLMTokens(ctx)
+	if !limited {
+		return nil
+	}
+	estimatedPromptTokens := estimateMessageTokens(payload.Messages)
+	availableCompletion := remaining - estimatedPromptTokens
+	if availableCompletion <= 0 {
+		agent.ExhaustLLMTokenBudget(ctx)
+		return fmt.Errorf("llm token budget exhausted before request: remaining=%d estimated_prompt=%d", remaining, estimatedPromptTokens)
+	}
+	if maxCompletion > 0 && availableCompletion > maxCompletion {
+		availableCompletion = maxCompletion
+	}
+	payload.MaxTokens = availableCompletion
+	return nil
+}
+
+func estimateMessageTokens(messages []chatMessage) int {
+	estimated := 8
+	for _, message := range messages {
+		// Three UTF-8 bytes per token is deliberately conservative for mixed
+		// English/Chinese operational prompts.
+		estimated += 4 + (len(message.Content)+2)/3
+	}
+	return estimated
 }
 
 // chatCompletionsURL resolves the OpenAI-compatible chat completions endpoint.

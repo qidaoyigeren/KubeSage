@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,6 +72,25 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	if opts.ToolTimeout <= 0 {
 		opts.ToolTimeout = 10 * time.Second
 	}
+	if opts.MaxReflectionSteps <= 0 {
+		opts.MaxReflectionSteps = 4
+	}
+	if opts.MaxReflectionRounds <= 0 {
+		opts.MaxReflectionRounds = 4
+	}
+	if opts.MaxToolCallsPerTool <= 0 {
+		opts.MaxToolCallsPerTool = 3
+	}
+	if opts.MaxRunbookSearches <= 0 {
+		opts.MaxRunbookSearches = 2
+	}
+	if opts.MaxLLMTokens <= 0 {
+		opts.MaxLLMTokens = 12000
+	}
+	if opts.ReflectionTimeout <= 0 {
+		opts.ReflectionTimeout = 15 * time.Second
+	}
+	ctx = WithLLMTokenBudget(ctx, opts.MaxLLMTokens)
 
 	ctx, span := observability.Tracer().Start(ctx, "agent.runtime",
 		trace.WithAttributes(
@@ -88,7 +108,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	recorder.record(ctx, stepRecord{Stage: StagePlan, Status: model.AgentStepStatusSuccess, Input: opts.Goal, Reason: "received diagnosis goal"})
 
 	toolMetadata := r.registry.Metadata()
-	state := newToolState(opts.TaskID, opts.Goal, toolMetadata)
+	state := newToolState(opts.TaskID, opts.Goal, toolMetadata, ctx)
 	planCtx, planSpan := observability.Tracer().Start(ctx, "agent.planner")
 	plan := r.planner.BuildInitialPlan(planCtx, opts.Goal, toolMetadata)
 	span.AddEvent("agent.plan.completed", trace.WithAttributes(attribute.Int("agent.plan.steps", len(plan.Steps))))
@@ -106,6 +126,11 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	latestScores := []HypothesisScore{}
 	stopReason := ""
 	stepsExecuted := 0
+	executedToolNames := []string{}
+	toolCallCounts := map[string]int{}
+	reflectionRounds := 0
+	reflectionSteps := 0
+	reflectionBudgetLogged := false
 	lastReflection := ReflectionResult{ShouldContinue: true}
 	hasLastReflection := false
 	var preAnalysis *PreAnalysisDecision
@@ -122,6 +147,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if preAnalysis != nil {
 			applyTargetedEvidencePlan(&plan, state, preAnalysis)
 		}
+		ensureConfigFailureEvidence(&plan, state)
 		steps := nextPlanSteps(&plan)
 		if len(steps) == 0 {
 			if enforceRuntimeEvidencePlan(&plan, state, preAnalysis) {
@@ -129,6 +155,10 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			}
 			stopReason = StopReasonPlanComplete
 			break
+		}
+		steps = enforceToolCallBudgets(steps, toolCallCounts, opts, recorder, ctx)
+		if len(steps) == 0 {
+			continue
 		}
 		executions := r.executePlanSteps(ctx, steps, state, opts.ToolTimeout)
 		for _, execution := range executions {
@@ -139,6 +169,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 				recorder.record(ctx, stepRecord{Stage: StageDecision, ToolName: step.ToolName, Status: model.AgentStepStatusSkipped, Input: step, Reason: "tool is not registered"})
 				continue
 			}
+			executedToolNames = appendUniqueStrings(append(executedToolNames, canonicalToolName(step.ToolName)))
 			status := model.AgentStepStatusSuccess
 			if !result.Success {
 				status = model.AgentStepStatusFailed
@@ -169,7 +200,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			stepsExecuted++
 			markStepComplete(&plan, step.ID)
 			if result.Success {
-				markToolComplete(state, step.ToolName)
+				markToolComplete(state, step.ToolName, step.Input)
 			}
 			state.RecordToolResult(result)
 			if len(result.EvidenceRecords) > 0 {
@@ -186,7 +217,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			}
 		}
 		hypothesisCtx, hypothesisSpan := observability.Tracer().Start(ctx, "agent.hypothesis_update")
-		latestScores = r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, allEvidence)
+		latestScores = r.hypotheses.UpdateContext(ctx, opts.TaskID, state.DiagnosticContext, allEvidence)
 		span.AddEvent("agent.hypothesis.updated", trace.WithAttributes(attribute.Int("agent.hypothesis.count", len(latestScores))))
 		hypothesisSpan.End()
 		recorder.record(hypothesisCtx, stepRecord{
@@ -206,7 +237,30 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 
 		// LLM-driven reflection: ask the LLM whether to continue or stop.
 		if rp, ok := r.planner.(ReflectivePlanner); ok {
-			reflection, reflectErr := rp.Reflect(ctx, plan, state, latestScores)
+			canReflect, budgetReason := reflectionBudgetAvailable(ctx, reflectionRounds, reflectionSteps, opts)
+			if !canReflect && !reflectionBudgetLogged {
+				reflectionBudgetLogged = true
+				recorder.record(ctx, stepRecord{
+					Stage:  StageReflection,
+					Status: model.AgentStepStatusSkipped,
+					Output: map[string]interface{}{
+						"reflection_rounds": reflectionRounds,
+						"reflection_steps":  reflectionSteps,
+						"llm_tokens":        LLMTokenUsage(ctx),
+					},
+					Reason: budgetReason,
+				})
+			}
+			var reflection ReflectionResult
+			var reflectErr error
+			if canReflect {
+				reflectionRounds++
+				reflectCtx, cancel := context.WithTimeout(ctx, opts.ReflectionTimeout)
+				reflection, reflectErr = rp.Reflect(reflectCtx, plan, state, latestScores)
+				cancel()
+			} else {
+				reflectErr = fmt.Errorf("%s", budgetReason)
+			}
 			if reflectErr == nil {
 				lastReflection = reflection
 				hasLastReflection = true
@@ -222,25 +276,43 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 					Reason: reflection.Reason,
 				})
 				// Append any new steps suggested by LLM reflection.
-				if reflection.ShouldContinue && preAnalysis == nil {
+				appendedReflectionSteps := 0
+				if reflection.ShouldContinue {
 					for _, newStep := range reflection.NewSteps {
+						if reflectionSteps >= opts.MaxReflectionSteps {
+							recorder.record(ctx, stepRecord{
+								Stage:    StageDecision,
+								ToolName: newStep.ToolName,
+								Status:   model.AgentStepStatusSkipped,
+								Input:    newStep.Input,
+								Reason:   "reflection step budget exhausted",
+							})
+							continue
+						}
+						var ok bool
+						newStep, ok = sanitizeReflectionStep(newStep, state.ToolMetadataSnapshot(), state.Goal)
+						if !ok {
+							continue
+						}
 						if redundantReflectionStep(&plan, state, newStep) {
 							continue
 						}
-						if newStep.ID == "" {
-							newStep.ID = "reflect-" + newStep.ToolName
-						}
-						newStep.Critical = r.toolIsCritical(newStep.ToolName)
+						newStep.ID = uniqueReflectionStepID(&plan, newStep)
 						newStep.AppendedBy = "llm_reflection"
 						plan.Steps = append(plan.Steps, newStep)
+						appendedReflectionSteps++
+						reflectionSteps++
 					}
 				}
 				if enforceRuntimeEvidencePlan(&plan, state, preAnalysis) {
 					continue
 				}
+				if appendedReflectionSteps > 0 || hasPendingReflectionSteps(&plan) {
+					continue
+				}
 				if !reflection.ShouldContinue {
 					if convergence.Converged {
-						if hasPendingTargetedEvidence(&plan) {
+						if hasPendingRequiredEvidence(&plan) {
 							continue
 						}
 						if preAnalysis == nil && ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
@@ -263,6 +335,9 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		if stopReason != "" {
 			break
 		}
+		if ensureConfigFailureEvidence(&plan, state) {
+			continue
+		}
 		if enforceRuntimeEvidencePlan(&plan, state, preAnalysis) {
 			continue
 		}
@@ -270,7 +345,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			appendDistinguishingEvidence(&plan, state, convergence)
 		}
 		if convergence.Converged {
-			if hasPendingTargetedEvidence(&plan) {
+			if hasPendingRequiredEvidence(&plan) {
 				continue
 			}
 			if preAnalysis == nil && ensureRunnableConvergenceEvidence(&plan, state, convergence, "confirmed hypothesis still has runnable distinguishing evidence") {
@@ -286,9 +361,11 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 			break
 		}
 		if preAnalysis == nil {
-			for _, execution := range executions {
-				if !execution.MissingTool {
-					r.planner.AdjustPlan(&plan, state, execution.Result, latestScores)
+			if last, ok := lastCompletedExecution(executions); ok {
+				if llmTokenBudgetAvailable(ctx) {
+					r.planner.AdjustPlan(&plan, state, last.Result, latestScores)
+				} else {
+					NewRulePlanner().AdjustPlan(&plan, state, last.Result, latestScores)
 				}
 			}
 		}
@@ -336,7 +413,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		return nil, err
 	}
 	report.Evidences = appendUniqueEvidence(report.Evidences, allEvidence...)
-	alignmentScores := r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, report.Evidences)
+	alignmentScores := r.hypotheses.UpdateContext(ctx, opts.TaskID, state.DiagnosticContext, report.Evidences)
 	alignmentModels := r.hypotheses.ToModels(opts.TaskID, alignmentScores)
 	alignment := AlignReportWithHypotheses(report, alignmentModels)
 	if alignment.Changed {
@@ -350,6 +427,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	state.Report = report
 
 	remediationResult := r.executeTool(ctx, recorder, "remediation.generate_actions", map[string]interface{}{"fault_type": report.FaultType}, state, opts.ToolTimeout)
+	executedToolNames = appendUniqueStrings(append(executedToolNames, "remediation.generate_actions"))
 	if state.Report != nil {
 		report = state.Report
 	}
@@ -376,7 +454,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	})
 
 	finalCtx, finalSpan := observability.Tracer().Start(ctx, "agent.hypothesis_update")
-	finalScores := r.hypotheses.Update(opts.TaskID, state.DiagnosticContext, report.Evidences)
+	finalScores := r.hypotheses.UpdateContext(ctx, opts.TaskID, state.DiagnosticContext, report.Evidences)
 	span.AddEvent("agent.hypothesis.finalized", trace.WithAttributes(attribute.Int("agent.hypothesis.count", len(finalScores))))
 	finalSpan.End()
 	hypothesisModels := r.hypotheses.ToModels(opts.TaskID, finalScores)
@@ -406,18 +484,100 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	))
 
 	return &RunResult{
-		Report:           report,
-		PreAnalysis:      preAnalysis,
-		DiagContext:      state.DiagnosticContext,
-		RunbookHits:      state.RunbookHits,
-		Hypotheses:       hypothesisModels,
-		Executions:       state.Executions,
-		VerificationPlan: verificationPlan,
-		StopReason:       stopReason,
-		StepsExecuted:    stepsExecuted,
-		PlanSummary:      initialPlanSummary,
-		PlannedToolNames: initialPlannedTools,
+		Report:            report,
+		PreAnalysis:       preAnalysis,
+		DiagContext:       state.DiagnosticContext,
+		RunbookHits:       state.RunbookHits,
+		Hypotheses:        hypothesisModels,
+		Executions:        state.Executions,
+		VerificationPlan:  verificationPlan,
+		StopReason:        stopReason,
+		StepsExecuted:     stepsExecuted,
+		PlanSummary:       initialPlanSummary,
+		PlannedToolNames:  initialPlannedTools,
+		ExecutedToolNames: executedToolNames,
 	}, nil
+}
+
+func uniqueReflectionStepID(plan *Plan, step PlanStep) string {
+	base := strings.TrimSpace(step.ID)
+	if base == "" {
+		base = "reflect-" + strings.NewReplacer(".", "-", "_", "-").Replace(step.ToolName)
+	}
+	used := map[string]bool{}
+	if plan != nil {
+		for _, existing := range plan.Steps {
+			used[existing.ID] = true
+		}
+	}
+	if !used[base] {
+		return base
+	}
+	for index := 2; ; index++ {
+		candidate := fmt.Sprintf("%s-%d", base, index)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+func hasPendingReflectionSteps(plan *Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, step := range plan.Steps {
+		if step.AppendedBy == "llm_reflection" && !step.Completed && !step.Skipped {
+			return true
+		}
+	}
+	return false
+}
+
+func reflectionBudgetAvailable(ctx context.Context, rounds, steps int, opts RuntimeOptions) (bool, string) {
+	switch {
+	case opts.MaxReflectionRounds > 0 && rounds >= opts.MaxReflectionRounds:
+		return false, "reflection round budget exhausted"
+	case opts.MaxReflectionSteps > 0 && steps >= opts.MaxReflectionSteps:
+		return false, "reflection step budget exhausted"
+	case !llmTokenBudgetAvailable(ctx):
+		return false, "LLM token budget exhausted"
+	default:
+		return true, ""
+	}
+}
+
+func enforceToolCallBudgets(steps []*PlanStep, counts map[string]int, opts RuntimeOptions, recorder *stepRecorder, ctx context.Context) []*PlanStep {
+	runnable := make([]*PlanStep, 0, len(steps))
+	for _, step := range steps {
+		tool := canonicalToolName(step.ToolName)
+		limit := opts.MaxToolCallsPerTool
+		if tool == "runbook.search" && opts.MaxRunbookSearches > 0 && (limit <= 0 || opts.MaxRunbookSearches < limit) {
+			limit = opts.MaxRunbookSearches
+		}
+		if limit > 0 && counts[tool] >= limit {
+			step.Skipped = true
+			recorder.record(ctx, stepRecord{
+				Stage:    StageDecision,
+				ToolName: step.ToolName,
+				Status:   model.AgentStepStatusSkipped,
+				Input:    step.Input,
+				Reason:   fmt.Sprintf("tool call budget exhausted: %s limit=%d", tool, limit),
+			})
+			continue
+		}
+		counts[tool]++
+		runnable = append(runnable, step)
+	}
+	return runnable
+}
+
+func lastCompletedExecution(executions []planExecution) (planExecution, bool) {
+	for index := len(executions) - 1; index >= 0; index-- {
+		if !executions[index].MissingTool {
+			return executions[index], true
+		}
+	}
+	return planExecution{}, false
 }
 
 func shouldRunPreAnalyzer(executions []planExecution) bool {

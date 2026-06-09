@@ -148,6 +148,7 @@
       "max_value": 817889280,
       "avg_value": 492830720,
       "growth_ratio": 5.9,
+      "slope_per_minute": 0,
       "window_start": "2026-05-31T07:00:00Z",
       "window_end": "2026-05-31T08:00:00Z"
     }

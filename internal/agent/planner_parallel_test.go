@@ -111,6 +111,54 @@ func TestLLMPlannerUsesCollectedContextForAdjustmentAndReflection(t *testing.T) 
 	if !strings.Contains(client.reflection.Evidence, "reason=OOMKilled") {
 		t.Fatalf("expected reflection evidence summary, got %q", client.reflection.Evidence)
 	}
+	if !containsInstruction(client.reflection.Safety, "container_name") ||
+		!containsInstruction(client.reflection.Safety, "ConfigMap") {
+		t.Fatalf("expected input-aware config reflection guidance, got %#v", client.reflection.Safety)
+	}
+}
+
+func TestSanitizeReflectionStepEnforcesReadOnlyScopeAndSchema(t *testing.T) {
+	tools := []ToolMetadata{
+		{
+			Name:        "k8s.get_logs",
+			ReadOnly:    true,
+			InputSchema: map[string]string{"namespace": "string", "pod_name": "string", "container_name": "string"},
+		},
+		{Name: "danger.patch", ReadOnly: false, InputSchema: map[string]string{"namespace": "string"}},
+	}
+	step, ok := sanitizeReflectionStep(PlanStep{
+		ToolName: "k8s.get_logs",
+		Input: map[string]interface{}{
+			"namespace":     "other",
+			"pod_name":      "other-pod",
+			"containerName": "init-config",
+			"unexpected":    "drop-me",
+		},
+	}, tools, Goal{Namespace: "default", PodName: "api-0"})
+	if !ok {
+		t.Fatal("expected registered read-only tool to pass")
+	}
+	if step.Input["namespace"] != "default" || step.Input["pod_name"] != "api-0" {
+		t.Fatalf("expected diagnosis scope to be enforced, got %#v", step.Input)
+	}
+	if step.Input["container_name"] != "init-config" {
+		t.Fatalf("expected container input alias to normalize, got %#v", step.Input)
+	}
+	if _, exists := step.Input["unexpected"]; exists {
+		t.Fatalf("unexpected input must be removed, got %#v", step.Input)
+	}
+	if _, ok := sanitizeReflectionStep(PlanStep{ToolName: "danger.patch"}, tools, Goal{}); ok {
+		t.Fatal("read-write reflection tool must be rejected")
+	}
+}
+
+func containsInstruction(items []string, needle string) bool {
+	for _, item := range items {
+		if strings.Contains(item, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 type capturingPlanClient struct {

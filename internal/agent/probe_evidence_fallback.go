@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"reflect"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -103,21 +105,54 @@ func planHasCompletedTool(plan *Plan, tool string) bool {
 	return false
 }
 
-func markToolComplete(state *ToolState, tool string) {
+func markToolComplete(state *ToolState, tool string, input map[string]interface{}) {
 	if state == nil {
 		return
 	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	key := canonicalToolName(tool)
 	if state.CompletedTools == nil {
 		state.CompletedTools = map[string]bool{}
 	}
-	state.CompletedTools[canonicalToolName(tool)] = true
+	state.CompletedTools[key] = true
+	if state.CompletedToolInputs == nil {
+		state.CompletedToolInputs = map[string][]map[string]interface{}{}
+	}
+	for _, existing := range state.CompletedToolInputs[key] {
+		if inputsMatch(existing, input) {
+			return
+		}
+	}
+	state.CompletedToolInputs[key] = append(state.CompletedToolInputs[key], normalizeToolInput(input))
 }
 
 func toolCompleted(state *ToolState, tool string) bool {
-	if state == nil || state.CompletedTools == nil {
+	if state == nil {
 		return false
 	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
 	return state.CompletedTools[canonicalToolName(tool)]
+}
+
+func toolCompletedWithInput(state *ToolState, tool string, input map[string]interface{}) bool {
+	if state == nil {
+		return false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	key := canonicalToolName(tool)
+	for _, existing := range state.CompletedToolInputs[key] {
+		if inputsMatch(existing, input) {
+			return true
+		}
+	}
+	// Backward compatibility for states created before input history existed:
+	// a name-only completion can only prove the default, untargeted call.
+	return state.CompletedTools[key] && len(normalizeToolInput(input)) == 0
 }
 
 func toolAlreadyCollected(plan *Plan, state *ToolState, tool string) bool {
@@ -138,10 +173,91 @@ func planHasPendingTool(plan *Plan, tool string) bool {
 
 func redundantReflectionStep(plan *Plan, state *ToolState, step PlanStep) bool {
 	tool := canonicalToolName(step.ToolName)
-	if !snapshotEvidenceTool(tool) {
+	if tool == "" {
+		return true
+	}
+	return hasCompletedStepWithMatchingInput(plan, state, tool, step.Input) ||
+		hasPendingStepWithMatchingInput(plan, tool, step.Input)
+}
+
+// hasCompletedStepWithMatchingInput checks successful calls recorded in state.
+// PlanStep.Completed also includes failed calls, so plan history alone must not
+// suppress a legitimate retry.
+func hasCompletedStepWithMatchingInput(_ *Plan, state *ToolState, tool string, input map[string]interface{}) bool {
+	return toolCompletedWithInput(state, tool, input)
+}
+
+// hasPendingStepWithMatchingInput checks if the same call is already scheduled.
+func hasPendingStepWithMatchingInput(plan *Plan, tool string, input map[string]interface{}) bool {
+	if plan == nil {
 		return false
 	}
-	return toolAlreadyCollected(plan, state, tool) || planHasPendingTool(plan, tool)
+	for _, step := range plan.Steps {
+		if canonicalToolName(step.ToolName) == tool && !step.Completed && !step.Skipped {
+			if inputsMatch(step.Input, input) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func inputsMatch(a, b map[string]interface{}) bool {
+	return reflect.DeepEqual(normalizeToolInput(a), normalizeToolInput(b))
+}
+
+func normalizeToolInput(input map[string]interface{}) map[string]interface{} {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		key = canonicalToolInputKey(key)
+		if key == "" || key == "namespace" || key == "pod_name" {
+			continue
+		}
+		out[key] = normalizeToolInputValue(value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func canonicalToolInputKey(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.ReplaceAll(key, "-", "_")
+	switch strings.ReplaceAll(key, "_", "") {
+	case "namespace":
+		return "namespace"
+	case "pod", "podname":
+		return "pod_name"
+	case "container", "containername":
+		return "container_name"
+	default:
+		return key
+	}
+}
+
+func normalizeToolInputValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			out[canonicalToolInputKey(key)] = normalizeToolInputValue(item)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(typed))
+		for i, item := range typed {
+			out[i] = normalizeToolInputValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func dropCompletedSnapshotSteps(plan *Plan, state *ToolState) {
@@ -150,7 +266,7 @@ func dropCompletedSnapshotSteps(plan *Plan, state *ToolState) {
 	}
 	for i := range plan.Steps {
 		tool := canonicalToolName(plan.Steps[i].ToolName)
-		if snapshotEvidenceTool(tool) && toolCompleted(state, tool) && !plan.Steps[i].Completed {
+		if snapshotEvidenceTool(tool) && toolCompletedWithInput(state, tool, plan.Steps[i].Input) && !plan.Steps[i].Completed {
 			plan.Steps[i].Skipped = true
 		}
 	}
@@ -158,7 +274,7 @@ func dropCompletedSnapshotSteps(plan *Plan, state *ToolState) {
 
 func snapshotEvidenceTool(tool string) bool {
 	switch tool {
-	case "k8s.get_pod", "k8s.get_events", "k8s.get_logs", "k8s.get_topology", "k8s.get_pvc":
+	case "k8s.get_pod", "k8s.get_events", "k8s.get_logs", "k8s.get_topology", "k8s.get_pvc", "k8s.get_config_refs":
 		return true
 	default:
 		return false
