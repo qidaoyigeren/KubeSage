@@ -313,38 +313,6 @@ func planHasTool(plan *Plan, tool string) bool {
 	return false
 }
 
-// collectObservations gathers observation strings from completed tool calls.
-func collectObservations(state *ToolState, last ToolResult) []string {
-	observations := []string{}
-	seen := map[string]struct{}{}
-	for _, record := range state.ObservationSnapshot() {
-		text := formatObservation(record)
-		if text == "" {
-			continue
-		}
-		if _, ok := seen[text]; ok {
-			continue
-		}
-		seen[text] = struct{}{}
-		observations = append(observations, text)
-	}
-	if last.Observation != "" {
-		record := ObservationRecord{
-			ToolName:        last.ToolName,
-			Success:         last.Success,
-			Observation:     last.Observation,
-			Warnings:        last.Warnings,
-			MissingEvidence: last.MissingEvidence,
-			Error:           last.Error,
-		}
-		text := formatObservation(record)
-		if _, ok := seen[text]; !ok && text != "" {
-			observations = append(observations, text)
-		}
-	}
-	return observations
-}
-
 func formatObservation(record ObservationRecord) string {
 	if strings.TrimSpace(record.Observation) == "" && record.Error == "" {
 		return ""
@@ -369,23 +337,61 @@ func formatObservation(record ObservationRecord) string {
 	return strings.Join(parts, " ")
 }
 
+// evidenceScorer is a package-level scorer used by collectEvidenceSummary and
+// collectObservations. It is replaced in tests when needed.
+
 // collectEvidenceSummary builds a text summary of evidence gathered before the
-// analyzer produces the final report.
+// analyzer produces the final report. Uses relevance scoring to surface the most
+// important evidence first, with low-scoring evidence collapsed into a summary line.
 func collectEvidenceSummary(state *ToolState) string {
 	if state == nil {
 		return ""
 	}
-	var parts []string
 	evidence := state.EvidenceSnapshot()
-	if len(evidence) > 20 {
-		evidence = evidence[len(evidence)-20:]
+
+	// Deduplicate first.
+	deduped := GetEvidenceScorer().DeduplicateEvidence(evidence)
+
+	// Score with empty hypotheses — scoring context is added in reflection path.
+	scored := GetEvidenceScorer().ScoreEvidence(deduped, nil, len(deduped))
+
+	// Use token-budget-aware summary: top 25 full records, rest collapsed.
+	return BuildEvidenceSummary(scored, 25, 200)
+}
+
+// collectObservations gathers observation strings from completed tool calls,
+// compressing older observations when the count exceeds the threshold.
+func collectObservations(state *ToolState, last ToolResult) []string {
+	observations := []ObservationRecord{}
+	seen := map[string]struct{}{}
+	for _, record := range state.ObservationSnapshot() {
+		text := formatObservation(record)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		observations = append(observations, record)
 	}
-	for _, ev := range evidence {
-		if ev.Content != "" {
-			parts = append(parts, fmt.Sprintf("[%s] %s: %s", ev.Severity, ev.Title, truncate(ev.Content, 200)))
+	if last.Observation != "" {
+		record := ObservationRecord{
+			ToolName:        last.ToolName,
+			Success:         last.Success,
+			Observation:     last.Observation,
+			Warnings:        last.Warnings,
+			MissingEvidence: last.MissingEvidence,
+			Error:           last.Error,
+		}
+		text := formatObservation(record)
+		if _, ok := seen[text]; !ok && text != "" {
+			observations = append(observations, record)
 		}
 	}
-	return strings.Join(parts, "\n")
+
+	// Compress when the observation count exceeds the threshold.
+	return CompressObservations(observations)
 }
 
 func countCompleted(plan *Plan) int {

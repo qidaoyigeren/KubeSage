@@ -28,16 +28,17 @@ const (
 )
 
 type Goal struct {
-	Namespace      string
-	PodName        string
-	ContainerName  string
-	ExpectedFault  string
-	AlertName      string
-	AlertSeverity  string
-	IncludeLogs    bool
-	IncludeEvents  bool
-	IncludeMetrics bool
-	AlertTime      *time.Time
+	Namespace         string
+	PodName           string
+	ContainerName     string
+	ExpectedFault     string
+	AlertName         string
+	AlertSeverity     string
+	IncludeLogs       bool
+	IncludeEvents     bool
+	IncludeMetrics    bool
+	AlertTime         *time.Time
+	HistoricalContext string `json:"historical_context,omitempty"` // injected by runtime from cross-session memory
 }
 
 type RuntimeOptions struct {
@@ -53,6 +54,9 @@ type RuntimeOptions struct {
 	ReflectionTimeout   time.Duration
 	EnableDryRunPreview bool
 	Goal                Goal
+	// ModelName is used to look up model-specific token profiles.
+	// When set, the budget is configured with model-aware defaults.
+	ModelName string
 }
 
 type Planner interface {

@@ -24,6 +24,7 @@ type Runtime struct {
 	verification *VerificationPlanner
 	analyzer     Analyzer
 	policy       *RemediationPolicy
+	memory       *DiagnosisMemoryStore
 }
 
 type RuntimeDeps struct {
@@ -32,6 +33,8 @@ type RuntimeDeps struct {
 	Analyzer Analyzer
 	Policy   *RemediationPolicy
 	Planner  Planner
+	// MemoryRepo enables cross-session diagnosis memory (optional).
+	MemoryRepo MemoryRepository
 }
 
 // NewRuntime creates the Agent Runtime MVP coordinator.
@@ -52,6 +55,7 @@ func NewRuntime(deps RuntimeDeps) *Runtime {
 		verification: NewVerificationPlanner(),
 		analyzer:     deps.Analyzer,
 		policy:       deps.Policy,
+		memory:       NewDiagnosisMemoryStore(deps.MemoryRepo),
 	}
 }
 
@@ -90,7 +94,15 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	if opts.ReflectionTimeout <= 0 {
 		opts.ReflectionTimeout = 15 * time.Second
 	}
-	ctx = WithLLMTokenBudget(ctx, opts.MaxLLMTokens)
+	ctx = WithLLMTokenBudget(ctx, opts.MaxLLMTokens, opts.ModelName)
+
+	// Query cross-session memory for similar past diagnoses.
+	if r.memory != nil {
+		memories, err := r.memory.SearchSimilar(ctx, opts.Goal.Namespace, opts.Goal.ExpectedFault, opts.Goal.PodName, 5)
+		if err == nil && len(memories) > 0 {
+			opts.Goal.HistoricalContext = FormatHistoricalContext(memories)
+		}
+	}
 
 	ctx, span := observability.Tracer().Start(ctx, "agent.runtime",
 		trace.WithAttributes(
@@ -413,6 +425,22 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		return nil, err
 	}
 	report.Evidences = appendUniqueEvidence(report.Evidences, allEvidence...)
+
+	// Run evidence integrity check before finalizing the report.
+	integrityReport := CheckHypothesisCoverage(latestScores, report.Evidences)
+	if !integrityReport.IsComplete {
+		integrityEvidence := IntegrityReportToEvidence(integrityReport)
+		report.Evidences = append(report.Evidences, integrityEvidence)
+		report.ResidualRisks = append(report.ResidualRisks,
+			fmt.Sprintf("Evidence integrity check found gaps: %s", integrityReport.Summary))
+	}
+	recorder.record(ctx, stepRecord{
+		Stage:  StageDecision,
+		Status: model.AgentStepStatusSuccess,
+		Output: integrityReport,
+		Reason: integrityReport.Summary,
+	})
+
 	alignmentScores := r.hypotheses.UpdateContext(ctx, opts.TaskID, state.DiagnosticContext, report.Evidences)
 	alignmentModels := r.hypotheses.ToModels(opts.TaskID, alignmentScores)
 	alignment := AlignReportWithHypotheses(report, alignmentModels)
@@ -482,6 +510,13 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		attribute.String("diagnosis.fault_type", report.FaultType),
 		attribute.Int("agent.steps_executed", stepsExecuted),
 	))
+
+	// Save diagnosis memory for cross-session learning.
+	if r.memory != nil && report.ConfidenceScore >= 0.7 {
+		_ = r.memory.Save(ctx, opts.TaskID, opts.Goal.Namespace, opts.Goal.PodName,
+			report.FaultType, report.RootCauseSummary, report.ConfidenceScore,
+			report.Evidences, executedToolNames)
+	}
 
 	return &RunResult{
 		Report:            report,

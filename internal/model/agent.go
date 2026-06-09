@@ -57,6 +57,27 @@ type Hypothesis struct {
 	CreatedAt                 time.Time `json:"created_at"`
 }
 
+// DiagnosisMemory stores key insights from historical diagnoses for cross-session
+// learning. Each record captures what worked, what evidence mattered, and the
+// confirmed root cause. Normalized pod_name_prefix enables workload-level matching.
+type DiagnosisMemory struct {
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Namespace      string    `json:"namespace" gorm:"size:128;index"`
+	PodNamePrefix  string    `json:"pod_name_prefix" gorm:"size:128;index"`
+	FaultType      string    `json:"fault_type" gorm:"size:128;index"`
+	RootCause      string    `json:"root_cause" gorm:"type:text"`
+	KeyEvidence    JSONText  `json:"key_evidence" gorm:"type:longtext"`
+	EffectiveTools JSONText  `json:"effective_tools" gorm:"type:longtext"`
+	Confidence     float64   `json:"confidence"`
+	FeedbackRating string    `json:"feedback_rating" gorm:"size:32"`
+	CorrectedCause string    `json:"corrected_cause" gorm:"type:text"`
+	TaskID         uint      `json:"task_id" gorm:"index"`
+	HitCount       int       `json:"hit_count" gorm:"default:1"`
+	LastHitAt      time.Time `json:"last_hit_at"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 // RemediationExecution tracks the MVP lifecycle for policy-vetted remediation
 // proposals. It intentionally has no real executed state.
 type RemediationExecution struct {

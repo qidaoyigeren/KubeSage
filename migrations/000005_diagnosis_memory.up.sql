@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS diagnosis_memories (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  namespace VARCHAR(128) NOT NULL,
+  pod_name_prefix VARCHAR(128) NOT NULL,
+  fault_type VARCHAR(128) NOT NULL,
+  root_cause TEXT,
+  key_evidence LONGTEXT,
+  effective_tools LONGTEXT,
+  confidence DOUBLE DEFAULT 0,
+  feedback_rating VARCHAR(32) DEFAULT '',
+  corrected_cause TEXT,
+  task_id BIGINT UNSIGNED,
+  hit_count INT DEFAULT 1,
+  last_hit_at DATETIME(3) NULL,
+  created_at DATETIME(3) NULL,
+  updated_at DATETIME(3) NULL,
+  INDEX idx_dm_namespace (namespace),
+  INDEX idx_dm_pod_prefix (pod_name_prefix),
+  INDEX idx_dm_fault_type (fault_type),
+  INDEX idx_dm_task_id (task_id),
+  INDEX idx_dm_lookup (namespace, fault_type, pod_name_prefix),
+  UNIQUE INDEX idx_dm_task_unique (task_id)
+);

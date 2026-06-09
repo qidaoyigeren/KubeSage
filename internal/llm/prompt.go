@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -210,18 +211,41 @@ func podContainers(pod *corev1.Pod) []map[string]interface{} {
 	return items
 }
 
-// promptEvidences filters and truncates evidence for prompt size control.
+// promptEvidences filters, scores, and truncates evidence for prompt size control.
+// Evidence is sorted by relevance (severity × recency) and capped at 30 records.
 func promptEvidences(records []diagnostic.EvidenceRecord, sourceType string) []promptEvidence {
-	result := make([]promptEvidence, 0)
-	for _, record := range records {
+	// Filter and score.
+	type indexed struct {
+		record diagnostic.EvidenceRecord
+		score  float64
+	}
+	scored := make([]indexed, 0, len(records))
+	for i, record := range records {
 		if sourceType != "" && record.SourceType != sourceType {
 			continue
 		}
+		// Simple relevance: severity weight × recency decay.
+		sevW := severityWeight(record.Severity)
+		recency := 1.0 - float64(len(records)-1-i)*0.02
+		if recency < 0.1 {
+			recency = 0.1
+		}
+		scored = append(scored, indexed{record: record, score: sevW*0.5 + recency*0.5})
+	}
+
+	// Sort by score descending.
+	sort.Slice(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
+
+	// Take top 30, truncating content.
+	result := make([]promptEvidence, 0, 30)
+	for _, s := range scored {
 		result = append(result, promptEvidence{
-			SourceType: record.SourceType,
-			Title:      record.Title,
-			Content:    truncate(record.Content, 1200),
-			Severity:   record.Severity,
+			SourceType: s.record.SourceType,
+			Title:      s.record.Title,
+			Content:    truncate(s.record.Content, 1200),
+			Severity:   s.record.Severity,
 		})
 		if len(result) >= 30 {
 			return result
@@ -230,7 +254,27 @@ func promptEvidences(records []diagnostic.EvidenceRecord, sourceType string) []p
 	return result
 }
 
+// severityWeight maps evidence severity to a numeric weight for relevance scoring.
+func severityWeight(severity string) float64 {
+	switch strings.ToLower(severity) {
+	case "critical":
+		return 1.0
+	case "error":
+		return 0.85
+	case "warning":
+		return 0.6
+	case "info":
+		return 0.3
+	default:
+		return 0.2
+	}
+}
+
 func groundingEvidences(records []diagnostic.EvidenceRecord) []GroundingEvidence {
+	// Sort by severity first, then take top 30.
+	sort.Slice(records, func(i, j int) bool {
+		return severityWeight(records[i].Severity) > severityWeight(records[j].Severity)
+	})
 	result := make([]GroundingEvidence, 0, len(records))
 	for i, record := range records {
 		result = append(result, GroundingEvidence{

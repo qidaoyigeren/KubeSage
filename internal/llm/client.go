@@ -259,18 +259,7 @@ func (c *OpenAICompatibleClient) GenerateAgentPlan(ctx context.Context, prompt a
 	payload := chatCompletionRequest{
 		Model: c.model,
 		Messages: []chatMessage{
-			{Role: "system", Content: strings.Join([]string{
-				"You are KubeSage's Kubernetes RCA planner.",
-				"Return a JSON object with EXACTLY these fields:",
-				`  "plan_summary": string — one-sentence diagnosis strategy,`,
-				`  "steps": array of objects, each with "tool_name" (string), "reason" (string), "critical" (bool), "input" (object),`,
-				`  "expected_observations": array of strings,`,
-				`  "stop_condition": array of strings.`,
-				"Each step.tool_name MUST be one of the provided tool names exactly as listed.",
-				"Each step.input should contain namespace and pod_name from the goal.",
-				"Do not propose remediation execution or cluster mutation.",
-				"Return JSON only, no markdown fences.",
-			}, "\n")},
+			{Role: "system", Content: PlanSystemPrompt(StageEarly, prompt.Goal.ExpectedFault)},
 			{Role: "user", Content: string(payloadBytes)},
 		},
 		Temperature:    0.1,
@@ -338,19 +327,7 @@ func (c *OpenAICompatibleClient) GeneratePlanAdjustment(ctx context.Context, pro
 	payload := chatCompletionRequest{
 		Model: c.model,
 		Messages: []chatMessage{
-			{Role: "system", Content: strings.Join([]string{
-				"You are KubeSage's Kubernetes RCA planner revising a diagnostic plan mid-execution.",
-				"You will receive the current plan, observations so far, hypothesis scores, and available tools.",
-				"Return a revised JSON plan with EXACTLY these fields:",
-				`  "plan_summary": string,`,
-				`  "steps": array of objects, each with "tool_name" (string), "reason" (string), "critical" (bool), "input" (object),`,
-				`  "expected_observations": array of strings,`,
-				`  "stop_condition": array of strings.`,
-				"Each step.tool_name MUST be one of the provided tool names exactly as listed.",
-				"Do not propose remediation execution or cluster mutation.",
-				"Remove steps that are no longer needed and add steps to fill evidence gaps.",
-				"Return JSON only, no markdown fences.",
-			}, "\n")},
+			{Role: "system", Content: AdjustmentSystemPrompt(DetermineStage(len(prompt.CurrentPlan.Steps), 12), prompt.Goal.ExpectedFault)},
 			{Role: "user", Content: string(payloadBytes)},
 		},
 		Temperature:    0.1,
@@ -515,19 +492,7 @@ func (c *OpenAICompatibleClient) GenerateReflection(ctx context.Context, prompt 
 	payload := chatCompletionRequest{
 		Model: c.model,
 		Messages: []chatMessage{
-			{Role: "system", Content: strings.Join([]string{
-				"You are KubeSage's reflection engine for Kubernetes root cause analysis.",
-				"Given the current diagnostic plan, observations, hypothesis scores, and evidence,",
-				"decide whether the agent should continue investigating or the evidence is sufficient.",
-				"Return JSON: {\"should_continue\": bool, \"reason\": string, \"new_steps\": []}",
-				"new_steps is optional. Each step: {\"id\": string, \"tool_name\": string, \"input\": object, \"reason\": string, \"critical\": bool}",
-				"Only suggest new steps if there are clear evidence gaps that would change the diagnosis.",
-				"The same tool may be called again only when input is materially different, such as another container_name or a more specific runbook query.",
-				"When logs mention a missing config file, prefer k8s.get_config_refs plus k8s.get_events; use runbook.search for a specific known pattern.",
-				"k8s.get_pvc is storage evidence and must not be used as a substitute for ConfigMap or Secret inspection.",
-				"If multiple high-confidence hypotheses are close, continue and collect distinguishing evidence.",
-				"Stop only when the top hypothesis has confidence >= 0.75, top1-top2 gap >= 0.15, and no key evidence is missing.",
-			}, "\n")},
+			{Role: "system", Content: ReflectionSystemPrompt(DetermineStage(len(prompt.Plan.Steps), 12), prompt.Goal.ExpectedFault)},
 			{Role: "user", Content: string(payloadBytes)},
 		},
 		Temperature:    0.1,
@@ -644,7 +609,7 @@ func estimateMessageTokens(messages []chatMessage) int {
 	for _, message := range messages {
 		// Three UTF-8 bytes per token is deliberately conservative for mixed
 		// English/Chinese operational prompts.
-		estimated += 4 + (len(message.Content)+2)/3
+		estimated += 4 + agent.EstimateTokens(message.Content)
 	}
 	return estimated
 }

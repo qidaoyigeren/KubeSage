@@ -396,11 +396,12 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 		return
 	}
 	runtime := agent.NewRuntime(agent.RuntimeDeps{
-		Store:    s.agentRepo,
-		Registry: registry,
-		Analyzer: s.engine,
-		Policy:   agentPolicy,
-		Planner:  s.agentPlanner(),
+		Store:      s.agentRepo,
+		Registry:   registry,
+		Analyzer:   s.engine,
+		Policy:     agentPolicy,
+		Planner:    s.agentPlanner(),
+		MemoryRepo: s.agentRepo,
 	})
 	result, err := runtime.Run(ctx, agent.RuntimeOptions{
 		TaskID:              taskID,
@@ -414,6 +415,7 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 		ReflectionTimeout:   time.Duration(s.cfg.Agent.ReflectionTimeoutSeconds) * time.Second,
 		EnableDryRunPreview: s.cfg.Agent.EnableDryRunPreview,
 		Goal:                toAgentGoal(req),
+		ModelName:           s.cfg.LLM.Model,
 	})
 	if err != nil {
 		span.RecordError(err)

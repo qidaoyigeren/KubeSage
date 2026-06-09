@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"kubesage/internal/model"
 
@@ -99,6 +100,95 @@ func (r *AgentRepository) ApproveRemediation(ctx context.Context, executionID ui
 			"approval_by":    actor,
 			"dry_run_output": output,
 		}).Error
+}
+
+// CreateMemory inserts a new diagnosis memory record. If a memory with the same
+// task_id already exists, it updates the existing row atomically.
+func (r *AgentRepository) CreateMemory(ctx context.Context, m *model.DiagnosisMemory) error {
+	if m == nil {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing model.DiagnosisMemory
+		err := tx.Where("task_id = ?", m.TaskID).First(&existing).Error
+		if err == nil {
+			// Update existing: preserve original creation time and ID.
+			m.ID = existing.ID
+			m.CreatedAt = existing.CreatedAt
+			return tx.Save(m).Error
+		}
+		if err != gorm.ErrRecordNotFound {
+			return err
+		}
+		return tx.Create(m).Error
+	})
+}
+
+// SearchSimilar queries diagnosis memories by namespace, fault_type, and pod
+// name prefix. Returns the most relevant matches ordered by confidence and recency.
+func (r *AgentRepository) SearchSimilar(ctx context.Context, namespace, faultType, podPrefix string, limit int) ([]model.DiagnosisMemory, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	var memories []model.DiagnosisMemory
+	query := r.db.WithContext(ctx).Model(&model.DiagnosisMemory{})
+	if namespace != "" {
+		query = query.Where("namespace = ?", namespace)
+	}
+	if faultType != "" {
+		query = query.Where("fault_type = ?", faultType)
+	}
+	if podPrefix != "" {
+		query = query.Where("pod_name_prefix = ?", podPrefix)
+	}
+	err := query.Order("confidence DESC, last_hit_at DESC").Limit(limit).Find(&memories).Error
+	return memories, err
+}
+
+// UpdateHit increments the hit count and refreshes last_hit_at for a memory.
+func (r *AgentRepository) UpdateHit(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Model(&model.DiagnosisMemory{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"hit_count":   gorm.Expr("hit_count + 1"),
+			"last_hit_at": time.Now(),
+		}).Error
+}
+
+// BatchUpdateHits increments hit counts for multiple memory IDs in one query.
+func (r *AgentRepository) BatchUpdateHits(ctx context.Context, ids []uint) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Model(&model.DiagnosisMemory{}).
+		Where("id IN ?", ids).
+		Updates(map[string]interface{}{
+			"hit_count":   gorm.Expr("hit_count + 1"),
+			"last_hit_at": time.Now(),
+		}).Error
+}
+
+// FindByTaskID retrieves a diagnosis memory by its associated task ID.
+func (r *AgentRepository) FindByTaskID(ctx context.Context, taskID uint) (*model.DiagnosisMemory, error) {
+	var memory model.DiagnosisMemory
+	err := r.db.WithContext(ctx).Where("task_id = ?", taskID).First(&memory).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &memory, nil
+}
+
+// ListByFaultType returns diagnosis memories for a given fault type.
+func (r *AgentRepository) ListByFaultType(ctx context.Context, faultType string, limit int) ([]model.DiagnosisMemory, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var memories []model.DiagnosisMemory
+	err := r.db.WithContext(ctx).Where("fault_type = ?", faultType).
+		Order("confidence DESC, last_hit_at DESC").Limit(limit).Find(&memories).Error
+	return memories, err
 }
 
 // RejectRemediation updates a remediation execution to blocked status.
