@@ -129,6 +129,35 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 		})
 	}
 
+	// Record QoS class — per K8s docs, QoS affects OOM kill priority:
+	// BestEffort (no requests/limits) killed first, then Burstable, then Guaranteed.
+	qosClass := classifyQoS(ctx.Pod)
+	evidences = append(evidences, diagnostic.EvidenceRecord{
+		SourceType: "k8s_pod_status",
+		Title:      "Pod QoS class",
+		Content:    fmt.Sprintf("qosClass=%s", qosClass),
+		Severity:   "info",
+		Raw:        ctx.Pod.Status.QOSClass,
+		Timestamp:  time.Now(),
+	})
+
+	// Record total restart count across all containers — high counts confirm
+	// recurring OOM pattern rather than a one-off incident.
+	totalRestarts := int32(0)
+	for _, status := range ctx.Pod.Status.ContainerStatuses {
+		totalRestarts += status.RestartCount
+	}
+	if totalRestarts > 0 {
+		evidences = append(evidences, diagnostic.EvidenceRecord{
+			SourceType: "k8s_pod_status",
+			Title:      "Container restart count",
+			Content:    fmt.Sprintf("restartCount=%d", totalRestarts),
+			Severity:   "warning",
+			Raw:        ctx.Pod.Status.ContainerStatuses,
+			Timestamp:  time.Now(),
+		})
+	}
+
 	// Only lastState.terminated carries the precise finishedAt timestamp needed
 	// for the Prometheus window. Event-only OOM matches are still reported, but
 	// metric enrichment is skipped with a warning evidence below.
@@ -242,8 +271,14 @@ func (a *OOMKilledAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 	}, nil
 }
 
-// oomConfidence adjusts confidence according to termination, log, and metric
-// evidence strength instead of relying on a single hard-coded value.
+// oomConfidence adjusts confidence according to termination, log, metric, QoS,
+// and restart evidence strength instead of relying on a single hard-coded value.
+// Scoring factors are derived from K8s official OOM behavior documentation:
+//   - Exit code 137 + OOMKilled reason is the strongest signal (+0.10)
+//   - QoS class affects OOM kill order: Guaranteed pods are killed last (+0.03)
+//   - High restartCount confirms recurring OOM pattern (+0.03)
+//   - Prometheus memory curve shape confirms root cause (+0.05~+0.06)
+//   - Metric trends show progressive growth or sudden spikes (+0.04~+0.08)
 func oomConfidence(terminations []oomTermination, evidences []diagnostic.EvidenceRecord, sustainedNearLimit, limitTooLowPattern, memoryLeakPattern bool, trends []diagnostic.MetricTrend) float64 {
 	score := 0.72
 	if len(terminations) > 0 {
@@ -271,6 +306,16 @@ func oomConfidence(terminations []oomTermination, evidences []diagnostic.Evidenc
 				score += 0.04
 			}
 		}
+	}
+	// Per K8s docs: QoS class affects OOM kill priority.
+	// Guaranteed pods (requests == limits for all resources) are killed last,
+	// so an OOM on a Guaranteed pod is a stronger signal of genuine memory exhaustion.
+	if hasQoSEvidence(evidences, "Guaranteed") {
+		score += 0.03
+	}
+	// High restart count confirms this is a recurring OOM, not a transient spike.
+	if hasHighRestartCount(evidences, 3) {
+		score += 0.03
 	}
 	return clampConfidence(score)
 }
@@ -764,6 +809,50 @@ func memoryEvidenceContent(containerName string, start, end time.Time, analysis 
 		analysis.PostRestartGrowthRatio*100,
 		analysis.PatternReason,
 	)
+}
+
+// classifyQoS determines the Pod QoS class per K8s docs:
+//   - Guaranteed: every container has equal requests and limits for both CPU and memory
+//   - Burstable: at least one container has a request or limit set, but they aren't equal
+//   - BestEffort: no containers have any requests or limits set
+//
+// QoS class affects OOM kill priority: BestEffort killed first, Guaranteed last.
+func classifyQoS(pod *corev1.Pod) string {
+	if pod == nil {
+		return "Unknown"
+	}
+	// Use the status-reported QoS if available (set by kubelet).
+	if pod.Status.QOSClass != "" {
+		return string(pod.Status.QOSClass)
+	}
+	// Fallback: classify from spec.
+	hasRequests := false
+	hasLimits := false
+	allGuaranteed := true
+	for _, c := range pod.Spec.Containers {
+		memReq := c.Resources.Requests[corev1.ResourceMemory]
+		memLim := c.Resources.Limits[corev1.ResourceMemory]
+		cpuReq := c.Resources.Requests[corev1.ResourceCPU]
+		cpuLim := c.Resources.Limits[corev1.ResourceCPU]
+		if !memReq.IsZero() || !cpuReq.IsZero() {
+			hasRequests = true
+		}
+		if !memLim.IsZero() || !cpuLim.IsZero() {
+			hasLimits = true
+		}
+		if memReq.IsZero() && cpuReq.IsZero() && memLim.IsZero() && cpuLim.IsZero() {
+			allGuaranteed = false
+		} else if memReq.Cmp(memLim) != 0 || cpuReq.Cmp(cpuLim) != 0 {
+			allGuaranteed = false
+		}
+	}
+	if hasRequests || hasLimits {
+		if allGuaranteed {
+			return "Guaranteed"
+		}
+		return "Burstable"
+	}
+	return "BestEffort"
 }
 
 // formatOptionalTime formats a timestamp and makes zero values explicit.

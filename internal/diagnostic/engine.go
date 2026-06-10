@@ -276,8 +276,10 @@ func preferResult(candidate, current *AnalyzeResult) bool {
 // weightedResultScore computes a composite score from confidence, fault severity,
 // and evidence strength so that primary selection is not dominated by a single
 // dimension. Confidence carries the most weight because the rule engine already
-// encodes domain knowledge into confidence scores; severity and evidence provide
-// tie-breaking and bonus signals.
+// encodes domain knowledge into confidence scores; severity ranks diagnostic
+// impact (NodeNotReady > CrashLoop > Pending); evidence quantity provides
+// tie-breaking bonus. Per K8s docs, severity is a stronger diagnostic signal
+// than raw evidence count, so it receives 10% weight vs evidence 5%.
 func weightedResultScore(result *AnalyzeResult) float64 {
 	if result == nil {
 		return 0
@@ -290,26 +292,41 @@ func weightedResultScore(result *AnalyzeResult) float64 {
 	if hasStrongOOMTerminationEvidence(result) {
 		evidence += 0.15
 	}
-	return confidence*0.85 + evidence*0.10 + severity*0.05
+	return confidence*0.85 + evidence*0.05 + severity*0.10
 }
 
 // faultSeverityWeight maps fault types to a severity weight in [0, 1].
 // Higher weight means the fault is more impactful or actionable.
+// Mapping follows K8s official fault impact analysis:
+//   - OOMKilled (1.0): kernel kills container, data loss risk
+//   - NodeNotReady (0.85): affects ALL pods on the node, cluster-wide impact
+//   - CrashLoopBackOff (0.80): service unavailable, pod restarts consume resources
+//   - Evicted (0.75): pod permanently killed, needs rescheduling
+//   - ProbeFailed (0.70): liveness=restart, readiness=traffic loss
+//   - InitError (0.65): blocks pod startup entirely
+//   - ImagePullBackOff (0.60): pod stuck in Waiting, deployment blocked
+//   - PodPending (0.50): pod not running, replica count below desired
 func faultSeverityWeight(faultType string) float64 {
 	ft := normalizeFaultName(faultType)
 	switch {
 	case strings.Contains(ft, "oomkilled"):
 		return 1.0
+	case strings.Contains(ft, "nodenotready"):
+		return 0.85
 	case strings.Contains(ft, "crashloopbackoff"):
-		return 0.9
+		return 0.80
+	case strings.Contains(ft, "evicted"):
+		return 0.75
 	case strings.Contains(ft, "probefailed") || strings.Contains(ft, "probefail"):
-		return 0.7
+		return 0.70
+	case strings.Contains(ft, "initerror"):
+		return 0.65
 	case strings.Contains(ft, "imagepullbackoff") || strings.Contains(ft, "imagepull"):
-		return 0.6
+		return 0.60
 	case strings.Contains(ft, "pending"):
-		return 0.5
+		return 0.50
 	default:
-		return 0.4
+		return 0.40
 	}
 }
 
@@ -492,6 +509,7 @@ func topologyEvidenceContent(topology *TopologyInfo) string {
 			"memoryPressure="+boolString(topology.Node.MemoryPressure),
 			"diskPressure="+boolString(topology.Node.DiskPressure),
 			"pidPressure="+boolString(topology.Node.PIDPressure),
+			"networkUnavailable="+boolString(topology.Node.NetworkUnavailable),
 		)
 	}
 	return strings.Join(parts, " ")
@@ -589,12 +607,13 @@ func serviceEndpointsUnavailable(topology *TopologyInfo) bool {
 	return true
 }
 
-// nodeHasPressure reports whether the pod's node has any pressure condition.
+// nodeHasPressure reports whether the pod's node has any pressure or
+// network-unavailable condition.
 func nodeHasPressure(topology *TopologyInfo) bool {
 	if topology == nil || topology.Node == nil {
 		return false
 	}
-	return topology.Node.MemoryPressure || topology.Node.DiskPressure || topology.Node.PIDPressure
+	return topology.Node.MemoryPressure || topology.Node.DiskPressure || topology.Node.PIDPressure || topology.Node.NetworkUnavailable
 }
 
 // itoa formats an int without pulling formatting logic into every caller.

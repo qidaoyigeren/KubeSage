@@ -103,11 +103,12 @@ type EndpointBrief struct {
 }
 
 type NodeHealth struct {
-	Name           string `json:"name"`
-	Ready          bool   `json:"ready"`
-	MemoryPressure bool   `json:"memory_pressure"`
-	DiskPressure   bool   `json:"disk_pressure"`
-	PIDPressure    bool   `json:"pid_pressure"`
+	Name               string `json:"name"`
+	Ready              bool   `json:"ready"`
+	MemoryPressure     bool   `json:"memory_pressure"`
+	DiskPressure       bool   `json:"disk_pressure"`
+	PIDPressure        bool   `json:"pid_pressure"`
+	NetworkUnavailable bool   `json:"network_unavailable"`
 }
 
 type CorrelationInfo struct {

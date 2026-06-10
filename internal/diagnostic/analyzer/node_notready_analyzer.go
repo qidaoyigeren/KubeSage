@@ -82,6 +82,18 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 			Timestamp:  now,
 		})
 	}
+	// Per K8s docs: NetworkUnavailable indicates the node's network is not
+	// correctly configured (e.g., CNI plugin not set up). This prevents pods
+	// from being scheduled and can cause existing pods to lose connectivity.
+	if node.NetworkUnavailable {
+		evidence = append(evidence, diagnostic.EvidenceRecord{
+			SourceType: "k8s_topology",
+			Title:      "Node NetworkUnavailable",
+			Content:    fmt.Sprintf("Node %s has NetworkUnavailable condition — network plugin not ready", node.Name),
+			Severity:   "critical",
+			Timestamp:  now,
+		})
+	}
 
 	// Node-related events.
 	for _, event := range ctx.Events {
@@ -103,10 +115,28 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 		}
 	}
 
-	// Confidence starts high because node NotReady is a strong signal.
+	// Confidence starts high because node NotReady is a strong signal —
+	// per K8s docs, it means kubelet is unhealthy or not reporting heartbeats.
 	confidence := 0.85
 	if node.MemoryPressure || node.DiskPressure {
 		confidence += 0.05
+	}
+	if node.PIDPressure {
+		confidence += 0.03
+	}
+	// Multiple pressure conditions indicate severe node instability.
+	pressureCount := 0
+	if node.MemoryPressure {
+		pressureCount++
+	}
+	if node.DiskPressure {
+		pressureCount++
+	}
+	if node.PIDPressure {
+		pressureCount++
+	}
+	if pressureCount >= 2 {
+		confidence += 0.03
 	}
 
 	summary := fmt.Sprintf("NodeNotReady node %s NotReady: Pod 运行在节点 %s 上，但该节点处于 Ready=False NotReady 状态", node.Name, node.Name)
@@ -119,6 +149,9 @@ func (a *NodeNotReadyAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diag
 	}
 	if node.PIDPressure {
 		pressureConditions = append(pressureConditions, "PIDPressure")
+	}
+	if node.NetworkUnavailable {
+		pressureConditions = append(pressureConditions, "NetworkUnavailable")
 	}
 	if len(pressureConditions) > 0 {
 		summary += "，同时存在 " + strings.Join(pressureConditions, ", ") + " 条件"

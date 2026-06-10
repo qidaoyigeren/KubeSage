@@ -93,7 +93,13 @@ func (a *ProbeFailedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagn
 	}, nil
 }
 
-// probeConfidence weighs unhealthy events, probe specs, and matching logs.
+// probeConfidence weighs unhealthy events, probe specs, matching logs, and
+// probe type severity. Per K8s docs:
+//   - Liveness probe failure → kubelet kills the container (high severity, +0.05)
+//   - Startup probe failure → kubelet kills the container (high severity, +0.05)
+//   - Readiness probe failure → removed from Service endpoints (medium, +0.02)
+//   - Failure mode matters: timeout (+0.03), connection refused (+0.04), HTTP error (+0.02)
+//   - Probe configuration issues: initialDelaySeconds too short (+0.03)
 func probeConfidence(ctx *diagnostic.DiagnosticContext, evidences []diagnostic.EvidenceRecord) float64 {
 	score := 0.72
 	if hasEvidence(evidences, "k8s_event", "Unhealthy") {
@@ -109,6 +115,41 @@ func probeConfidence(ctx *diagnostic.DiagnosticContext, evidences []diagnostic.E
 		for _, container := range ctx.Pod.Spec.Containers {
 			if container.ReadinessProbe != nil || container.LivenessProbe != nil {
 				score += 0.02
+				break
+			}
+		}
+	}
+	// Probe type severity boost — per K8s docs, liveness/startup failures cause
+	// container restarts (more impactful), while readiness only affects traffic routing.
+	if hasEvidenceContent(evidences, "liveness probe failed") {
+		score += 0.05
+	}
+	if hasEvidenceContent(evidences, "startup probe failed") {
+		score += 0.05
+	}
+	if hasEvidenceContent(evidences, "readiness probe failed") {
+		score += 0.02
+	}
+	// Failure mode analysis — different failure modes have different diagnostic
+	// certainty levels per K8s troubleshooting docs.
+	if hasEvidenceContent(evidences, "timeout") || hasEvidenceContent(evidences, "i/o timeout") {
+		// Timeout suggests slow response or overloaded application.
+		score += 0.03
+	}
+	if hasEvidenceContent(evidences, "connection refused") || hasEvidenceContent(evidences, "dial tcp") {
+		// Connection refused means the port is not listening — very specific.
+		score += 0.04
+	}
+	if hasEvidenceContent(evidences, "404") || hasEvidenceContent(evidences, "503") {
+		// HTTP error codes are specific signals.
+		score += 0.02
+	}
+	// Probe configuration analysis — short initialDelaySeconds is a common cause
+	// of false-positive liveness failures on slow-starting applications.
+	if ctx != nil && ctx.Pod != nil {
+		for _, container := range ctx.Pod.Spec.Containers {
+			if container.LivenessProbe != nil && container.LivenessProbe.InitialDelaySeconds < 5 {
+				score += 0.03
 				break
 			}
 		}

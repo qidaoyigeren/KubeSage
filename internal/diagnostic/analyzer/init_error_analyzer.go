@@ -109,8 +109,14 @@ func (a *InitErrorAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnos
 	}, nil
 }
 
-var initErrorLogKeywords = []string{"error", "failed", "timeout", "permission denied", "migration", "connection refused"}
+var initErrorLogKeywords = []string{"error", "failed", "timeout", "permission denied", "migration", "connection refused", "segfault", "killed", "signal"}
 
+// initErrorConfidence adjusts confidence based on init container failure evidence.
+// Per K8s docs:
+//   - Init containers run sequentially, must exit 0 before next starts
+//   - If restartPolicy=Never and init fails, entire Pod is Failed
+//   - Common failures: non-zero exit, image pull, dependency wait, permission
+//   - Exit code analysis helps distinguish failure modes
 func initErrorConfidence(evidences []diagnostic.EvidenceRecord) float64 {
 	score := 0.72
 	if hasEvidence(evidences, "k8s_pod_status", "Init container status") {
@@ -121,6 +127,28 @@ func initErrorConfidence(evidences []diagnostic.EvidenceRecord) float64 {
 	}
 	if hasEvidence(evidences, "k8s_event", "") {
 		score += 0.04
+	}
+	// Exit code specific boosts — different exit codes indicate different
+	// failure modes per K8s docs and Linux conventions.
+	if hasEvidenceContent(evidences, "exitcode=1") {
+		// General application error — common but confirms failure.
+		score += 0.03
+	}
+	if hasEvidenceContent(evidences, "exitcode=137") {
+		// SIGKILL — OOM or external kill during init.
+		score += 0.04
+	}
+	if hasEvidenceContent(evidences, "exitcode=126") || hasEvidenceContent(evidences, "exitcode=127") {
+		// Permission denied (126) or command not found (127) — very specific.
+		score += 0.04
+	}
+	// Image pull failure detection — init containers can fail due to image issues.
+	if hasEvidenceContent(evidences, "ErrImagePull") || hasEvidenceContent(evidences, "ImagePullBackOff") {
+		score += 0.03
+	}
+	// Dependency wait detection — common init container pattern.
+	if hasEvidenceContent(evidences, "waiting for") || hasEvidenceContent(evidences, "until") {
+		score += 0.02
 	}
 	return clampConfidence(score)
 }

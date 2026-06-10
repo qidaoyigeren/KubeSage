@@ -56,25 +56,38 @@ func NewHypothesisEngine(configs ...HypothesisScoringConfig) *HypothesisEngine {
 	return &HypothesisEngine{config: cfg}
 }
 
+// DefaultHypothesisScoringConfig returns the default evidence weight configuration.
+// Weights are calibrated against K8s official documentation:
+//   - Higher weights for definitive signals (OOM, PVC status, node conditions)
+//   - Moderate weights for strong indicators (events, probe failures)
+//   - Lower weights for supporting context (logs, metrics trends)
+//   - Base confidence 0.30 + sum of matched evidence weights = final score
 func DefaultHypothesisScoringConfig() HypothesisScoringConfig {
 	return HypothesisScoringConfig{
 		ConfirmedThreshold: 0.75,
 		RejectedThreshold:  0.20,
 		Weights: map[string]map[string]float64{
-			"memory_limit_too_low":        {"oom": 0.25, "working_set_limit": 0.20, "prometheus": 0.10},
-			"application_memory_leak":     {"oom": 0.20, "memory": 0.30},
-			"node_memory_pressure":        {"memorypressure": 0.35, "k8s_topology": 0.10},
+			// OOM-related hypotheses — OOM termination is definitive, metrics confirm pattern.
+			"memory_limit_too_low":    {"oom": 0.25, "working_set_limit": 0.20, "prometheus": 0.10},
+			"application_memory_leak": {"oom": 0.20, "memory": 0.30},
+			"node_memory_pressure":    {"memorypressure": 0.35, "k8s_topology": 0.10},
+			// Configuration hypotheses — log/event patterns indicate config issues.
 			"bad_config":                  {"config": 0.30, "backoff": 0.20},
 			"missing_secret_or_configmap": {"secret_configmap": 0.15, "object_missing": 0.45, "key_missing": 0.40},
 			"dependency_unavailable":      {"refused_timeout": 0.25, "backoff_probe": 0.10},
-			"probe_misconfigured":         {"probe_unhealthy": 0.45},
-			"pvc_unbound":                 {"pvc_bound": 0.45},
-			"scheduling_constraint":       {"scheduler": 0.45},
-			// New hypothesis types for expanded analyzer coverage.
-			"image_pull_failed":    {"imagepull": 0.45, "registry_auth": 0.15},
+			// Probe hypothesis — probe events and config are specific signals.
+			"probe_misconfigured": {"probe_unhealthy": 0.45},
+			// Scheduling/storage hypotheses — PVC and scheduler events are definitive.
+			"pvc_unbound":           {"pvc_bound": 0.45},
+			"scheduling_constraint": {"scheduler": 0.45},
+			// Image pull hypothesis — pull events are very specific per K8s docs.
+			"image_pull_failed": {"imagepull": 0.45, "registry_auth": 0.15},
+			// Init container hypothesis — init status and exit codes are specific.
 			"init_container_crash": {"init_error": 0.35, "init_exit": 0.20},
-			"node_eviction":        {"evicted": 0.45, "node_pressure": 0.15},
-			"node_not_ready":       {"nodenotready": 0.45, "node_pressure": 0.10},
+			// Eviction hypothesis — eviction reason and node pressure are strong signals.
+			"node_eviction": {"evicted": 0.45, "node_pressure": 0.15},
+			// Node NotReady hypothesis — node condition is definitive.
+			"node_not_ready": {"nodenotready": 0.45, "node_pressure": 0.10},
 		},
 	}
 }
@@ -203,6 +216,13 @@ func evidenceFacts(ctx *diagnostic.DiagnosticContext, records []diagnostic.Evide
 			"refused", "timeout", "unhealthy", "probe", "failedscheduling", "taint", "selector", "pvc", "bound",
 			"imagepull", "errimagepull", "imagepullbackoff", "unauthorized", "denied", "manifest",
 			"initerror", "initcontainer", "init container", "exitcode", "evicted", "eviction", "nodenotready", "notready",
+			// New keywords for expanded evidence detection.
+			"insufficient cpu", "insufficient memory", "insufficient ephemeral-storage",
+			"resourcequota", "exceeded quota", "preemption", "preempted",
+			"network unavailable", "networkunavailable",
+			"ephemeral", "temporary", "diskpressure", "pidpressure",
+			"cgroup", "killed process", "segmentation fault", "segfault",
+			"connection reset", "dial tcp", "i/o timeout",
 		} {
 			if key == "memory" && pressureFalseOnly(text, "memorypressure") {
 				continue
@@ -361,6 +381,10 @@ func (e *HypothesisEngine) scorePVCUnbound(f facts) HypothesisScore {
 func (e *HypothesisEngine) scoreSchedulingConstraint(f facts) HypothesisScore {
 	s := base("scheduling_constraint", "Scheduling constraints may prevent the pod from running.")
 	s.add(e.weight(s.Type, "scheduler", 0.30), refs(f, "failedscheduling", "taint", "selector")...)
+	// Per K8s docs: additional scheduling failure causes.
+	s.add(0.10, refs(f, "insufficient cpu", "insufficient memory", "insufficient ephemeral-storage")...)
+	s.add(0.08, refs(f, "resourcequota", "exceeded quota")...)
+	s.add(0.05, refs(f, "preemption", "preempted")...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "scheduler events")
 	}
@@ -394,6 +418,8 @@ func (e *HypothesisEngine) scoreNodeEviction(f facts) HypothesisScore {
 	s := base("node_eviction", "Pod was evicted due to node resource pressure (memory, disk, or PID).")
 	s.add(e.weight(s.Type, "evicted", 0.35), refs(f, "evicted", "eviction")...)
 	s.add(e.weight(s.Type, "node_pressure", 0.15), refs(f, "memorypressure", "diskpressure", "pidpressure")...)
+	// Per K8s docs: ephemeral-storage exhaustion is a common eviction cause.
+	s.add(0.08, refs(f, "ephemeral", "temporary")...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "eviction events and node pressure conditions")
 	}
@@ -403,7 +429,9 @@ func (e *HypothesisEngine) scoreNodeEviction(f facts) HypothesisScore {
 func (e *HypothesisEngine) scoreNodeNotReady(f facts) HypothesisScore {
 	s := base("node_not_ready", "The node hosting this pod is in NotReady state, causing pod instability.")
 	s.add(e.weight(s.Type, "nodenotready", 0.40), refs(f, "nodenotready", "notready")...)
-	s.add(e.weight(s.Type, "node_pressure", 0.10), refs(f, "memorypressure", "diskpressure")...)
+	s.add(e.weight(s.Type, "node_pressure", 0.10), refs(f, "memorypressure", "diskpressure", "pidpressure")...)
+	// Per K8s docs: NetworkUnavailable is also a node condition that affects pods.
+	s.add(0.05, refs(f, "networkunavailable", "network unavailable")...)
 	if len(s.SupportingRefs) == 0 {
 		s.MissingEvidence = append(s.MissingEvidence, "node Ready condition and pressure events")
 	}

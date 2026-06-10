@@ -88,6 +88,17 @@ func (a *ImagePullBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 			if strings.Contains(text, "unauthorized") || strings.Contains(text, "denied") || strings.Contains(text, "authentication") {
 				summary = "ImagePullBackOff unauthorized registry authentication imagePullSecret: 镜像拉取失败，镜像仓库认证或 imagePullSecret 可能无效。"
 			}
+			// Per K8s docs: network issues (DNS, timeout) can prevent image pulls.
+			if strings.Contains(text, "timeout") || strings.Contains(text, "dial tcp") ||
+				strings.Contains(text, "i/o timeout") || strings.Contains(text, "no route to host") {
+				summary = "ImagePullBackOff network timeout registry unreachable: 镜像拉取失败，可能是网络不通或 DNS 解析失败导致无法访问镜像仓库。"
+				actions = append(actions, "检查 Pod 网络连通性和 DNS 解析，确认镜像仓库地址可达。")
+			}
+			// Per K8s docs: platform mismatch causes "no matching manifest" errors.
+			if strings.Contains(text, "platform") || strings.Contains(text, "no matching manifest") {
+				summary = "ImagePullBackOff platform mismatch: 镜像拉取失败，镜像平台架构与节点不匹配（如 arm64 vs amd64）。"
+				actions = append(actions, "确认镜像是否支持当前节点的 CPU 架构，或使用多架构镜像。")
+			}
 		}
 	}
 
@@ -128,13 +139,37 @@ func imagePullFailureEvent(event corev1.Event) bool {
 	return false
 }
 
+// imagePullConfidence adjusts confidence based on the specificity of image pull
+// failure evidence. Per K8s docs, common causes include:
+//   - Image name/tag misspelled or doesn't exist (manifest unknown)
+//   - Registry authentication failure (unauthorized/denied)
+//   - Network issues pulling from registry (DNS, timeout)
+//   - Image platform mismatch (arm vs amd64)
 func imagePullConfidence(evidences []diagnostic.EvidenceRecord) float64 {
 	score := 0.70
 	if hasEvidence(evidences, "k8s_event", "") {
-		score += 0.12
+		score += 0.10
 	}
 	if hasEvidence(evidences, "image_pull_secret", "") {
 		score += 0.03
+	}
+	// Strong specific signals — these pinpoint the exact failure mode.
+	if hasEvidenceContent(evidences, "manifest unknown") || hasEvidenceContent(evidences, "not found") {
+		// Image/tag doesn't exist in registry — very specific.
+		score += 0.06
+	}
+	if hasEvidenceContent(evidences, "unauthorized") || hasEvidenceContent(evidences, "denied") {
+		// Registry auth failure — very specific, points to imagePullSecret.
+		score += 0.05
+	}
+	if hasEvidenceContent(evidences, "timeout") || hasEvidenceContent(evidences, "dial tcp") ||
+		hasEvidenceContent(evidences, "i/o timeout") {
+		// Network connectivity issue — less specific but confirms pull failure.
+		score += 0.03
+	}
+	if hasEvidenceContent(evidences, "platform") || hasEvidenceContent(evidences, "no matching manifest") {
+		// Platform mismatch (arm64 vs amd64) — specific signal.
+		score += 0.04
 	}
 	return clampConfidence(score)
 }

@@ -75,6 +75,10 @@ func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		case strings.Contains(message, "insufficient memory"):
 			summary = "PodPending FailedScheduling Insufficient memory requests: 调度失败原因包含 Insufficient memory，集群可用内存不满足 Pod requests。"
 			actions = append(actions, "降低 memory requests 或扩容节点。")
+		case strings.Contains(message, "insufficient ephemeral-storage"):
+			// Per K8s docs: ephemeral-storage is a schedulable resource.
+			summary = "PodPending FailedScheduling Insufficient ephemeral-storage: 调度失败原因包含 Insufficient ephemeral-storage，节点临时存储不满足 Pod requests。"
+			actions = append(actions, "降低 ephemeral-storage requests 或清理节点临时存储。")
 		case strings.Contains(message, "untolerated taint"):
 			summary = "PodPending FailedScheduling untolerated taint tolerations: Pod 无法容忍目标节点污点。"
 			actions = append(actions, "增加合适 tolerations，或选择无对应 taint 的节点池。")
@@ -84,6 +88,14 @@ func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 		case strings.Contains(message, "unbound immediate persistentvolumeclaims"):
 			summary = "PodPending unbound PersistentVolumeClaim PVC not Bound: Pod 依赖的 PVC 未绑定，导致无法调度。"
 			actions = append(actions, "检查 PVC/PV/StorageClass 状态和容量。")
+		case strings.Contains(message, "exceeded quota") || strings.Contains(message, "resourcequota"):
+			// Per K8s docs: ResourceQuota can prevent scheduling.
+			summary = "PodPending FailedScheduling ResourceQuota exceeded: 命名空间的 ResourceQuota 已满，无法为新 Pod 分配资源。"
+			actions = append(actions, "检查命名空间 ResourceQuota 使用情况，清理不需要的资源或提升配额。")
+		case strings.Contains(message, "preempted") || strings.Contains(message, "preemption"):
+			// Per K8s docs: higher-priority pods can preempt lower-priority ones.
+			summary = "PodPending FailedScheduling preemption: Pod 可能因优先级不足被更高优先级 Pod 抢占。"
+			actions = append(actions, "检查 PriorityClass 配置和集群中高优先级 Pod 的调度情况。")
 		}
 	}
 
@@ -145,7 +157,14 @@ func (a *PendingAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 	}, nil
 }
 
-// pendingConfidence weighs scheduler events, PVC status, and node snapshots.
+// pendingConfidence weighs scheduler events, PVC status, node snapshots, and
+// specific scheduling failure reasons. Per K8s docs, Pending can be caused by:
+//   - Insufficient resources (CPU, memory, ephemeral-storage)
+//   - Node taints without matching tolerations
+//   - nodeSelector/affinity mismatches
+//   - Unbound PVCs
+//   - ResourceQuota limits
+//   - PriorityClass preemption
 func pendingConfidence(evidences []diagnostic.EvidenceRecord) float64 {
 	score := 0.70
 	if hasEvidence(evidences, "k8s_event", "FailedScheduling") {
@@ -155,6 +174,22 @@ func pendingConfidence(evidences []diagnostic.EvidenceRecord) float64 {
 		score += 0.05
 	}
 	if hasEvidence(evidences, "k8s_node", "") {
+		score += 0.03
+	}
+	// Specific scheduling failure reason boosts — more specific = higher confidence.
+	if hasEvidenceContent(evidences, "insufficient cpu") || hasEvidenceContent(evidences, "insufficient memory") {
+		score += 0.04
+	}
+	if hasEvidenceContent(evidences, "insufficient ephemeral-storage") {
+		score += 0.04
+	}
+	if hasEvidenceContent(evidences, "untolerated taint") {
+		score += 0.03
+	}
+	if hasEvidenceContent(evidences, "unbound immediate persistentvolumeclaims") {
+		score += 0.04
+	}
+	if hasEvidenceContent(evidences, "exceeded quota") || hasEvidenceContent(evidences, "resourcequota") {
 		score += 0.03
 	}
 	return clampConfidence(score)

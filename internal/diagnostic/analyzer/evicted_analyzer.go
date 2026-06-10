@@ -92,6 +92,24 @@ func (a *EvictedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 			Timestamp:  time.Now(),
 		})
 	}
+	// Record QoS class — per K8s docs, eviction order is:
+	// BestEffort (evicted first) → Burstable → Guaranteed (evicted last).
+	if ctx.Pod.Status.QOSClass != "" {
+		evidences = append(evidences, diagnostic.EvidenceRecord{
+			SourceType: "k8s_pod_status",
+			Title:      "Pod QoS class (affects eviction order)",
+			Content:    fmt.Sprintf("qosClass=%s", string(ctx.Pod.Status.QOSClass)),
+			Severity:   "info",
+			Raw:        ctx.Pod.Status.QOSClass,
+			Timestamp:  time.Now(),
+		})
+	}
+	// Detect ephemeral-storage usage — per K8s docs, ephemeral-storage
+	// exhaustion is a common cause of DiskPressure eviction.
+	if ctx.Topology != nil && ctx.Topology.Node != nil && ctx.Topology.Node.DiskPressure {
+		summary += " 同时检查 ephemeral-storage 使用量和 Pod 临时文件写入。"
+		actions = append(actions, "检查容器 ephemeral-storage 使用量、日志大小和临时文件写入。")
+	}
 	return &diagnostic.AnalyzeResult{
 		AnalyzerName:     a.Name(),
 		FaultType:        "Evicted",
@@ -105,6 +123,13 @@ func (a *EvictedAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*diagnosti
 	}, nil
 }
 
+// evictedConfidence adjusts confidence based on eviction evidence specificity.
+// Per K8s docs, node-pressure eviction is triggered by kubelet when:
+//   - MemoryPressure: available memory below eviction threshold
+//   - DiskPressure: available disk space or inodes below thresholds
+//   - PIDPressure: process count exceeds limit
+//   - QoS class affects eviction order: BestEffort first, Guaranteed last
+//   - ephemeral-storage exhaustion is a common disk pressure cause
 func evictedConfidence(evidences []diagnostic.EvidenceRecord) float64 {
 	score := 0.74
 	if hasEvidence(evidences, "k8s_event", "") {
@@ -112,6 +137,31 @@ func evictedConfidence(evidences []diagnostic.EvidenceRecord) float64 {
 	}
 	if hasEvidence(evidences, "k8s_topology", "Eviction node") {
 		score += 0.06
+	}
+	// Specific eviction cause detection — more specific evidence = higher confidence.
+	if hasEvidenceContent(evidences, "DiskPressure") || hasEvidenceContent(evidences, "diskpressure") {
+		// Disk/ephemeral-storage pressure is the most common eviction cause.
+		score += 0.04
+	}
+	if hasEvidenceContent(evidences, "MemoryPressure") || hasEvidenceContent(evidences, "memorypressure") {
+		score += 0.03
+	}
+	if hasEvidenceContent(evidences, "PIDPressure") || hasEvidenceContent(evidences, "pidpressure") {
+		score += 0.03
+	}
+	// QoS class affects eviction priority — per K8s docs:
+	// BestEffort pods are evicted first, Guaranteed last.
+	if hasQoSEvidence(evidences, "BestEffort") {
+		// BestEffort pod eviction is expected under any pressure — less diagnostic.
+		score += 0.01
+	}
+	if hasQoSEvidence(evidences, "Guaranteed") {
+		// Guaranteed pod eviction means severe pressure — stronger signal.
+		score += 0.03
+	}
+	// ephemeral-storage specific eviction detection.
+	if hasEvidenceContent(evidences, "ephemeral") || hasEvidenceContent(evidences, "temporary") {
+		score += 0.03
 	}
 	return clampConfidence(score)
 }

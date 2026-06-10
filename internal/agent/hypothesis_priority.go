@@ -44,6 +44,23 @@ func primaryStatusRank(status string) int {
 	}
 }
 
+// hypothesisSpecificityRank assigns a tie-breaking priority rank based on how
+// specific and actionable each hypothesis type is. Higher rank = more specific
+// = preferred when confidence scores are tied.
+//
+// Ranking rationale (per K8s docs):
+//   - pvc_unbound: PVC status is definitive — either bound or not (100)
+//   - missing_secret_or_configmap: object inspection is definitive (98)
+//   - memory_limit_too_low: requires metrics + limit comparison (96)
+//   - node_not_ready: node condition is definitive (95)
+//   - image_pull_failed: event message is very specific (93)
+//   - init_container_crash: init container status is specific (92)
+//   - node_eviction: eviction reason is specific (91)
+//   - probe_misconfigured: probe config + events are specific (90)
+//   - scheduling_constraint: FailedScheduling message is specific (88)
+//   - dependency_unavailable: requires log pattern matching (82)
+//   - application_memory_leak: requires metrics trend analysis (80)
+//   - bad_config: broad category, less specific (72)
 func hypothesisSpecificityRank(hypothesisType string) int {
 	switch strings.ToLower(strings.TrimSpace(hypothesisType)) {
 	case "pvc_unbound":
@@ -53,17 +70,25 @@ func hypothesisSpecificityRank(hypothesisType string) int {
 	case "memory_limit_too_low":
 		return 96
 	case "node_not_ready":
-		return 94
-	case "probe_misconfigured", "image_pull_failed", "init_container_crash", "node_eviction":
+		return 95
+	case "image_pull_failed":
+		return 93
+	case "init_container_crash":
+		return 92
+	case "node_eviction":
+		return 91
+	case "probe_misconfigured":
 		return 90
+	case "scheduling_constraint":
+		// Per K8s docs: FailedScheduling events contain specific resource/taint/selector
+		// information — more specific than dependency or config issues.
+		return 88
 	case "dependency_unavailable":
 		return 82
 	case "application_memory_leak":
 		return 80
 	case "bad_config":
 		return 72
-	case "scheduling_constraint":
-		return 60
 	default:
 		return 50
 	}

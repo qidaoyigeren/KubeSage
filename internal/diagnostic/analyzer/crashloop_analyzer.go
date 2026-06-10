@@ -61,7 +61,11 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 	evidences := []diagnostic.EvidenceRecord{}
 	actions := []string{"查看 previous logs 中的启动错误栈和最近发布变更。", "确认启动命令、配置文件、环境变量、依赖服务地址和端口是否正确。"}
 	summary := "CrashLoopBackOff: 容器反复启动失败，命中 CrashLoopBackOff 或最近一次 terminated 状态。"
-	confidence := 0.82
+	// Base 0.75 — generic CrashLoop match without exit code or log evidence
+	// is less certain than a specific sub-pattern. Per K8s docs, CrashLoopBackOff
+	// indicates exponential backoff (10s→20s→40s→...→5min cap) after repeated
+	// container failures; the specific root cause requires exit code and log analysis.
+	confidence := 0.75
 
 	for _, status := range ctx.Pod.Status.ContainerStatuses {
 		if status.RestartCount == 0 && status.LastTerminationState.Terminated == nil {
@@ -174,7 +178,14 @@ func (a *CrashLoopBackOffAnalyzer) Analyze(ctx *diagnostic.DiagnosticContext) (*
 }
 
 // crashLoopConfidence increases confidence when restart status, exit code, and
-// suspicious log evidence agree.
+// suspicious log evidence agree. Per K8s docs:
+//   - CrashLoopBackOff means container is in exponential backoff (10s, 20s, 40s... capped at 5min)
+//   - Exit code 137 = SIGKILL (OOM or external kill) — strong signal (+0.05)
+//   - Exit code 143 = SIGTERM (graceful termination) — moderate signal (+0.03)
+//   - Exit code 1 = application error — common but less specific (+0.04)
+//   - Exit code 2 = configuration/panic error — specific signal (+0.04)
+//   - High restart count confirms recurring crash pattern (+0.03)
+//   - postStart hook failures also cause CrashLoopBackOff (+0.03)
 func crashLoopConfidence(ctx *diagnostic.DiagnosticContext, evidences []diagnostic.EvidenceRecord, base float64) float64 {
 	score := base
 	if hasEvidence(evidences, "k8s_pod_status", "restart") {
@@ -196,6 +207,35 @@ func crashLoopConfidence(ctx *diagnostic.DiagnosticContext, evidences []diagnost
 		for _, trend := range ctx.MetricTrends {
 			if strings.Contains(strings.ToLower(trend.Metric), "restart") && trend.Classification == "progressive_growth" {
 				score += 0.05
+			}
+		}
+	}
+	// Exit code specific confidence boost — per K8s docs, different exit codes
+	// indicate different failure modes with varying diagnostic certainty.
+	if hasEvidenceContent(evidences, "exitcode=137") {
+		// SIGKILL — OOM or external kill, very strong signal.
+		score += 0.05
+	} else if hasEvidenceContent(evidences, "exitcode=143") {
+		// SIGTERM — graceful termination requested, moderate signal.
+		score += 0.03
+	} else if hasEvidenceContent(evidences, "exitcode=1") {
+		// Application error — common exit code, confirms crash.
+		score += 0.04
+	} else if hasEvidenceContent(evidences, "exitcode=2") {
+		// Configuration or panic error — specific signal.
+		score += 0.04
+	}
+	// High restart count confirms recurring crash pattern.
+	if hasHighRestartCount(evidences, 5) {
+		score += 0.03
+	}
+	// postStart hook failure detection — per K8s docs, postStart hooks that
+	// fail cause container restart, leading to CrashLoopBackOff.
+	if ctx != nil && ctx.Pod != nil {
+		for _, c := range ctx.Pod.Spec.Containers {
+			if c.Lifecycle != nil && c.Lifecycle.PostStart != nil {
+				score += 0.03
+				break
 			}
 		}
 	}

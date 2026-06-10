@@ -21,9 +21,28 @@ type keyLogEvidenceRaw struct {
 }
 
 var (
-	oomKilledLogKeywords   = []string{"out of memory", "oom", "GC overhead", "heap", "memory limit"}
-	crashLoopLogKeywords   = []string{"panic", "fatal", "config", "missing", "connection refused", "permission denied"}
-	probeFailedLogKeywords = []string{"health", "timeout", "connection refused", "404", "503"}
+	// OOMKilled log keywords — expanded per K8s docs and Linux OOM killer behavior.
+	// The kernel OOM killer writes to dmesg and may appear in container logs via
+	// shared namespaces or journald forwarding.
+	oomKilledLogKeywords = []string{
+		"out of memory", "oom", "GC overhead", "heap", "memory limit",
+		"cgroup", "killed process", "memory cgroup", "oom-kill", "out_of_memory",
+		"cannot allocate memory", "mmap", "virtual memory",
+	}
+	// CrashLoopBackOff log keywords — expanded per K8s docs for common crash causes.
+	// Includes signal-based crashes (SIGSEGV, SIGABRT) and common application errors.
+	crashLoopLogKeywords = []string{
+		"panic", "fatal", "config", "missing", "connection refused", "permission denied",
+		"segmentation fault", "killed", "signal", "segfault", "abort", "trap",
+		"stack trace", "exception", "core dumped",
+	}
+	// ProbeFailed log keywords — expanded per K8s troubleshooting docs.
+	// Includes common network errors that cause probe timeouts and connection failures.
+	probeFailedLogKeywords = []string{
+		"health", "timeout", "connection refused", "404", "503",
+		"connection reset", "EOF", "dial tcp", "i/o timeout", "no route to host",
+		"connection timed out", "deadline exceeded",
+	}
 )
 
 // keyLogEvidences extracts keyword-matching log lines and stores them as a
