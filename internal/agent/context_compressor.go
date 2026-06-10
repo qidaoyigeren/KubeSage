@@ -18,6 +18,13 @@ type ScoredEvidence struct {
 	Reasons []string
 }
 
+// ScoredObservation wraps an ObservationRecord with a relevance score and reasons.
+type ScoredObservation struct {
+	Record  ObservationRecord
+	Score   float64
+	Reasons []string
+}
+
 // Severity weights for evidence scoring (defaults, overridable via config).
 var defaultSeverityWeights = map[string]float64{
 	"critical": 1.0,
@@ -42,10 +49,26 @@ var defaultSourceWeights = map[string]float64{
 
 const (
 	maxObservationsBeforeCompression = 15
-	recentObservationsKeep           = 5
+	topObservationsKeep              = 10 // keep top-N scored observations in full
+	observationContentMaxLen         = 300
 	dedupTimeWindow                  = 2 * time.Second
 	dedupContentSimilarityThreshold  = 0.7
 )
+
+// Tool importance weights for observation scoring — observations from tools that
+// surface definitive K8s signals are weighted higher than general-purpose tools.
+var defaultObservationToolWeights = map[string]float64{
+	"k8s.get_events":   0.9,
+	"k8s.get_logs":     0.85,
+	"k8s.get_pod":      0.8,
+	"k8s.get_topology": 0.7,
+	"k8s.get_pvc":      0.65,
+	"k8s.config_refs":  0.6,
+	"prometheus.query": 0.7,
+	"loki.query":       0.7,
+	"runbook.search":   0.5,
+	"remediation":      0.3,
+}
 
 // EvidenceScorerConfig holds adjustable scoring parameters.
 type EvidenceScorerConfig struct {
@@ -206,17 +229,187 @@ func (s *EvidenceScorer) DeduplicateEvidence(records []diagnostic.EvidenceRecord
 	return result
 }
 
-// CompressObservations compresses observation records for prompt size control.
-func CompressObservations(observations []ObservationRecord) []string {
+// CompressObservations scores observations by relevance, keeps the top-N in
+// full, and converts the rest to evidence records for optional LLM summarization.
+// Returns formatted observation strings and low-relevance records for the caller
+// to pass to an EvidenceSummarizer.
+//
+// When observations <= maxObservationsBeforeCompression, all are returned as-is
+// with no remaining records.
+func CompressObservations(observations []ObservationRecord) ([]string, []diagnostic.EvidenceRecord) {
 	if len(observations) <= maxObservationsBeforeCompression {
-		return formatObservations(observations)
+		return formatObservations(observations), nil
 	}
-	recent := observations[len(observations)-recentObservationsKeep:]
-	older := observations[:len(observations)-recentObservationsKeep]
-	result := make([]string, 0, len(observations))
-	result = append(result, compressByTool(older)...)
-	result = append(result, formatObservations(recent)...)
+
+	scored := scoreObservations(observations)
+	sort.Slice(scored, func(i, j int) bool { return scored[i].Score > scored[j].Score })
+
+	// Build result: top-N as formatted strings, rest as evidence records.
+	var formatted []string
+	var remaining []diagnostic.EvidenceRecord
+
+	for i, so := range scored {
+		if i < topObservationsKeep {
+			formatted = append(formatted, formatScoredObservation(so))
+		} else {
+			remaining = append(remaining, observationToEvidenceRecord(so.Record))
+		}
+	}
+
+	return formatted, remaining
+}
+
+// ScoreObservations scores observation records by relevance. Exported for tests.
+func ScoreObservations(observations []ObservationRecord) []ScoredObservation {
+	return scoreObservations(observations)
+}
+
+// scoreObservations assigns relevance scores to observation records based on:
+//   - Error/success signal (failed + error text = highest weight)
+//   - Evidence richness (has refs, has missing evidence)
+//   - Tool importance (certain tools surface more definitive K8s signals)
+//   - Content depth (very short success messages are low value)
+//   - Recency decay (older observations gradually decay)
+func scoreObservations(observations []ObservationRecord) []ScoredObservation {
+	result := make([]ScoredObservation, len(observations))
+	totalMinusOne := float64(len(observations) - 1)
+	if totalMinusOne < 1 {
+		totalMinusOne = 1
+	}
+
+	for i, obs := range observations {
+		score := 0.5 // neutral baseline
+		var reasons []string
+
+		// --- error / success signal (0 to +0.40) ---
+		if !obs.Success {
+			if obs.Error != "" {
+				score += 0.40
+				reasons = append(reasons, "failed_with_error")
+			} else {
+				score += 0.25
+				reasons = append(reasons, "failed")
+			}
+		}
+		if obs.Success && len(obs.Warnings) > 0 {
+			score += 0.10
+			reasons = append(reasons, "has_warnings")
+		}
+
+		// --- evidence richness (0 to +0.25) ---
+		if len(obs.EvidenceRefs) > 0 {
+			score += 0.15
+			reasons = append(reasons, "has_evidence_refs")
+		}
+		if len(obs.MissingEvidence) > 0 {
+			score += 0.10
+			reasons = append(reasons, "has_missing_evidence")
+		}
+
+		// --- tool importance (0 to +0.20) ---
+		toolKey := canonicalToolName(obs.ToolName)
+		if w, ok := defaultObservationToolWeights[toolKey]; ok {
+			score += w * 0.20
+			if w >= 0.8 {
+				reasons = append(reasons, "high_value_tool="+toolKey)
+			}
+		}
+
+		// --- content depth (0 to +0.15) ---
+		obsLen := len(obs.Observation)
+		switch {
+		case obsLen > 200:
+			score += 0.15
+			reasons = append(reasons, "rich_content")
+		case obsLen > 80:
+			score += 0.08
+		case obsLen <= 20 && obs.Success && obs.Error == "":
+			// Trivial "done" messages are low value.
+			score -= 0.10
+			reasons = append(reasons, "trivial_content")
+		}
+
+		// --- recency decay (×0.85 to ×1.05) ---
+		age := totalMinusOne - float64(i)
+		recency := 1.0 - (age/totalMinusOne)*0.20 // Recent bias: newest +0.05, oldest -0.15
+		score *= recency
+
+		// Clamp.
+		if score > 1.0 {
+			score = 1.0
+		}
+		if score < 0.0 {
+			score = 0.0
+		}
+
+		result[i] = ScoredObservation{
+			Record:  obs,
+			Score:   math.Round(score*1000) / 1000,
+			Reasons: reasons,
+		}
+	}
 	return result
+}
+
+// formatScoredObservation formats a single scored observation with its score.
+func formatScoredObservation(so ScoredObservation) string {
+	obs := so.Record
+	if strings.TrimSpace(obs.Observation) == "" && obs.Error == "" {
+		return ""
+	}
+	status := "success"
+	if !obs.Success {
+		status = "failed"
+	}
+	parts := []string{fmt.Sprintf("%s [%s|%.2f]: %s", obs.ToolName, status, so.Score, obs.Observation)}
+	if len(obs.MissingEvidence) > 0 {
+		parts = append(parts, "missing="+strings.Join(obs.MissingEvidence, ","))
+	}
+	if len(obs.Warnings) > 0 {
+		parts = append(parts, "warnings="+strings.Join(obs.Warnings, ","))
+	}
+	if obs.Error != "" {
+		parts = append(parts, "error="+obs.Error)
+	}
+	return strings.Join(parts, " ")
+}
+
+// observationToEvidenceRecord converts an observation to an evidence record so
+// the low-relevance observations can be passed to SummarizeEvidences for LLM
+// semantic compression.
+func observationToEvidenceRecord(obs ObservationRecord) diagnostic.EvidenceRecord {
+	severity := "info"
+	if !obs.Success {
+		if obs.Error != "" {
+			severity = "error"
+		} else {
+			severity = "warning"
+		}
+	} else if len(obs.Warnings) > 0 {
+		severity = "warning"
+	}
+
+	content := obs.Observation
+	if content == "" {
+		content = obs.Error
+	}
+	if len(obs.Warnings) > 0 {
+		content += "\nwarnings: " + strings.Join(obs.Warnings, "; ")
+	}
+	if len(obs.MissingEvidence) > 0 {
+		content += "\nmissing: " + strings.Join(obs.MissingEvidence, ", ")
+	}
+	if len(content) > observationContentMaxLen {
+		content = content[:observationContentMaxLen] + "..."
+	}
+
+	return diagnostic.EvidenceRecord{
+		SourceType: "tool_observation",
+		Title:      obs.ToolName,
+		Content:    content,
+		Severity:   severity,
+		Timestamp:  obs.Timestamp,
+	}
 }
 
 // BuildEvidenceSummary builds a token-budget-aware evidence summary.
@@ -372,41 +565,6 @@ func severityRank(severity string) int {
 	}
 }
 
-func compressByTool(observations []ObservationRecord) []string {
-	if len(observations) == 0 {
-		return nil
-	}
-	type toolGroup struct {
-		toolName string
-		count    int
-		last     *ObservationRecord
-	}
-	groups := make(map[string]*toolGroup)
-	order := make([]string, 0)
-	for _, obs := range observations {
-		tool := canonicalToolName(obs.ToolName)
-		g, exists := groups[tool]
-		if !exists {
-			g = &toolGroup{toolName: obs.ToolName, count: 0}
-			groups[tool] = g
-			order = append(order, tool)
-		}
-		g.count++
-		g.last = &obs
-	}
-	result := make([]string, 0, len(groups))
-	for _, tool := range order {
-		g := groups[tool]
-		if g.count == 1 {
-			result = append(result, formatSingleObservation(*g.last))
-		} else {
-			result = append(result, fmt.Sprintf("%s: %d calls, last: %s",
-				g.toolName, g.count, formatObservationBrief(*g.last)))
-		}
-	}
-	return result
-}
-
 func formatObservations(observations []ObservationRecord) []string {
 	result := make([]string, 0, len(observations))
 	for _, obs := range observations {
@@ -436,21 +594,4 @@ func formatSingleObservation(obs ObservationRecord) string {
 		parts = append(parts, "error="+obs.Error)
 	}
 	return strings.Join(parts, " ")
-}
-
-func formatObservationBrief(obs ObservationRecord) string {
-	if obs.Observation != "" {
-		return truncateText(obs.Observation, 120)
-	}
-	if obs.Error != "" {
-		return "error=" + truncateText(obs.Error, 120)
-	}
-	return "(no observation)"
-}
-
-func truncateText(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }

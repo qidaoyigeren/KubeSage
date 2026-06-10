@@ -72,7 +72,7 @@ func (p *LLMPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, h
 	}
 
 	// Collect all observations and evidence gathered before the analyzer runs.
-	observations := collectObservations(state, last)
+	observations := collectObservations(state, last, p.summarizer())
 	evidence := collectEvidenceSummary(state, p.summarizer())
 	readOnly := readonlyToolsFromState(state)
 
@@ -131,7 +131,7 @@ func (p *LLMPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, h
 	}
 
 	evidence := collectEvidenceSummary(state, p.summarizer())
-	observations := collectObservations(state, ToolResult{})
+	observations := collectObservations(state, ToolResult{}, p.summarizer())
 	readOnly := readonlyToolsFromState(state)
 
 	prompt := ReflectionPrompt{
@@ -396,8 +396,10 @@ func collectEvidenceSummary(state *ToolState, summarizers ...evidenceSummarizer)
 }
 
 // collectObservations gathers observation strings from completed tool calls,
-// compressing older observations when the count exceeds the threshold.
-func collectObservations(state *ToolState, last ToolResult) []string {
+// scoring them by relevance and compressing low-relevance records. When a
+// summarizer is provided, low-relevance observations are sent to the LLM for
+// semantic compression instead of being dropped.
+func collectObservations(state *ToolState, last ToolResult, summarizers ...evidenceSummarizer) []string {
 	observations := []ObservationRecord{}
 	seen := map[string]struct{}{}
 	for _, record := range state.ObservationSnapshot() {
@@ -426,8 +428,41 @@ func collectObservations(state *ToolState, last ToolResult) []string {
 		}
 	}
 
-	// Compress when the observation count exceeds the threshold.
-	return CompressObservations(observations)
+	// Score and compress: top-N kept in full, rest converted for LLM summarization.
+	lines, remaining := CompressObservations(observations)
+
+	// If a summarizer is available and there are low-relevance records, use LLM
+	// to produce a semantic summary instead of statistical grouping.
+	if len(remaining) > 0 && len(summarizers) > 0 && summarizers[0] != nil {
+		ctx := context.Background()
+		if state.RunContext != nil {
+			ctx = state.RunContext
+		}
+		if llmSummary, err := summarizers[0].SummarizeEvidences(ctx, remaining); err == nil && llmSummary != "" {
+			lines = append(lines, "[collapsed LLM observation summary] "+llmSummary)
+		} else {
+			// Fallback: statistical summary of low-relevance observation tools.
+			lines = append(lines, formatObservationRemainingSummary(remaining))
+		}
+	} else if len(remaining) > 0 {
+		lines = append(lines, formatObservationRemainingSummary(remaining))
+	}
+
+	return lines
+}
+
+// formatObservationRemainingSummary produces a grouped statistical fallback for
+// low-relevance observations that were not sent to LLM summarization.
+func formatObservationRemainingSummary(remaining []diagnostic.EvidenceRecord) string {
+	counts := map[string]int{}
+	for _, r := range remaining {
+		counts[r.Title]++
+	}
+	parts := make([]string, 0, len(counts))
+	for tool, count := range counts {
+		parts = append(parts, fmt.Sprintf("%s×%d", tool, count))
+	}
+	return fmt.Sprintf("[collapsed] %d lower-relevance observations (%s)", len(remaining), strings.Join(parts, ", "))
 }
 
 func countCompleted(plan *Plan) int {
