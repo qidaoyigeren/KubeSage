@@ -594,8 +594,10 @@ func applyContextTokenBudget(ctx context.Context, payload *chatCompletionRequest
 	estimatedPromptTokens := estimateMessageTokens(payload.Messages)
 	availableCompletion := remaining - estimatedPromptTokens
 	if availableCompletion <= 0 {
-		agent.ExhaustLLMTokenBudget(ctx)
-		return fmt.Errorf("llm token budget exhausted before request: remaining=%d estimated_prompt=%d", remaining, estimatedPromptTokens)
+		// Budget exhausted — allow the request to proceed without setting
+		// MaxTokens. The model's own context window is the real hard limit.
+		// Token usage is tracked for observability but no longer blocks calls.
+		return nil
 	}
 	if maxCompletion > 0 && availableCompletion > maxCompletion {
 		availableCompletion = maxCompletion

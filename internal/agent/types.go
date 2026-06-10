@@ -54,9 +54,6 @@ type RuntimeOptions struct {
 	ReflectionTimeout   time.Duration
 	EnableDryRunPreview bool
 	Goal                Goal
-	// ModelName is used to look up model-specific token profiles.
-	// When set, the budget is configured with model-aware defaults.
-	ModelName string
 }
 
 type Planner interface {

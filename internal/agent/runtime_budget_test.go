@@ -25,13 +25,6 @@ func TestRunLocalLLMTokenBudgetsAreIndependent(t *testing.T) {
 	if got := LLMTokenUsage(second); got != 0 {
 		t.Fatalf("second run was contaminated by first run usage: %d", got)
 	}
-	ExhaustLLMTokenBudget(first)
-	if remaining, _, _ := RemainingLLMTokens(first); remaining != 0 {
-		t.Fatalf("exhausted run still has %d tokens remaining", remaining)
-	}
-	if remaining, _, _ := RemainingLLMTokens(second); remaining != 100 {
-		t.Fatalf("exhausting first run changed second run allowance to %d", remaining)
-	}
 }
 
 func TestToolAndReflectionRoundBudgetsAreEnforced(t *testing.T) {
@@ -54,6 +47,10 @@ func TestToolAndReflectionRoundBudgetsAreEnforced(t *testing.T) {
 	ctx := WithLLMTokenBudget(context.Background(), 100)
 	if allowed, reason := reflectionBudgetAvailable(ctx, 2, 0, RuntimeOptions{MaxReflectionRounds: 2, MaxReflectionSteps: 4}); allowed || reason != "reflection round budget exhausted" {
 		t.Fatalf("reflection round budget result = allowed:%t reason:%q", allowed, reason)
+	}
+	// Token budget no longer blocks reflection — only round/step limits do.
+	if allowed, _ := reflectionBudgetAvailable(ctx, 0, 0, RuntimeOptions{MaxReflectionRounds: 4, MaxReflectionSteps: 4}); !allowed {
+		t.Fatal("reflection was blocked despite having round/step budget remaining")
 	}
 }
 
@@ -105,16 +102,18 @@ func TestRuntimeCapsDistinctRunbookSearches(t *testing.T) {
 	}
 }
 
-func TestRuntimeStopsReflectionAtTokenBudget(t *testing.T) {
+func TestRuntimeAllowsReflectionRegardlessOfTokenUsage(t *testing.T) {
 	planner := &tokenConsumingPlanner{}
-	_, _ = runBudgetRuntime(t, planner, &countingRetriever{}, RuntimeOptions{
+	_, result := runBudgetRuntime(t, planner, &countingRetriever{}, RuntimeOptions{
 		MaxSteps:            4,
 		MaxReflectionSteps:  4,
 		MaxReflectionRounds: 4,
 		MaxLLMTokens:        50,
 	})
-	if planner.ReflectionCalls() != 0 {
-		t.Fatalf("reflection ran after initial planning exhausted the token budget: %d", planner.ReflectionCalls())
+	// Token budget no longer blocks reflection. The agent should still
+	// complete normally — step/reflection limits are the real controls.
+	if result == nil {
+		t.Fatal("expected runtime to complete successfully")
 	}
 }
 

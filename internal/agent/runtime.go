@@ -94,7 +94,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 	if opts.ReflectionTimeout <= 0 {
 		opts.ReflectionTimeout = 15 * time.Second
 	}
-	ctx = WithLLMTokenBudget(ctx, opts.MaxLLMTokens, opts.ModelName)
+	ctx = WithLLMTokenBudget(ctx, opts.MaxLLMTokens)
 
 	// Query cross-session memory for similar past diagnoses.
 	if r.memory != nil {
@@ -374,11 +374,7 @@ func (r *Runtime) Run(ctx context.Context, opts RuntimeOptions) (result *RunResu
 		}
 		if preAnalysis == nil {
 			if last, ok := lastCompletedExecution(executions); ok {
-				if llmTokenBudgetAvailable(ctx) {
-					r.planner.AdjustPlan(&plan, state, last.Result, latestScores)
-				} else {
-					NewRulePlanner().AdjustPlan(&plan, state, last.Result, latestScores)
-				}
+				r.planner.AdjustPlan(&plan, state, last.Result, latestScores)
 			}
 		}
 		dropCompletedSnapshotSteps(&plan, state)
@@ -574,8 +570,6 @@ func reflectionBudgetAvailable(ctx context.Context, rounds, steps int, opts Runt
 		return false, "reflection round budget exhausted"
 	case opts.MaxReflectionSteps > 0 && steps >= opts.MaxReflectionSteps:
 		return false, "reflection step budget exhausted"
-	case !llmTokenBudgetAvailable(ctx):
-		return false, "LLM token budget exhausted"
 	default:
 		return true, ""
 	}

@@ -91,26 +91,6 @@ type AgentConfig struct {
 	ReflectionTimeoutSeconds int    `mapstructure:"reflection_timeout_seconds"`
 	EnableDryRunPreview      bool   `mapstructure:"enable_dry_run_preview"`
 	HypothesisConfigPath     string `mapstructure:"hypothesis_config_path"`
-	// ModelProfiles provides per-model token budgets and context window sizes.
-	// Key is model name (e.g., "deepseek-chat", "gpt-4o", "claude-sonnet-4-6").
-	ModelProfiles map[string]ModelProfileConfig `mapstructure:"model_profiles"`
-	// TokenBudgetAllocation controls per-phase token allocation fractions.
-	// If empty, sensible defaults are used.
-	TokenBudgetAllocation *TokenBudgetAllocationConfig `mapstructure:"token_budget_allocation"`
-}
-
-type ModelProfileConfig struct {
-	MaxLLMTokens        int `mapstructure:"max_llm_tokens"`
-	ContextWindow       int `mapstructure:"context_window"`
-	MaxCompletionTokens int `mapstructure:"max_completion_tokens"`
-}
-
-type TokenBudgetAllocationConfig struct {
-	Plan           float64 `mapstructure:"plan"`
-	Adjustment     float64 `mapstructure:"adjustment"`
-	Reflection     float64 `mapstructure:"reflection"`
-	FinalDiagnosis float64 `mapstructure:"final_diagnosis"`
-	Reserve        float64 `mapstructure:"reserve"`
 }
 
 type PlannerConfig struct {
@@ -452,28 +432,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("agent.max_llm_tokens", 12000)
 	v.SetDefault("agent.reflection_timeout_seconds", 15)
 	v.SetDefault("agent.enable_dry_run_preview", true)
-	v.SetDefault("agent.model_profiles", map[string]interface{}{
-		"deepseek-chat": map[string]interface{}{
-			"max_llm_tokens":        12000,
-			"context_window":        32768,
-			"max_completion_tokens": 4096,
-		},
-		"gpt-4o": map[string]interface{}{
-			"max_llm_tokens":        30000,
-			"context_window":        128000,
-			"max_completion_tokens": 16384,
-		},
-		"claude-sonnet-4-6": map[string]interface{}{
-			"max_llm_tokens":        40000,
-			"context_window":        200000,
-			"max_completion_tokens": 16384,
-		},
-	})
-	v.SetDefault("agent.token_budget_allocation.plan", 0.15)
-	v.SetDefault("agent.token_budget_allocation.adjustment", 0.15)
-	v.SetDefault("agent.token_budget_allocation.reflection", 0.30)
-	v.SetDefault("agent.token_budget_allocation.final_diagnosis", 0.25)
-	v.SetDefault("agent.token_budget_allocation.reserve", 0.15)
 	v.SetDefault("planner.type", "llm")
 	v.SetDefault("queue.type", "")
 	v.SetDefault("queue.stream", "kubesage:diagnosis")

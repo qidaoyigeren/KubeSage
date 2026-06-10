@@ -415,7 +415,6 @@ func (s *DiagnosisService) runAgentDiagnosis(parentCtx context.Context, taskID u
 		ReflectionTimeout:   time.Duration(s.cfg.Agent.ReflectionTimeoutSeconds) * time.Second,
 		EnableDryRunPreview: s.cfg.Agent.EnableDryRunPreview,
 		Goal:                toAgentGoal(req),
-		ModelName:           s.cfg.LLM.Model,
 	})
 	if err != nil {
 		span.RecordError(err)

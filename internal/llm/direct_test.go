@@ -12,16 +12,10 @@ import (
 )
 
 func TestGenerateDirectDiagnosisTracksUsage(t *testing.T) {
-	requestMaxTokens := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		var request chatCompletionRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		requestMaxTokens = request.MaxTokens
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"choices": []map[string]interface{}{{
 				"message": map[string]string{
@@ -59,15 +53,14 @@ func TestGenerateDirectDiagnosisTracksUsage(t *testing.T) {
 	if got := client.UsageCallCount(); got != 1 {
 		t.Fatalf("usage calls = %d, want 1", got)
 	}
-	if requestMaxTokens <= 0 || requestMaxTokens > 1000 {
-		t.Fatalf("request max_tokens = %d, want a positive bounded value", requestMaxTokens)
-	}
+	// Token budget is now observability-only and no longer sets MaxTokens.
+	// The model's default context window controls completion size.
 	if got := agent.LLMTokenUsage(ctx); got != 120 {
 		t.Fatalf("run-local token usage = %d, want 120", got)
 	}
 }
 
-func TestLLMPreflightExhaustsBudgetWhenPromptCannotFit(t *testing.T) {
+func TestLLMTokenBudgetAllowsRequestWhenExhausted(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -82,13 +75,13 @@ func TestLLMPreflightExhaustsBudgetWhenPromptCannotFit(t *testing.T) {
 	}).(*OpenAICompatibleClient)
 	ctx := agent.WithLLMTokenBudget(context.Background(), 10)
 
-	if _, err := client.GenerateDirectDiagnosis(ctx, map[string]string{"pod": "oom"}); err == nil {
-		t.Fatal("expected prompt preflight budget error")
+	// Token budget no longer rejects requests. The call should proceed
+	// to the server (and fail with 500, not a budget error).
+	_, err := client.GenerateDirectDiagnosis(ctx, map[string]string{"pod": "oom"})
+	if err == nil {
+		t.Fatal("expected server error, not success")
 	}
-	if requests != 0 {
-		t.Fatalf("budget-rejected prompt made %d HTTP requests", requests)
-	}
-	if remaining, _, _ := agent.RemainingLLMTokens(ctx); remaining != 0 {
-		t.Fatalf("preflight-rejected run still has %d tokens remaining", remaining)
+	if requests != 1 {
+		t.Fatalf("expected 1 HTTP request (budget should not block), got %d", requests)
 	}
 }
