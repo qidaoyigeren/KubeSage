@@ -41,11 +41,12 @@ type promptPayload struct {
 }
 
 type groundedPromptPayload struct {
-	PodBasicInfo       map[string]interface{} `json:"pod_basic_info"`
-	RuleDiagnosis      RuleBasedResult        `json:"rule_diagnosis"`
-	Evidences          []GroundingEvidence    `json:"evidence_list"`
-	RunbookHits        []rag.Hit              `json:"runbook_retrieval_results"`
-	OutputRequirements map[string]interface{} `json:"output_requirements"`
+	PodBasicInfo             map[string]interface{} `json:"pod_basic_info"`
+	RuleDiagnosis            RuleBasedResult        `json:"rule_diagnosis"`
+	Evidences                []GroundingEvidence    `json:"evidence_list"`
+	RemainingEvidenceSummary string                 `json:"remaining_evidence_summary,omitempty"`
+	RunbookHits              []rag.Hit              `json:"runbook_retrieval_results"`
+	OutputRequirements       map[string]interface{} `json:"output_requirements"`
 }
 
 // BuildPrompt converts the rule report and live diagnostic context into the
@@ -73,13 +74,26 @@ func BuildPrompt(ctx *diagnostic.DiagnosticContext, ruleResult RuleBasedResult, 
 	}
 }
 
-func BuildGroundedPrompt(ctx *diagnostic.DiagnosticContext, ruleResult RuleBasedResult, evidences []diagnostic.EvidenceRecord, runbookHits []rag.Hit) GroundedPrompt {
-	groundingEvidence := groundingEvidences(evidences)
+func BuildGroundedPrompt(ctx *diagnostic.DiagnosticContext, ruleResult RuleBasedResult, evidences []diagnostic.EvidenceRecord, runbookHits []rag.Hit, summarizers ...EvidenceSummarizer) GroundedPrompt {
+	groundingEvidence, remainingRecords := groundingEvidencesWithSummary(evidences)
+
+	// If a summarizer is available and there are remaining records, use LLM
+	// to produce a semantic summary instead of just grouped counts.
+	remainingSummary := ""
+	if len(remainingRecords) > 0 {
+		remainingSummary = summarizeRemainingEvidences(remainingRecords)
+		if len(summarizers) > 0 && summarizers[0] != nil {
+			if llmSummary, err := summarizers[0].SummarizeEvidences(ctx.RequestContext, remainingRecords); err == nil && llmSummary != "" {
+				remainingSummary = llmSummary
+			}
+		}
+	}
 	payload := groundedPromptPayload{
-		PodBasicInfo:  podBasicInfo(ctx),
-		RuleDiagnosis: ruleResult,
-		Evidences:     groundingEvidence,
-		RunbookHits:   runbookHits,
+		PodBasicInfo:             podBasicInfo(ctx),
+		RuleDiagnosis:            ruleResult,
+		Evidences:                groundingEvidence,
+		RemainingEvidenceSummary: remainingSummary,
+		RunbookHits:              runbookHits,
 		OutputRequirements: map[string]interface{}{
 			"format": "Return JSON only.",
 			"schema": map[string]interface{}{
@@ -270,12 +284,18 @@ func severityWeight(severity string) float64 {
 	}
 }
 
-func groundingEvidences(records []diagnostic.EvidenceRecord) []GroundingEvidence {
-	// Sort by severity first, then take top 30.
+// groundingEvidencesWithSummary returns the top 30 evidence items sorted by
+// severity, plus any remaining items that were not included. The caller can
+// then summarize the remaining items via LLM or statistical grouping.
+func groundingEvidencesWithSummary(records []diagnostic.EvidenceRecord) ([]GroundingEvidence, []diagnostic.EvidenceRecord) {
+	const limit = 30
+
+	// Sort by severity first.
 	sort.Slice(records, func(i, j int) bool {
 		return severityWeight(records[i].Severity) > severityWeight(records[j].Severity)
 	})
-	result := make([]GroundingEvidence, 0, len(records))
+
+	result := make([]GroundingEvidence, 0, limit)
 	for i, record := range records {
 		result = append(result, GroundingEvidence{
 			ID:         fmt.Sprintf("ev-%d", i),
@@ -284,11 +304,56 @@ func groundingEvidences(records []diagnostic.EvidenceRecord) []GroundingEvidence
 			Content:    truncate(record.Content, 1200),
 			Severity:   record.Severity,
 		})
-		if len(result) >= 30 {
-			return result
+		if len(result) >= limit {
+			break
 		}
 	}
-	return result
+
+	// Build summary of remaining items (index limit..end).
+	if len(records) <= limit {
+		return result, nil
+	}
+	remaining := records[limit:]
+	return result, remaining
+}
+
+// summarizeRemainingEvidences produces a compact grouped summary of evidence
+// records that were not included in the top-N detailed list. Groups by
+// sourceType and reports count + severity distribution per group.
+func summarizeRemainingEvidences(records []diagnostic.EvidenceRecord) string {
+	type groupInfo struct {
+		count      int
+		severities map[string]int
+		titles     []string // collect up to 3 representative titles
+	}
+	groups := map[string]*groupInfo{}
+	for _, r := range records {
+		g, ok := groups[r.SourceType]
+		if !ok {
+			g = &groupInfo{severities: map[string]int{}}
+			groups[r.SourceType] = g
+		}
+		g.count++
+		g.severities[r.Severity]++
+		if len(g.titles) < 3 {
+			g.titles = append(g.titles, r.Title)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%d additional evidence records not shown in detail:\n", len(records)))
+	for source, g := range groups {
+		sevParts := make([]string, 0, len(g.severities))
+		for sev, cnt := range g.severities {
+			sevParts = append(sevParts, fmt.Sprintf("%s=%d", sev, cnt))
+		}
+		titleHint := ""
+		if len(g.titles) > 0 {
+			titleHint = " (e.g. " + strings.Join(g.titles, "; ") + ")"
+		}
+		b.WriteString(fmt.Sprintf("  - %s: %d records [%s]%s\n", source, g.count, strings.Join(sevParts, ", "), titleHint))
+	}
+	return b.String()
 }
 
 // promptEvents summarizes Kubernetes Events for the LLM.

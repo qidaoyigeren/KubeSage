@@ -12,6 +12,13 @@ type LLMClient interface {
 	GenerateDiagnosisSummary(ctx context.Context, prompt Prompt) (*EnhancedSummary, error)
 }
 
+// EvidenceSummarizer uses a fast/cheap LLM to produce a concise summary of
+// evidence records that were not included in the detailed prompt. This keeps
+// the main LLM aware of dropped evidence without blowing the token budget.
+type EvidenceSummarizer interface {
+	SummarizeEvidences(ctx context.Context, records []diagnostic.EvidenceRecord) (string, error)
+}
+
 type GroundedSummaryGenerator interface {
 	GenerateGroundedSummary(ctx context.Context, prompt GroundedPrompt) (*GroundedSummary, error)
 }

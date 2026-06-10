@@ -646,7 +646,12 @@ func (s *DiagnosisService) enhanceReportWithGroundedLLM(ctx context.Context, tas
 		appendLLMWarning(report, "Grounded LLM enhancement unavailable", "LLM client does not implement grounded summary generation; kept rule-based report.", nil)
 		return
 	}
-	prompt := llm.BuildGroundedPrompt(diagCtx, ruleResult, report.Evidences, runbookHits)
+	// Pass evidence summarizer if the LLM client supports it.
+	var summarizers []llm.EvidenceSummarizer
+	if summarizer, ok := s.llmClient.(llm.EvidenceSummarizer); ok {
+		summarizers = append(summarizers, summarizer)
+	}
+	prompt := llm.BuildGroundedPrompt(diagCtx, ruleResult, report.Evidences, runbookHits, summarizers...)
 	var grounded *llm.GroundedSummary
 	start := time.Now()
 	ctx, span := observability.Tracer().Start(ctx, "diagnosis.llm_grounded")

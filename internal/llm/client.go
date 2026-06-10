@@ -16,6 +16,7 @@ import (
 
 	"kubesage/internal/agent"
 	"kubesage/internal/config"
+	"kubesage/internal/diagnostic"
 )
 
 type OpenAICompatibleClient struct {
@@ -544,6 +545,89 @@ func (c *OpenAICompatibleClient) GenerateReflection(ctx context.Context, prompt 
 	}
 	return result, nil
 }
+
+// SummarizeEvidences uses a fast LLM call to produce a concise summary of
+// evidence records that were not included in the detailed prompt. The prompt
+// is deliberately minimal to keep latency and token cost low.
+func (c *OpenAICompatibleClient) SummarizeEvidences(ctx context.Context, records []diagnostic.EvidenceRecord) (string, error) {
+	if c == nil || c.baseURL == "" || c.apiKey == "" || c.model == "" {
+		return "", fmt.Errorf("llm client is not configured")
+	}
+	if len(records) == 0 {
+		return "", nil
+	}
+
+	// Build a compact evidence list for the summarizer.
+	var b strings.Builder
+	for i, r := range records {
+		if i >= 60 {
+			break
+		}
+		content := r.Content
+		if len(content) > 200 {
+			content = content[:200] + "..."
+		}
+		b.WriteString(fmt.Sprintf("[%s|%s] %s: %s\n", r.Severity, r.SourceType, r.Title, content))
+	}
+
+	start := time.Now()
+	endpoint, err := c.chatCompletionsURL()
+	if err != nil {
+		return "", err
+	}
+	payload := chatCompletionRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: evidenceSummarizerSystemPrompt},
+			{Role: "user", Content: b.String()},
+		},
+		Temperature: 0.1,
+		MaxTokens:   300,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("evidence summarizer failed: %s: %s", resp.Status, string(respBody))
+	}
+	var raw chatCompletionResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return "", err
+	}
+	if raw.Error != nil {
+		return "", fmt.Errorf("evidence summarizer error: %s: %s", raw.Error.Type, raw.Error.Message)
+	}
+	if len(raw.Choices) == 0 {
+		return "", fmt.Errorf("evidence summarizer returned no choices")
+	}
+	c.captureUsage(ctx, raw.Usage, time.Since(start))
+	return strings.TrimSpace(raw.Choices[0].Message.Content), nil
+}
+
+var evidenceSummarizerSystemPrompt = strings.Join([]string{
+	"You are a Kubernetes diagnosis evidence summarizer.",
+	"Given a list of diagnostic evidence records that were NOT included in the main diagnosis prompt, produce a concise 2-4 sentence summary.",
+	"Focus on: what types of evidence exist, any patterns or anomalies, and anything that could affect the diagnosis.",
+	"Do NOT repeat individual evidence items verbatim. Synthesize and compress.",
+	"Do NOT invent facts not present in the evidence. Do NOT suggest actions.",
+	"Return plain text only, no JSON, no markdown.",
+}, "\n")
 
 // Ensure OpenAICompatibleClient implements the agent interfaces at compile time.
 var _ agent.PlanClient = (*OpenAICompatibleClient)(nil)

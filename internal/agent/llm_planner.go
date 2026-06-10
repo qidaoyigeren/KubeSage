@@ -6,8 +6,15 @@ import (
 	"log"
 	"strings"
 
+	"kubesage/internal/diagnostic"
 	"kubesage/internal/observability"
 )
+
+// evidenceSummarizer is an optional interface that LLM clients can implement
+// to provide semantic summaries of evidence records via a fast/cheap model.
+type evidenceSummarizer interface {
+	SummarizeEvidences(ctx context.Context, records []diagnostic.EvidenceRecord) (string, error)
+}
 
 // logLLMPlannerError logs LLM planner errors so fallback reasons are visible.
 func logLLMPlannerError(operation string, err error) {
@@ -66,7 +73,7 @@ func (p *LLMPlanner) AdjustPlan(plan *Plan, state *ToolState, last ToolResult, h
 
 	// Collect all observations and evidence gathered before the analyzer runs.
 	observations := collectObservations(state, last)
-	evidence := collectEvidenceSummary(state)
+	evidence := collectEvidenceSummary(state, p.summarizer())
 	readOnly := readonlyToolsFromState(state)
 
 	adjustContext := context.Background()
@@ -123,7 +130,7 @@ func (p *LLMPlanner) Reflect(ctx context.Context, plan Plan, state *ToolState, h
 		return ReflectionResult{ShouldContinue: true, Reason: "no LLM client configured, continuing"}, nil
 	}
 
-	evidence := collectEvidenceSummary(state)
+	evidence := collectEvidenceSummary(state, p.summarizer())
 	observations := collectObservations(state, ToolResult{})
 	readOnly := readonlyToolsFromState(state)
 
@@ -167,6 +174,20 @@ func (p *LLMPlanner) CumulativeTokenUsage() int {
 		return 0
 	}
 	return reporter.CumulativeTokenUsage()
+}
+
+// summarizer returns the LLM client as an evidenceSummarizer if it implements
+// the interface, nil otherwise. This allows graceful degradation when the LLM
+// client does not support evidence summarization.
+func (p *LLMPlanner) summarizer() evidenceSummarizer {
+	if p == nil || p.client == nil {
+		return nil
+	}
+	s, ok := p.client.(evidenceSummarizer)
+	if !ok {
+		return nil
+	}
+	return s
 }
 
 func readonlyTools(tools []ToolMetadata) []ToolMetadata {
@@ -343,7 +364,9 @@ func formatObservation(record ObservationRecord) string {
 // collectEvidenceSummary builds a text summary of evidence gathered before the
 // analyzer produces the final report. Uses relevance scoring to surface the most
 // important evidence first, with low-scoring evidence collapsed into a summary line.
-func collectEvidenceSummary(state *ToolState) string {
+// If a summarizer is provided and there are remaining records, it uses LLM to
+// produce a semantic summary instead of just grouped counts.
+func collectEvidenceSummary(state *ToolState, summarizers ...evidenceSummarizer) string {
 	if state == nil {
 		return ""
 	}
@@ -356,7 +379,20 @@ func collectEvidenceSummary(state *ToolState) string {
 	scored := GetEvidenceScorer().ScoreEvidence(deduped, nil, len(deduped))
 
 	// Use token-budget-aware summary: top 25 full records, rest collapsed.
-	return BuildEvidenceSummary(scored, 25, 200)
+	mainSummary, remaining := BuildEvidenceSummary(scored, 25, 200)
+	if len(remaining) == 0 || len(summarizers) == 0 || summarizers[0] == nil {
+		return mainSummary
+	}
+
+	// Use LLM to summarize remaining evidence.
+	ctx := context.Background()
+	if state.RunContext != nil {
+		ctx = state.RunContext
+	}
+	if llmSummary, err := summarizers[0].SummarizeEvidences(ctx, remaining); err == nil && llmSummary != "" {
+		return mainSummary + "\n\n[collapsed LLM summary] " + llmSummary
+	}
+	return mainSummary
 }
 
 // collectObservations gathers observation strings from completed tool calls,

@@ -220,13 +220,16 @@ func CompressObservations(observations []ObservationRecord) []string {
 }
 
 // BuildEvidenceSummary builds a token-budget-aware evidence summary.
-func BuildEvidenceSummary(scored []ScoredEvidence, maxRecords, maxContentLen int) string {
+// Top-scoring records are included in full (truncated to maxContentLen).
+// Remaining records are returned separately so the caller can summarize them
+// via LLM or statistical grouping.
+func BuildEvidenceSummary(scored []ScoredEvidence, maxRecords, maxContentLen int) (string, []diagnostic.EvidenceRecord) {
 	if len(scored) == 0 {
-		return ""
+		return "", nil
 	}
 	var parts []string
-	collapsed := 0
-	collapsedSevs := map[string]int{}
+	var remaining []diagnostic.EvidenceRecord
+
 	for i, se := range scored {
 		if i < maxRecords {
 			content := se.Record.Content
@@ -236,19 +239,24 @@ func BuildEvidenceSummary(scored []ScoredEvidence, maxRecords, maxContentLen int
 			parts = append(parts, fmt.Sprintf("[%s|%.2f] %s: %s",
 				se.Record.Severity, se.Score, se.Record.Title, content))
 		} else {
-			collapsed++
-			collapsedSevs[se.Record.Severity]++
+			remaining = append(remaining, se.Record)
 		}
 	}
-	if collapsed > 0 {
+
+	// Add a statistical fallback summary for the remaining records.
+	if len(remaining) > 0 {
+		collapsedSevs := map[string]int{}
+		for _, r := range remaining {
+			collapsedSevs[r.Severity]++
+		}
 		sevSummary := make([]string, 0, len(collapsedSevs))
 		for sev, count := range collapsedSevs {
 			sevSummary = append(sevSummary, fmt.Sprintf("%s×%d", sev, count))
 		}
-		parts = append(parts, fmt.Sprintf("[collapsed] %d lower-relevance evidence records (%s)",
-			collapsed, strings.Join(sevSummary, ", ")))
+		parts = append(parts, fmt.Sprintf("[collapsed] %d lower-relevance evidence records (%s) — awaiting LLM summary",
+			len(remaining), strings.Join(sevSummary, ", ")))
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), remaining
 }
 
 // TopScoredEvidence returns the top-N records by score.
